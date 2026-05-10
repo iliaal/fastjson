@@ -1,0 +1,15 @@
+# Read by /release-ext. Schema documented in ~/.claude/commands/release-ext.md.
+
+extension: fastjson
+version_macro: PHP_FASTJSON_VERSION
+version_file: php_fastjson.h
+repo: iliaal/fastjson
+build_matrix:
+  - PHP-8.3
+  - PHP-8.4
+  - PHP-8.5
+configure_base: "--enable-fastjson --enable-fastjson-dev"
+smoke_test: scripts/pie-smoke.sh
+windows_ci: true
+asan_test: true
+linux_prebuilt: true

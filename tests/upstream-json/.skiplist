@@ -1,0 +1,124 @@
+# Tests from php-src/ext/json/tests/ intentionally NOT rewritten for the
+# fastjson compat harness. Format: <basename>.phpt # <category> # reason
+#
+# Categories:
+#   ext-json-internals : exercises ext/json-only behavior fastjson does
+#                        not currently aim to mirror byte-for-byte.
+#   doc-divergence     : asserts a behavior fastjson explicitly diverges
+#                        from with a TODO entry (todos/NNN-*.md).
+#   bug-report         : tracks a fastjson bug; remove once fixed.
+#
+# Re-run with:
+#   scripts/sync-upstream-json-tests.sh && \
+#   php run-tests.php tests/upstream-json/
+
+# === JsonSerializable interface (deferred to v0.4) ===
+json_encode_recursion_03.phpt # ext-json-internals # JsonSerializable::jsonSerialize() not invoked
+json_encode_recursion_04.phpt # ext-json-internals # JsonSerializable + var_export
+json_encode_recursion_05.phpt # ext-json-internals # JsonSerializable + print_r
+json_encode_recursion_06.phpt # ext-json-internals # JsonSerializable + serialize
+serialize.phpt                # ext-json-internals # JsonSerializable mix
+
+# === JsonException class (re-evaluated; 1/3 now passes) ===
+# fastjson throws \JsonException as of commit fddc0c6. After also
+# implementing decode's JSON_THROW_ON_ERROR and the THROW_ON_ERROR
+# "preserve global state" contract, json_exceptions_error_clearing.phpt
+# passes. The remaining two failures are pure error-message-text
+# divergence (yyjson "unexpected end of data" / "invalid utf-8 encoding
+# in string" vs ext/json "Syntax error near location X:Y" / "Malformed
+# UTF-8 characters, possibly incorrectly encoded") -- same category
+# as the 10 error_location_* tests above.
+json_decode_exceptions.phpt # ext-json-internals # error-message text divergence
+json_encode_exceptions.phpt # ext-json-internals # error-message text divergence
+
+# === Error message text ext/json owns verbatim ===
+bug54058.phpt # ext-json-internals # "Malformed UTF-8 characters, possibly incorrectly encoded"
+json_validate_002.phpt # ext-json-internals # requires json_validate_requires.inc + ext/json msg text
+json_validate_004.phpt # ext-json-internals # requires json_validate_requires.inc + UTF-8 msg text
+json_last_error_msg_error_location_001.phpt # ext-json-internals # "near location X:Y" format
+json_last_error_msg_error_location_002.phpt # ext-json-internals # error-location format
+json_last_error_msg_error_location_003.phpt # ext-json-internals # error-location format
+json_last_error_msg_error_location_004.phpt # ext-json-internals # error-location format
+json_last_error_msg_error_location_005.phpt # ext-json-internals # error-location format
+json_last_error_msg_error_location_006.phpt # ext-json-internals # error-location format
+json_last_error_msg_error_location_007.phpt # ext-json-internals # error-location format
+json_last_error_msg_error_location_008.phpt # ext-json-internals # error-location format
+json_last_error_msg_error_location_009.phpt # ext-json-internals # error-location format
+json_last_error_msg_error_location_010.phpt # ext-json-internals # error-location format
+
+# === JSON_HEX_TAG / HEX_AMP / HEX_APOS / HEX_QUOT (honored) ===
+# 006 implemented via output post-processing (yyjson's writer has no
+# native HEX_* support). 007 stays: it asserts ext/json's "near
+# location X:Y" error-message format. 008 = JSON_BIGINT_AS_STRING,
+# implemented separately.
+007.phpt # ext-json-internals # error-location format
+
+# === JSON_NUMERIC_CHECK (honored) ===
+# json_encode_numeric: passes via is_numeric_string + scalar conversion
+# in the IS_STRING branch.
+
+# === JSON_PRESERVE_ZERO_FRACTION (not honored) ===
+json_encode_basic.phpt          # ext-json-internals # PRESERVE_ZERO_FRACTION (1230 vs 1230.0)
+json_encode_pretty_print2.phpt  # ext-json-internals # PRESERVE_ZERO_FRACTION knock-on
+
+# === JSON_PARTIAL_OUTPUT_ON_ERROR (now honored) ===
+# 003, 004, inf_nan_error, unsupported_type_error: all unskipped after
+# implementing the flag at the encoder's value-level error sites.
+# json_encode_recursion_01/02 stay skiplisted: those need the separate
+# "jsonSerialize returns $this" special case (where ext/json detects
+# the retval IS the original zval and falls through to property
+# serialization rather than re-entering jsonSerialize).
+json_encode_recursion_01.phpt # ext-json-internals # jsonSerialize returning $this
+json_encode_recursion_02.phpt # ext-json-internals # jsonSerialize returning $this
+
+# === JSON_INVALID_UTF8_IGNORE / SUBSTITUTE (not honored) ===
+json_encode_invalid_utf8.phpt # ext-json-internals # JSON_INVALID_UTF8_*
+json_decode_invalid_utf8.phpt # ext-json-internals # JSON_INVALID_UTF8_*
+
+# === Decode $depth validation (todos/001) — RESOLVED ===
+# All entries previously here were resolved by the encode/decode/validate
+# argument validation + decode depth-walker landing. Empty section
+# preserved for grep continuity.
+# todos/002 (uppercase \u hex) was resolved by vendor patch P-001
+# (vendor/yyjson/PATCHES.md). ~8 of the previously-skipped tests now
+# pass cleanly. The entries below failed for *other* reasons that
+# happened to coincide with the hex divergence; re-listed under their
+# primary cause.
+
+# === UTF-8 handling: ext/json error message text + JSON_INVALID_UTF8_* ===
+# These tests assert ext/json's specific "Malformed UTF-8 characters,
+# possibly incorrectly encoded" wording or rely on the
+# JSON_INVALID_UTF8_IGNORE / SUBSTITUTE flags that fastjson does not
+# yet honor. yyjson reports "invalid utf-8 encoding in string" with
+# default-strict UTF-8 handling.
+bug43941.phpt # ext-json-internals # PARTIAL_OUTPUT_ON_ERROR + UTF-8 fallback
+bug54484.phpt # ext-json-internals # error code numbering for UTF-8 within JSON
+bug55543.phpt # ext-json-internals # UTF-8 message text + flags
+bug61537.phpt # ext-json-internals # ext/json UTF-8 message text
+bug61978.phpt # ext-json-internals # ext/json UTF-8 message text
+bug62010.phpt # ext-json-internals # ext/json UTF-8 message text
+bug63737.phpt # ext-json-internals # ext/json UTF-8 message text
+bug68546.phpt # ext-json-internals # invalid UTF-8 + PARTIAL_OUTPUT
+bug68567.phpt # ext-json-internals # invalid UTF-8 + PARTIAL_OUTPUT
+bug69187.phpt # ext-json-internals # invalid UTF-8 + PARTIAL_OUTPUT
+bug72787.phpt # ext-json-internals # invalid UTF-8 + PARTIAL_OUTPUT
+bug73991.phpt # ext-json-internals # invalid UTF-8 + PARTIAL_OUTPUT
+bug77843.phpt # ext-json-internals # invalid UTF-8 + PARTIAL_OUTPUT
+
+# === Object property keys with embedded NUL (ext/json strips them) ===
+bug66021.phpt # ext-json-internals # NUL bytes in property names
+
+# === U+2028 / U+2029 line separator escaping ===
+# ext/json always escapes U+2028 and U+2029 (even with UNESCAPED_UNICODE)
+# because JSONP / older JS engines break on bare line separators inside
+# string literals. yyjson treats them as ordinary code points unless
+# YYJSON_WRITE_ESCAPE_UNICODE forces \uXXXX for the whole string.
+json_encode_u2028_u2029.phpt # doc-divergence # U+2028/U+2029 not specially escaped
+
+# === JSON_checker pass1 round-trip: fp formatting only ===
+# Full decode-then-re-encode round-trips of canonical stress-test
+# JSON files. The remaining differences are fp formatting only;
+# depth is now correct.
+pass001.phpt        # doc-divergence # fp formatting (yyjson 1e15 vs ext 1.0e+15)
+pass001.1.phpt      # doc-divergence # fp formatting
+pass001.1_64bit.phpt # doc-divergence # fp formatting

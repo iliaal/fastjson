@@ -1,0 +1,329 @@
+/*
+  +----------------------------------------------------------------------+
+  | Copyright (c) 2026, Ilia Alshanetsky                                 |
+  | Copyright (c) 2026, Advanced Internet Designs Inc.                   |
+  +----------------------------------------------------------------------+
+  | This source file is subject to the BSD 3-Clause license that is      |
+  | bundled with this package in the file LICENSE.                       |
+  +----------------------------------------------------------------------+
+  | Author: Ilia Alshanetsky <ilia@ilia.ws>                              |
+  +----------------------------------------------------------------------+
+*/
+
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
+#include <inttypes.h>
+#include <limits.h>
+#include <stdio.h>
+
+#include "php.h"
+#include "Zend/zend_call_stack.h"
+#include "Zend/zend_exceptions.h"
+#include "Zend/zend_smart_str.h"
+#include "php_fastjson.h"
+#include "fastjson_arginfo.h"
+#include "fastjson_alloc.h"
+#include "yyjson.h"
+
+/* Recursive walker: yyjson_val -> zval. Returns true on success, false
+ * on FASTJSON_ERROR_DEPTH (the only mid-walk failure mode). On failure
+ * `out` is left as a partial zend_array/zend_object whose
+ * zval_ptr_dtor in the caller's RETURN_NULL path frees the partially
+ * built children correctly.
+ *
+ * Ownership: every refcounted zval written into `out` is owned by
+ * `out` -- callers transfer it into a HashTable bucket via
+ * zend_hash_*_insert/update which copies the zval bytes (refcount
+ * unchanged), or into return_value via RETVAL_*. The local in this
+ * function then goes out of scope; the bucket / return_value owns
+ * the value from that point.
+ *
+ * remaining_depth follows ext/json's convention: starts at the
+ * caller's $depth, decrements before recursing into ARR/OBJ children.
+ * A top-level scalar at remaining_depth=1 is allowed; a top-level
+ * scalar at remaining_depth=0 fails. */
+static bool fastjson_yyval_to_zval(yyjson_val *val, bool assoc,
+                                   zend_long remaining_depth,
+                                   zend_long flags, zval *out)
+{
+    /* Depth semantics differ between encode and decode: ext/json's
+     * json_decode counts every level (scalar leaves included), while
+     * json_encode only counts containers. Cross-check:
+     *   json_decode("[[[1]]]", true, 3) -> NULL  (needs depth 4)
+     *   json_encode([[[1]]], 0, 3)      -> '[[[1]]]'  (3 containers)
+     * Match the decoder's stricter rule by checking depth at the top
+     * of every recurse, not just on container entry. */
+    if (remaining_depth <= 0) {
+        fastjson_set_encode_error(FASTJSON_ERROR_DEPTH,
+                                  "Maximum stack depth exceeded");
+        ZVAL_NULL(out);
+        return false;
+    }
+
+    yyjson_type t = yyjson_get_type(val);
+
+    switch (t) {
+    case YYJSON_TYPE_NULL:
+        ZVAL_NULL(out);
+        return true;
+
+    case YYJSON_TYPE_BOOL:
+        ZVAL_BOOL(out, yyjson_get_bool(val));
+        return true;
+
+    case YYJSON_TYPE_NUM:
+        if (yyjson_is_real(val)) {
+            ZVAL_DOUBLE(out, yyjson_get_real(val));
+        } else if (yyjson_is_uint(val)) {
+            uint64_t u = yyjson_get_uint(val);
+            /* PHP zend_long is signed 64-bit on LP64 builds. uint64
+             * values above LONG_MAX would silently wrap negative if
+             * we cast directly; ext/json's behaviour for that range
+             * is to widen to double. Match it.
+             * JSON_BIGINT_AS_STRING overrides the widen: format the
+             * uint64 as decimal and emit as a PHP string instead. */
+            if (u <= (uint64_t)ZEND_LONG_MAX) {
+                ZVAL_LONG(out, (zend_long)u);
+            } else if (flags & FASTJSON_DECODE_BIGINT_AS_STRING) {
+                char buf[24];
+                int len = snprintf(buf, sizeof(buf), "%" PRIu64, u);
+                ZVAL_STRINGL(out, buf, (size_t)len);
+            } else {
+                ZVAL_DOUBLE(out, (double)u);
+            }
+        } else { /* SINT */
+            ZVAL_LONG(out, (zend_long)yyjson_get_sint(val));
+        }
+        return true;
+
+    case YYJSON_TYPE_RAW:
+        /* yyjson emits YYJSON_TYPE_RAW for numbers that overflow
+         * uint64 / int64 / double when YYJSON_READ_BIGNUM_AS_RAW is
+         * set. We pass that flag exactly when the caller asked for
+         * JSON_BIGINT_AS_STRING, so the value is always the digit
+         * string they want. */
+        ZVAL_STRINGL(out, yyjson_get_raw(val), yyjson_get_len(val));
+        return true;
+
+    case YYJSON_TYPE_STR:
+        /* yyjson_get_len returns the byte length; ZVAL_STRINGL preserves
+         * embedded NULs that may appear after a   escape. */
+        ZVAL_STRINGL(out, yyjson_get_str(val), yyjson_get_len(val));
+        return true;
+
+    case YYJSON_TYPE_ARR: {
+        /* Stack-overflow guard for runaway recursion (parallel to the
+         * encoder's check; fires when remaining_depth is configured
+         * looser than zend.max_allowed_stack_size allows). */
+        if (UNEXPECTED(zend_call_stack_overflowed(EG(stack_limit)))) {
+            fastjson_set_encode_error(FASTJSON_ERROR_DEPTH,
+                                      "Maximum stack depth exceeded");
+            ZVAL_NULL(out);
+            return false;
+        }
+        /* Containers cost a minimum of 2 levels even when empty:
+         * ext/json's json_decode("[]", true, 1) returns NULL.
+         * The top-of-call check above guards remaining_depth>=1 for
+         * any value; here we additionally require >=2 before entering
+         * a container. */
+        if (remaining_depth <= 1) {
+            fastjson_set_encode_error(FASTJSON_ERROR_DEPTH,
+                                      "Maximum stack depth exceeded");
+            ZVAL_NULL(out);
+            return false;
+        }
+        size_t n = yyjson_arr_size(val);
+        array_init_size(out, (uint32_t)n);
+        yyjson_val *item;
+        yyjson_arr_iter iter;
+        yyjson_arr_iter_init(val, &iter);
+        while ((item = yyjson_arr_iter_next(&iter))) {
+            zval child;
+            if (!fastjson_yyval_to_zval(item, assoc,
+                                        remaining_depth - 1, flags, &child)) {
+                /* `out` is a real zend_array now; partial children get
+                 * freed by the caller's zval_ptr_dtor on the failure
+                 * path. We do nothing extra here. */
+                zval_ptr_dtor(&child);
+                return false;
+            }
+            zend_hash_next_index_insert(Z_ARRVAL_P(out), &child);
+        }
+        return true;
+    }
+
+    case YYJSON_TYPE_OBJ: {
+        if (UNEXPECTED(zend_call_stack_overflowed(EG(stack_limit)))) {
+            fastjson_set_encode_error(FASTJSON_ERROR_DEPTH,
+                                      "Maximum stack depth exceeded");
+            ZVAL_NULL(out);
+            return false;
+        }
+        if (remaining_depth <= 1) {
+            fastjson_set_encode_error(FASTJSON_ERROR_DEPTH,
+                                      "Maximum stack depth exceeded");
+            ZVAL_NULL(out);
+            return false;
+        }
+        size_t n = yyjson_obj_size(val);
+        HashTable *ht;
+        if (assoc) {
+            array_init_size(out, (uint32_t)n);
+            ht = Z_ARRVAL_P(out);
+        } else {
+            object_init(out);
+            /* Z_OBJPROP_P triggers lazy properties HashTable creation
+             * on the freshly-init'd stdClass. zend_hash_update on it
+             * directly avoids the write_property handler dispatch +
+             * zval copy that add_property_zval_ex would impose. */
+            ht = Z_OBJPROP_P(out);
+        }
+        yyjson_val *key;
+        yyjson_obj_iter iter;
+        yyjson_obj_iter_init(val, &iter);
+        while ((key = yyjson_obj_iter_next(&iter))) {
+            yyjson_val *vval = yyjson_obj_iter_get_val(key);
+            const char *kstr = yyjson_get_str(key);
+            size_t klen = yyjson_get_len(key);
+            zval child;
+            if (!fastjson_yyval_to_zval(vval, assoc,
+                                        remaining_depth - 1, flags, &child)) {
+                zval_ptr_dtor(&child);
+                return false;
+            }
+            if (assoc) {
+                /* zend_symtable_str_update applies PHP's standard
+                 * "0" -> 0 numeric-string-to-int promotion for array
+                 * keys. Empty key is allowed and stored as "". */
+                zend_symtable_str_update(ht, kstr, klen, &child);
+            } else {
+                /* Object properties keep string keys verbatim; "0"
+                 * stays "0" so $obj->{"0"} works as expected. */
+                zend_string *zk = zend_string_init(kstr, klen, 0);
+                zend_hash_update(ht, zk, &child);
+                zend_string_release_ex(zk, 0);
+            }
+        }
+        return true;
+    }
+
+    default:
+        /* YYJSON_TYPE_NONE / RAW shouldn't reach a parsed doc with
+         * default flags. Fall back to null rather than asserting. */
+        ZVAL_NULL(out);
+        return true;
+    }
+}
+
+PHP_FUNCTION(fastjson_decode)
+{
+    char *json;
+    size_t json_len;
+    bool assoc = false;
+    bool assoc_is_null = true;
+    zend_long depth = 512;
+    zend_long flags = 0;
+
+    ZEND_PARSE_PARAMETERS_START(1, 4)
+        Z_PARAM_STRING(json, json_len)
+        Z_PARAM_OPTIONAL
+        Z_PARAM_BOOL_OR_NULL(assoc, assoc_is_null)
+        Z_PARAM_LONG(depth)
+        Z_PARAM_LONG(flags)
+    ZEND_PARSE_PARAMETERS_END();
+
+    /* Match ext/json's argument validation contract verbatim:
+     *   depth <= 0          -> ValueError "must be greater than 0"
+     *   depth > INT_MAX     -> ValueError "must be less than %d"
+     * Both are arg #3 (after $json, $associative). */
+    if (depth <= 0) {
+        zend_argument_value_error(3, "must be greater than 0");
+        RETURN_THROWS();
+    }
+    if (depth > INT_MAX) {
+        zend_argument_value_error(3, "must be less than %d", INT_MAX);
+        RETURN_THROWS();
+    }
+
+    /* assoc=null currently maps to false. When JSON_OBJECT_AS_ARRAY
+     * (flag 1<<0) lands, null will pivot on that bit. */
+    bool use_assoc = !assoc_is_null && assoc;
+
+    /* Translate fastjson decode flags into yyjson_read_flag bits.
+     * BIGINT_AS_STRING -> BIGNUM_AS_RAW so numbers that overflow
+     * uint64/double are surfaced as YYJSON_TYPE_RAW (raw digit string).
+     * The walker handles both that and the uint > INT64_MAX inline
+     * stringification. */
+    yyjson_read_flag yflags = 0;
+    if (flags & FASTJSON_DECODE_BIGINT_AS_STRING) {
+        yflags |= YYJSON_READ_BIGNUM_AS_RAW;
+    }
+
+    /* JSON_THROW_ON_ERROR contract: on error, throw a JsonException
+     * and leave the GLOBAL fastjson_last_error state unchanged. This
+     * is how ext/json behaves (json_exceptions_error_clearing.phpt).
+     * We snapshot global state at entry and restore it on the throw
+     * path. The success path clears as usual on entry; non-throw
+     * failure path persists the error normally. */
+    bool throw_mode = (flags & FASTJSON_DECODE_THROW_ON_ERROR) != 0;
+    zend_long saved_err_code = FASTJSON_G(last_err_code);
+    const char *saved_err_msg = FASTJSON_G(last_err_msg);
+
+    yyjson_read_err err;
+    yyjson_doc *doc = yyjson_read_opts(json, json_len, yflags,
+                                       &fastjson_php_alc, &err);
+    if (doc == NULL) {
+        /* ext/json classifies any non-ASCII byte at a parse-error
+         * position as JSON_ERROR_UTF8, not JSON_ERROR_SYNTAX. yyjson
+         * distinguishes UNEXPECTED_CHARACTER (6) from INVALID_STRING
+         * (10); only the latter currently maps to UTF8. Override when
+         * the byte at the reported error position is >= 0x80, which is
+         * always invalid at top-level JSON (all JSON syntax bytes are
+         * ASCII). Matches the contract exercised by
+         * json_exceptions_error_clearing.phpt. */
+        if (err.pos < json_len
+                && (unsigned char)json[err.pos] >= 0x80) {
+            err.code = YYJSON_READ_ERROR_INVALID_STRING;
+        }
+        if (throw_mode) {
+            zend_long code = fastjson_translate_read_code(err.code);
+            zend_class_entry *ce = fastjson_json_exception_ce
+                ? fastjson_json_exception_ce : zend_ce_exception;
+            zend_throw_exception(ce, err.msg, code);
+            /* Preserve prior global error state; the exception carries
+             * the new error info. */
+            FASTJSON_G(last_err_code) = saved_err_code;
+            FASTJSON_G(last_err_msg) = saved_err_msg;
+            RETURN_THROWS();
+        }
+        fastjson_set_error(err.code, err.msg);
+        RETURN_NULL();
+    }
+
+    yyjson_val *root = yyjson_doc_get_root(doc);
+    if (!fastjson_yyval_to_zval(root, use_assoc, depth, flags, return_value)) {
+        /* fastjson_yyval_to_zval already populated FASTJSON_ERROR_DEPTH.
+         * return_value may hold a partial zend_array/zend_object; reset
+         * so RETURN_NULL gives the user a clean null. */
+        zval_ptr_dtor(return_value);
+        ZVAL_NULL(return_value);
+        yyjson_doc_free(doc);
+        if (throw_mode) {
+            zend_class_entry *ce = fastjson_json_exception_ce
+                ? fastjson_json_exception_ce : zend_ce_exception;
+            zend_throw_exception(ce,
+                FASTJSON_G(last_err_msg) ? FASTJSON_G(last_err_msg)
+                                         : "Maximum stack depth exceeded",
+                FASTJSON_G(last_err_code));
+            FASTJSON_G(last_err_code) = saved_err_code;
+            FASTJSON_G(last_err_msg) = saved_err_msg;
+            RETURN_THROWS();
+        }
+        return;
+    }
+
+    yyjson_doc_free(doc);
+    fastjson_clear_error();
+}

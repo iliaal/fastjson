@@ -1,0 +1,35 @@
+{
+    "name": "iliaal/fastjson",
+    "type": "php-ext",
+    "description": "Fast JSON encode/decode/validate for PHP 8.3+, backed by yyjson. Drop-in alternative to ext/json with namespaced fastjson_* functions and json_last_error-compatible error reporting.",
+    "keywords": ["json", "yyjson", "decode", "encode", "validate", "performance", "php-extension", "pie"],
+    "license": ["BSD-3-Clause", "MIT"],
+    "homepage": "https://github.com/iliaal/fastjson",
+    "authors": [
+        {
+            "name": "Ilia Alshanetsky",
+            "email": "ilia@ilia.ws"
+        }
+    ],
+    "require": {
+        "php": ">=8.3"
+    },
+    "php-ext": {
+        "extension-name": "fastjson",
+        "configure-options": [
+            {
+                "name": "enable-fastjson",
+                "description": "Enable fastjson (yyjson-backed JSON) support",
+                "needs-value": false
+            },
+            {
+                "name": "enable-fastjson-dev",
+                "description": "Enable -Werror plus strict checks for wrapper code (development builds)",
+                "needs-value": false
+            }
+        ],
+        "support-zts": true,
+        "support-nts": true,
+        "download-url-method": ["pre-packaged-binary", "composer-default"]
+    }
+}

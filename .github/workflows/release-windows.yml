@@ -1,0 +1,52 @@
+name: Release Windows binaries
+
+# Triggered when a GitHub Release is published. Builds the extension on
+# every supported PHP version x architecture x thread-safety variant on
+# Windows runners, then uploads each .dll as a release asset following the
+# PIE-compatible naming convention
+# (php_fastjson-<version>-<php_x.y>-<ts|nts>-vs17-<arch>.zip).
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  matrix:
+    name: Resolve Windows release matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v6
+      - id: matrix
+        uses: php/php-windows-builder/extension-matrix@v1
+        with:
+          php-version-list: '8.3, 8.4, 8.5'
+
+  build:
+    name: Build ${{ matrix.php-version }} ${{ matrix.ts }} ${{ matrix.arch }}
+    needs: matrix
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.matrix.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: php/php-windows-builder/extension@v1
+        with:
+          php-version: ${{ matrix.php-version }}
+          arch: ${{ matrix.arch }}
+          ts: ${{ matrix.ts }}
+          run-tests: 'false'
+
+  release:
+    name: Upload binaries to the release
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: write
+    steps:
+      - uses: php/php-windows-builder/release@v1
+        with:
+          release: ${{ github.event.release.tag_name }}
+          token: ${{ secrets.GITHUB_TOKEN }}
