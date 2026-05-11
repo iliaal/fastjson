@@ -1,0 +1,21 @@
+// vim:ft=javascript
+
+ARG_ENABLE("fastjson", "Enable fastjson (yyjson-backed JSON) support", "no");
+
+if (PHP_FASTJSON != "no") {
+    var yyjson_src_dir = "vendor\\yyjson";
+
+    // yyjson.h on Windows expands `yyjson_api` to __declspec(dllexport) only
+    // when YYJSON_EXPORTS is defined. We don't define it, so all yyjson
+    // symbols stay internal to the extension DLL by default. Adding the
+    // include path is the only build-flag work needed.
+    ADD_FLAG("CFLAGS_FASTJSON",
+        "/I" + configure_module_dirname + "\\" + yyjson_src_dir);
+
+    var wrapper_sources = "fastjson.c fastjson_alloc.c fastjson_decode.c " +
+        "fastjson_encode.c fastjson_directwrite.c";
+
+    EXTENSION("fastjson", wrapper_sources, null);
+    ADD_SOURCES(configure_module_dirname + "\\" + yyjson_src_dir,
+        "yyjson.c", "fastjson");
+}
