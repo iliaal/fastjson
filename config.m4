@@ -25,11 +25,18 @@ if test "$PHP_FASTJSON" != "no"; then
   dnl we don't use; also covers yyjson static helpers that aren't
   dnl reachable depending on SIMD / float-conversion build config.
   dnl
-  dnl -fvisibility=hidden keeps yyjson symbols out of the .so's dynamic
-  dnl table; ZEND_GET_MODULE marks get_module with visibility("default")
-  dnl so the loader still finds it. Prevents collisions with another
-  dnl extension (or a future ext/json link) that also vendors yyjson.
-  FASTJSON_CFLAGS="-fvisibility=hidden \
+  dnl -fvisibility=hidden + -Dyyjson_api= keeps yyjson symbols out of
+  dnl the .so's dynamic table. The compiler flag flips the default to
+  dnl hidden, but vendor/yyjson/yyjson.h defines yyjson_api as
+  dnl __attribute__((visibility("default"))) which would override that
+  dnl per-symbol. Pre-defining yyjson_api to empty (the #ifndef guard
+  dnl at yyjson.h:322 lets us win the macro race) drops the explicit
+  dnl default-visibility attribute, leaving the compiler default to
+  dnl apply. ZEND_GET_MODULE separately marks get_module as default-
+  dnl visibility so the loader still finds it. Prevents collisions
+  dnl with another extension (or a future ext/json link) that also
+  dnl vendors yyjson.
+  FASTJSON_CFLAGS="-fvisibility=hidden -Dyyjson_api= \
     -Wall -Wextra -Wno-unused-parameter -Wno-unused-function"
 
   dnl -Wshadow is intentionally NOT enabled; PHP's own headers declare
