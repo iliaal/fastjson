@@ -169,3 +169,40 @@ to fit worst-case `\uXXXX` expansion plus surrounding quotes.
   smart_str / yyjson_alc concern.
 - No `YYJSON_WRITE_INF_AND_NAN_AS_NULL` handling (string-only path).
 - No pretty-print logic (strings have no indentation context).
+
+## Build-flag dependencies (not vendor patches)
+
+These aren't edits to vendored sources, but they depend on a specific
+invariant in the upstream code. Re-check on every yyjson upgrade.
+
+### `-Dyyjson_api=` neutralizes `visibility("default")`
+
+**File:** `vendor/yyjson/yyjson.h` (read-only invariant)
+**Build site:** `config.m4` FASTJSON_CFLAGS
+
+**Reason.** `-fvisibility=hidden` alone doesn't keep yyjson symbols
+out of the .so's dynamic table because upstream defines `yyjson_api`
+as `__attribute__((visibility("default")))` per-symbol, overriding
+the compiler default. Without the workaround, `nm -D` lists ~49
+`yyjson_*` / `unsafe_yyjson_*` symbols.
+
+**Mechanism.** `config.m4` passes `-Dyyjson_api=` so the preprocessor
+sees the macro as already defined before `yyjson.h` reaches its
+`#ifndef yyjson_api` guard (currently at line 322 in 0.12.0). The
+visibility-default branch is skipped; symbols inherit
+`-fvisibility=hidden`. fastjson is the only caller of yyjson within
+the .so, so hidden visibility doesn't affect functionality.
+
+**Re-check on upgrade.**
+
+1. Confirm `yyjson.h` still uses `#ifndef yyjson_api` to guard its
+   visibility-default definition. If upstream switches to an
+   unconditional `#define`, `-Dyyjson_api=` will trigger a
+   redefinition warning and the build flag will need to change (e.g.
+   patch the header instead).
+2. After building, verify with:
+   ```sh
+   nm -D --defined-only modules/fastjson.so | grep -v get_module
+   ```
+   Expected output: empty. Anything else means the override leaked
+   again.
