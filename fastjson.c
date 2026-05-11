@@ -106,9 +106,17 @@ char *fastjson_sanitize_utf8(const char *s, size_t len, zend_long flags,
         : (has_subst && !has_ignore); /* encode: BOTH -> IGNORE strips */
 
     /* Worst-case output: 3 bytes per input byte (each invalid byte
-     * substituted by the 3-byte U+FFFD). IGNORE-only is <= input-sized. */
-    size_t cap = substitute ? len * 3 + 1 : (len > 0 ? len : 1);
-    char *out = emalloc(cap);
+     * substituted by the 3-byte U+FFFD). IGNORE-only is <= input-sized.
+     * safe_emalloc(nmemb, size, offset) bails the request via PHP's
+     * out-of-memory handler if nmemb * size + offset overflows
+     * size_t -- which lets us cap any caller-controlled `len` without
+     * an explicit (SIZE_MAX-1)/3 check here. */
+    char *out;
+    if (substitute) {
+        out = safe_emalloc(len, 3, 1);
+    } else {
+        out = emalloc(len > 0 ? len : 1);
+    }
     char *w = out;
 
     /* Encode side: mirror ext/standard/html.c::get_next_char (UTR-36
