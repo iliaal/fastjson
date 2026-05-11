@@ -6,6 +6,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-05-11
+
+### Build
+
+- Added `config.w32` so the php-windows-builder action can build
+  Windows DLLs. 0.2.0 shipped without one and the
+  `release-windows.yml` workflow couldn't compile the extension.
+  No source changes; identical behavior to 0.2.0 on every platform.
+
 ## [0.2.0] - 2026-05-11
 
 ### Added
@@ -155,6 +164,7 @@ backed by yyjson 0.12.0.
 - U+2028 / U+2029 line separators emitted as ordinary code points
   (yyjson default). ext/json always escapes for JSONP safety.
 
-[Unreleased]: https://github.com/iliaal/fastjson/compare/0.2.0...HEAD
+[Unreleased]: https://github.com/iliaal/fastjson/compare/0.2.1...HEAD
+[0.2.1]: https://github.com/iliaal/fastjson/releases/tag/0.2.1
 [0.2.0]: https://github.com/iliaal/fastjson/releases/tag/0.2.0
 [0.1.0]: https://github.com/iliaal/fastjson/releases/tag/0.1.0
