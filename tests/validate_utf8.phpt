@@ -19,13 +19,20 @@ var_dump(fastjson_last_error() === FASTJSON_ERROR_UTF8);
 
 echo "---\n";
 
-// Non-ASCII byte at top-level (no surrounding string): yyjson reports
-// UNEXPECTED_CHARACTER, but ext/json categorizes any high-byte at a
-// parse-error position as JSON_ERROR_UTF8. fastjson_validate must
-// agree with fastjson_decode here.
-foreach (["\xC3\xA9", "\x80", "[\x80]"] as $in) {
+// Parse-error byte classification at top level:
+//  - Valid UTF-8 sequence that isn't valid JSON ("\xC3\xA9" = bare `é`)
+//    stays SYNTAX, matching ext/json.
+//  - Malformed UTF-8 (lone continuation, truncated lead) becomes UTF8.
+$cases = [
+    "\xC3\xA9"  => FASTJSON_ERROR_SYNTAX,
+    "\x80"      => FASTJSON_ERROR_UTF8,
+    "\xC3"      => FASTJSON_ERROR_UTF8,
+    "[\x80]"    => FASTJSON_ERROR_UTF8,
+    "[\xC3\xA9]" => FASTJSON_ERROR_SYNTAX,
+];
+foreach ($cases as $in => $expected) {
     fastjson_validate($in);
-    var_dump(fastjson_last_error() === FASTJSON_ERROR_UTF8);
+    var_dump(fastjson_last_error() === $expected);
 }
 ?>
 --EXPECT--
@@ -35,6 +42,8 @@ bool(true)
 bool(false)
 bool(true)
 ---
+bool(true)
+bool(true)
 bool(true)
 bool(true)
 bool(true)

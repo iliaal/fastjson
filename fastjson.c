@@ -60,6 +60,35 @@ void fastjson_set_encode_error(zend_long code, const char *msg)
     FASTJSON_G(last_err_msg) = msg;
 }
 
+bool fastjson_byte_is_valid_utf8_start(const char *s, size_t len, size_t pos)
+{
+    if (pos >= len) return false;
+    unsigned char c0 = (unsigned char)s[pos];
+    if (c0 < 0x80) return true;
+    if (c0 < 0xC2) return false; /* 0x80-0xBF lone cont, 0xC0/0xC1 overlong */
+
+    size_t need;
+    if (c0 < 0xE0) need = 1;
+    else if (c0 < 0xF0) need = 2;
+    else if (c0 < 0xF5) need = 3;
+    else return false; /* 0xF5-0xFF: encodes beyond U+10FFFF */
+
+    if (pos + need >= len) return false; /* truncated */
+    for (size_t i = 1; i <= need; i++) {
+        if (((unsigned char)s[pos + i] & 0xC0) != 0x80) return false;
+    }
+    /* Range restrictions inside the otherwise-valid byte pattern. */
+    unsigned char c1 = (unsigned char)s[pos + 1];
+    if (need == 2) {
+        if (c0 == 0xE0 && c1 < 0xA0) return false; /* overlong */
+        if (c0 == 0xED && c1 >= 0xA0) return false; /* UTF-16 surrogate */
+    } else if (need == 3) {
+        if (c0 == 0xF0 && c1 < 0x90) return false; /* overlong */
+        if (c0 == 0xF4 && c1 >= 0x90) return false; /* > U+10FFFF */
+    }
+    return true;
+}
+
 bool fastjson_input_has_inf_nan_literal(const char *s, size_t len)
 {
     /* Walk outside string literals. Inside "..." backslash escapes
@@ -138,6 +167,13 @@ PHP_FUNCTION(fastjson_validate)
         RETURN_FALSE;
     }
 
+    /* Clear residual last_error state from a prior call before any
+     * argument-validation ValueError can throw. Mirrors ext/json's
+     * json_validate, which resets error state immediately after the
+     * empty-input short-circuit so the post-throw global state is
+     * NONE, not whatever the previous call left behind. */
+    fastjson_clear_error();
+
     if (depth <= 0) {
         zend_argument_value_error(2, "must be greater than 0");
         RETURN_THROWS();
@@ -175,13 +211,14 @@ PHP_FUNCTION(fastjson_validate)
     }
 
     if (doc == NULL) {
-        /* Match fastjson_decode: a non-ASCII byte at the parse-error
-         * position is invalid UTF-8 at top-level JSON, which ext/json
-         * surfaces as JSON_ERROR_UTF8 (not JSON_ERROR_SYNTAX). yyjson
-         * reports it under UNEXPECTED_CHARACTER; reclassify before
-         * recording. */
+        /* Match fastjson_decode: a malformed UTF-8 byte at the parse-
+         * error position is JSON_ERROR_UTF8, not JSON_ERROR_SYNTAX.
+         * A non-ASCII byte that starts a valid UTF-8 sequence (e.g.
+         * a bare `é` at top level) is a syntactic JSON error, not a
+         * UTF-8 error -- ext/json keeps SYNTAX for those. */
         if (err.pos < json_len
-                && (unsigned char)json[err.pos] >= 0x80) {
+                && (unsigned char)json[err.pos] >= 0x80
+                && !fastjson_byte_is_valid_utf8_start(json, json_len, err.pos)) {
             err.code = YYJSON_READ_ERROR_INVALID_STRING;
         }
         fastjson_set_error(err.code, err.msg);

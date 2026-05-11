@@ -119,4 +119,13 @@ void fastjson_set_encode_error(zend_long code, const char *msg);
  * ext/json rejects. */
 bool fastjson_input_has_inf_nan_literal(const char *s, size_t len);
 
+/* Returns true if the bytes starting at s[pos] form a valid UTF-8
+ * sequence: ASCII, or a complete and well-formed 2/3/4-byte
+ * sequence with no overlong, surrogate, or out-of-range encodings.
+ * Used to gate the parse-error UTF-8 reclassification -- yyjson
+ * reports any unexpected character as a syntax issue, but ext/json
+ * distinguishes valid-UTF-8-but-not-JSON (SYNTAX) from
+ * malformed-UTF-8 (UTF8). */
+bool fastjson_byte_is_valid_utf8_start(const char *s, size_t len, size_t pos);
+
 #endif /* PHP_FASTJSON_H */

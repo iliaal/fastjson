@@ -250,6 +250,24 @@ PHP_FUNCTION(fastjson_decode)
         Z_PARAM_LONG(flags)
     ZEND_PARSE_PARAMETERS_END();
 
+    /* JSON_THROW_ON_ERROR contract: on error, throw a JsonException
+     * and leave the GLOBAL fastjson_last_error state unchanged. This
+     * is how ext/json behaves (json_exceptions_error_clearing.phpt).
+     * We snapshot global state at entry and restore it on the throw
+     * path. The success path clears as usual on entry; non-throw
+     * failure path persists the error normally. */
+    bool throw_mode = (flags & FASTJSON_DECODE_THROW_ON_ERROR) != 0;
+    zend_long saved_err_code = FASTJSON_G(last_err_code);
+    const char *saved_err_msg = FASTJSON_G(last_err_msg);
+
+    /* In non-throw mode, ext/json clears the error state up front so
+     * any argument-validation ValueError leaves last_error as NONE
+     * rather than whatever a previous call recorded. THROW_ON_ERROR
+     * mode preserves the prior state per its own contract. */
+    if (!throw_mode) {
+        fastjson_clear_error();
+    }
+
     /* Match ext/json's argument validation contract verbatim:
      *   depth <= 0          -> ValueError "must be greater than 0"
      *   depth > INT_MAX     -> ValueError "must be less than %d"
@@ -280,16 +298,6 @@ PHP_FUNCTION(fastjson_decode)
         yflags |= YYJSON_READ_BIGNUM_AS_RAW;
     }
 
-    /* JSON_THROW_ON_ERROR contract: on error, throw a JsonException
-     * and leave the GLOBAL fastjson_last_error state unchanged. This
-     * is how ext/json behaves (json_exceptions_error_clearing.phpt).
-     * We snapshot global state at entry and restore it on the throw
-     * path. The success path clears as usual on entry; non-throw
-     * failure path persists the error normally. */
-    bool throw_mode = (flags & FASTJSON_DECODE_THROW_ON_ERROR) != 0;
-    zend_long saved_err_code = FASTJSON_G(last_err_code);
-    const char *saved_err_msg = FASTJSON_G(last_err_msg);
-
     yyjson_read_err err;
     yyjson_doc *doc = yyjson_read_opts(json, json_len, yflags,
                                        &fastjson_php_alc, &err);
@@ -308,16 +316,15 @@ PHP_FUNCTION(fastjson_decode)
                                &fastjson_php_alc, &err);
     }
     if (doc == NULL) {
-        /* ext/json classifies any non-ASCII byte at a parse-error
-         * position as JSON_ERROR_UTF8, not JSON_ERROR_SYNTAX. yyjson
-         * distinguishes UNEXPECTED_CHARACTER (6) from INVALID_STRING
-         * (10); only the latter currently maps to UTF8. Override when
-         * the byte at the reported error position is >= 0x80, which is
-         * always invalid at top-level JSON (all JSON syntax bytes are
-         * ASCII). Matches the contract exercised by
-         * json_exceptions_error_clearing.phpt. */
+        /* ext/json classifies a MALFORMED UTF-8 byte at a parse-error
+         * position as JSON_ERROR_UTF8; a valid-UTF-8-but-not-JSON byte
+         * (e.g. bare `é` at top level) stays JSON_ERROR_SYNTAX. yyjson
+         * reports both as UNEXPECTED_CHARACTER, so we re-categorize
+         * only when the byte sequence is genuinely malformed UTF-8.
+         * Matches json_exceptions_error_clearing.phpt. */
         if (err.pos < json_len
-                && (unsigned char)json[err.pos] >= 0x80) {
+                && (unsigned char)json[err.pos] >= 0x80
+                && !fastjson_byte_is_valid_utf8_start(json, json_len, err.pos)) {
             err.code = YYJSON_READ_ERROR_INVALID_STRING;
         }
         if (throw_mode) {
