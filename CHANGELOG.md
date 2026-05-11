@@ -6,6 +6,63 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-05-11
+
+### Added
+
+- `JSON_INVALID_UTF8_IGNORE` and `JSON_INVALID_UTF8_SUBSTITUTE` honored
+  on both encode and decode, with ext/json-matching semantics: IGNORE
+  strips invalid bytes, SUBSTITUTE replaces with U+FFFD. Encode follows
+  `php_next_utf8_char`'s UTR-36 maximal-subpart advance rule; decode
+  does per-byte advance, mirroring ext/json's parser state machine.
+  Both sides also reproduce ext/json's asymmetric precedence when both
+  bits are set (encode prefers IGNORE, decode prefers SUBSTITUTE).
+  Decode dispatches to a separate sanitizing walker only when a flag
+  is set, keeping the no-flag hot path branch-free.
+
+### Fixed
+
+- `JSON_HEX_QUOT` produced unterminated JSON for strings ending in `\`.
+  The post-write substitution scan misread the second byte of an
+  escaped `\\` followed by the closing `"` as a `\"` escape. The
+  scan now walks JSON escape sequences explicitly.
+- Virtual properties without a get hook (PHP 8.4) were being read by
+  the encoder; `dw_emit_object` now skips them per ext/json.
+- `fastjson_validate` now classifies a non-ASCII parse-error byte as
+  `JSON_ERROR_UTF8` only when the bytes are malformed UTF-8. Valid
+  UTF-8 sequences that aren't valid JSON (e.g. bare `é` at top level)
+  stay `JSON_ERROR_SYNTAX`, matching ext/json. Decode shared the same
+  fix.
+- `fastjson_validate("", -1)` now short-circuits to `false` (matching
+  ext/json) instead of raising `ValueError` before the empty-input
+  check.
+- `-0.0` now encodes as `"-0"` (or `"-0.0"` with `PRESERVE_ZERO_FRACTION`)
+  instead of `"0"`. The integer-valued-double shortcut had been
+  zero-extending the sign.
+- `last_error` is cleared before an argument `ValueError` raises on
+  bad `$depth`, in both `fastjson_decode` and `fastjson_validate`
+  (matches ext/json's `json_decode` / `json_validate` contract).
+
+### Build
+
+- Vendored yyjson symbols no longer leak into the .so dynamic table.
+  `-fvisibility=hidden` was being overridden by yyjson's
+  `__attribute__((visibility("default")))` per-symbol; the build now
+  also passes `-Dyyjson_api=` so the macro's `#ifndef` guard skips
+  the visibility-default branch. After this change `nm -D
+  modules/fastjson.so | grep -v get_module` returns empty.
+
+### Tests
+
+- ~14 previously-skipped ext/json upstream tests now pass under the
+  fastjson harness, mostly from the `JSON_INVALID_UTF8_*` work
+  (`json_encode_invalid_utf8`, `json_decode_invalid_utf8`, `bug43941`,
+  `bug55543`, `bug61978`, `bug63737`, `bug68567`, `bug72787`,
+  `bug73991`). New tests cover the fixes: `encode_hex_flags.phpt`,
+  `encode_virtual_no_get.phpt`, `error_cleared_on_value_error.phpt`,
+  `invalid_utf8_flags.phpt`. Extended: `validate_utf8.phpt`,
+  `validate_depth.phpt`, `encode_preserve_zero_fraction.phpt`.
+
 ## [0.1.0] - 2026-05-10
 
 Initial release. Fast JSON encode, decode, and validate for PHP 8.3+,
@@ -98,5 +155,6 @@ backed by yyjson 0.12.0.
 - U+2028 / U+2029 line separators emitted as ordinary code points
   (yyjson default). ext/json always escapes for JSONP safety.
 
-[Unreleased]: https://github.com/iliaal/fastjson/compare/0.1.0...HEAD
+[Unreleased]: https://github.com/iliaal/fastjson/compare/0.2.0...HEAD
+[0.2.0]: https://github.com/iliaal/fastjson/releases/tag/0.2.0
 [0.1.0]: https://github.com/iliaal/fastjson/releases/tag/0.1.0
