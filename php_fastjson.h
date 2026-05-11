@@ -113,4 +113,10 @@ void fastjson_clear_error(void);
  * translation). msg may be NULL or a string literal -- not freed. */
 void fastjson_set_encode_error(zend_long code, const char *msg);
 
+/* Returns true if `s` contains an unquoted Inf, Infinity, or NaN
+ * literal token (case-insensitive). Used after the overflow-retry
+ * parse to reject inputs that mix overflow with a literal that
+ * ext/json rejects. */
+bool fastjson_input_has_inf_nan_literal(const char *s, size_t len);
+
 #endif /* PHP_FASTJSON_H */

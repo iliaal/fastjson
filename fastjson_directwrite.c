@@ -495,11 +495,29 @@ static bool dw_emit_object(fastjson_dw_ctx *ctx, zval *zv,
         if (Z_TYPE_P(item) == IS_INDIRECT) {
             item = Z_INDIRECT_P(item);
         }
-        /* IS_PTR entries are PHP 8.4+ hooked-property markers; skipping
-         * them is a known divergence from ext/json (which invokes the
-         * get hook and serializes the result). Tracked separately. */
+        /* PHP 8.4 hooked properties: zend_get_properties_for(JSON)
+         * delivers them as IS_PTR pointing at a zend_property_info.
+         * ext/json invokes the get hook via zend_read_property_ex and
+         * serializes the returned zval; we mirror that. The returned
+         * zval lives on our stack (rv); stash it so the zend_string
+         * inside survives until the encode finishes. */
+        zval hook_rv;
         if (Z_TYPE_P(item) == IS_PTR) {
-            continue;
+            zend_property_info *info = Z_PTR_P(item);
+            ZVAL_UNDEF(&hook_rv);
+            zval *hooked = zend_read_property_ex(info->ce, Z_OBJ_P(zv),
+                                                 info->name, false, &hook_rv);
+            if (EG(exception)) {
+                if (need_recursion_guard) GC_UNPROTECT_RECURSION(props);
+                if (pretty && !empty) ctx->indent_level--;
+                zend_release_properties(props);
+                return false;
+            }
+            if (!ctx->retval_stash_inited) {
+                zend_hash_init(&ctx->retval_stash, 0, NULL, ZVAL_PTR_DTOR, 0);
+                ctx->retval_stash_inited = true;
+            }
+            item = zend_hash_next_index_insert(&ctx->retval_stash, hooked);
         }
         if (Z_ISUNDEF_P(item)) continue;
         ZVAL_DEREF(item);

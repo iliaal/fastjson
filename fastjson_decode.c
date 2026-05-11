@@ -98,14 +98,30 @@ static bool fastjson_yyval_to_zval(yyjson_val *val, bool assoc,
         }
         return true;
 
-    case YYJSON_TYPE_RAW:
-        /* yyjson emits YYJSON_TYPE_RAW for numbers that overflow
-         * uint64 / int64 / double when YYJSON_READ_BIGNUM_AS_RAW is
-         * set. We pass that flag exactly when the caller asked for
-         * JSON_BIGINT_AS_STRING, so the value is always the digit
-         * string they want. */
-        ZVAL_STRINGL(out, yyjson_get_raw(val), yyjson_get_len(val));
+    case YYJSON_TYPE_RAW: {
+        /* yyjson emits YYJSON_TYPE_RAW under YYJSON_READ_BIGNUM_AS_RAW
+         * for two distinct cases:
+         *   1. Big integers that overflow int64/uint64. ext/json's
+         *      JSON_BIGINT_AS_STRING wants these as strings; passthrough.
+         *   2. Floats whose exponent overflows a double (e.g. 1e309).
+         *      ext/json decodes those to PHP INF -- BIGINT_AS_STRING
+         *      does NOT apply to floats. Re-parse via strtod so we
+         *      return the same float ext/json would.
+         * Float shape: presence of '.', 'e', or 'E' in the raw text. */
+        const char *raw = yyjson_get_raw(val);
+        size_t raw_len = yyjson_get_len(val);
+        bool is_float = false;
+        for (size_t i = 0; i < raw_len; i++) {
+            char c = raw[i];
+            if (c == '.' || c == 'e' || c == 'E') { is_float = true; break; }
+        }
+        if (is_float) {
+            ZVAL_DOUBLE(out, zend_strtod(raw, NULL));
+        } else {
+            ZVAL_STRINGL(out, raw, raw_len);
+        }
         return true;
+    }
 
     case YYJSON_TYPE_STR:
         /* yyjson_get_len returns the byte length; ZVAL_STRINGL preserves
@@ -278,14 +294,15 @@ PHP_FUNCTION(fastjson_decode)
     yyjson_doc *doc = yyjson_read_opts(json, json_len, yflags,
                                        &fastjson_php_alc, &err);
     if (doc == NULL && err.msg
-            && strcmp(err.msg, "number is infinity when parsed as double") == 0) {
+            && strcmp(err.msg, "number is infinity when parsed as double") == 0
+            && !fastjson_input_has_inf_nan_literal(json, json_len)) {
         /* yyjson rejects exponent-overflow numbers like "1e309" by
          * default; ext/json accepts and decodes to INF. Retry with
-         * ALLOW_INF_AND_NAN to match. The retry also accepts the
-         * literal tokens Infinity/-Infinity/NaN which ext/json
-         * rejects; in inputs that combine overflow with one of those
-         * literals fastjson over-accepts compared to ext/json. The
-         * far more common case (pure overflow) lines up byte-for-byte. */
+         * ALLOW_INF_AND_NAN to match. The pre-scan keeps inputs that
+         * also contain an unquoted Inf/NaN literal token rejected
+         * (yyjson's flag would otherwise accept them, but ext/json
+         * doesn't). The far more common case (pure overflow, no
+         * literal tokens) lines up byte-for-byte. */
         doc = yyjson_read_opts(json, json_len,
                                yflags | YYJSON_READ_ALLOW_INF_AND_NAN,
                                &fastjson_php_alc, &err);

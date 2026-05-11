@@ -60,6 +60,40 @@ void fastjson_set_encode_error(zend_long code, const char *msg)
     FASTJSON_G(last_err_msg) = msg;
 }
 
+bool fastjson_input_has_inf_nan_literal(const char *s, size_t len)
+{
+    /* Walk outside string literals. Inside "..." backslash escapes
+     * the next char. Anywhere unquoted, an ASCII run starting with
+     * I/i + N/n + F/f (Inf or Infinity) or N/n + A/a + N/n (NaN) is
+     * the literal yyjson's ALLOW_INF_AND_NAN accepts and ext/json
+     * doesn't. yyjson also accepts a leading '-'; we still match
+     * either form via the I/N start. */
+    bool in_str = false;
+    bool escape = false;
+    for (size_t i = 0; i < len; i++) {
+        unsigned char c = (unsigned char)s[i];
+        if (in_str) {
+            if (escape) { escape = false; continue; }
+            if (c == '\\') { escape = true; continue; }
+            if (c == '"') { in_str = false; }
+            continue;
+        }
+        if (c == '"') { in_str = true; continue; }
+        unsigned char lc = c | 0x20;
+        if (lc == 'i' && i + 2 < len
+                && ((unsigned char)s[i + 1] | 0x20) == 'n'
+                && ((unsigned char)s[i + 2] | 0x20) == 'f') {
+            return true;
+        }
+        if (lc == 'n' && i + 2 < len
+                && ((unsigned char)s[i + 1] | 0x20) == 'a'
+                && ((unsigned char)s[i + 2] | 0x20) == 'n') {
+            return true;
+        }
+    }
+    return false;
+}
+
 PHP_FUNCTION(fastjson_version)
 {
     ZEND_PARSE_PARAMETERS_NONE();
@@ -117,10 +151,12 @@ PHP_FUNCTION(fastjson_validate)
     yyjson_doc *doc = yyjson_read_opts(json, json_len, yflags,
                                        &fastjson_php_alc, &err);
     if (doc == NULL && err.msg
-            && strcmp(err.msg, "number is infinity when parsed as double") == 0) {
+            && strcmp(err.msg, "number is infinity when parsed as double") == 0
+            && !fastjson_input_has_inf_nan_literal(json, json_len)) {
         /* Match ext/json: exponent-overflow numbers like "1e309" are
-         * valid JSON values (decoded to INF). See fastjson_decode.c
-         * for the corner case around mixing with literal Infinity/NaN. */
+         * valid JSON values (decoded to INF). The pre-scan rejects
+         * inputs that also contain an unquoted Inf/NaN literal, which
+         * yyjson's flag would accept but ext/json doesn't. */
         doc = yyjson_read_opts(json, json_len,
                                yflags | YYJSON_READ_ALLOW_INF_AND_NAN,
                                &fastjson_php_alc, &err);
