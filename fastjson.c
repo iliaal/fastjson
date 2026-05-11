@@ -114,25 +114,36 @@ PHP_FUNCTION(fastjson_validate)
         Z_PARAM_LONG(flags)
     ZEND_PARSE_PARAMETERS_END();
 
-    /* Match ext/json's json_validate argument validation:
-     *   depth <= 0       -> ValueError "must be greater than 0"
-     *   depth > INT_MAX  -> ValueError "must be less than %d"
-     * Both are arg #2. */
+    /* Argument validation order mirrors ext/json's json_validate
+     * verbatim so behavior matches when multiple inputs are out of
+     * spec at once:
+     *   1. $flags check     -> ValueError (allowed flags message)
+     *   2. empty input      -> RETURN_FALSE with SYNTAX error
+     *   3. $depth <= 0      -> ValueError "must be greater than 0"
+     *   4. $depth > INT_MAX -> ValueError "must be less than %d"
+     * In particular: empty input with bad $depth short-circuits to
+     * false before the depth check raises. */
+    if (flags & ~(zend_long)FASTJSON_DECODE_INVALID_UTF8_IGNORE) {
+        zend_argument_value_error(3,
+            "must be a valid flag (allowed flags: JSON_INVALID_UTF8_IGNORE)");
+        RETURN_THROWS();
+    }
+
+    if (json_len == 0) {
+        /* Use the same message yyjson would have produced so the
+         * fast-path return is observationally identical to the parse-
+         * path return for empty input. */
+        fastjson_set_error(YYJSON_READ_ERROR_INVALID_PARAMETER,
+                           "input length is 0");
+        RETURN_FALSE;
+    }
+
     if (depth <= 0) {
         zend_argument_value_error(2, "must be greater than 0");
         RETURN_THROWS();
     }
     if (depth > INT_MAX) {
         zend_argument_value_error(2, "must be less than %d", INT_MAX);
-        RETURN_THROWS();
-    }
-
-    /* ext/json's json_validate accepts only JSON_INVALID_UTF8_IGNORE
-     * in $flags and rejects any other bit with a ValueError. Mirror
-     * that contract verbatim. */
-    if (flags & ~(zend_long)FASTJSON_DECODE_INVALID_UTF8_IGNORE) {
-        zend_argument_value_error(3,
-            "must be a valid flag (allowed flags: JSON_INVALID_UTF8_IGNORE)");
         RETURN_THROWS();
     }
 
@@ -164,6 +175,15 @@ PHP_FUNCTION(fastjson_validate)
     }
 
     if (doc == NULL) {
+        /* Match fastjson_decode: a non-ASCII byte at the parse-error
+         * position is invalid UTF-8 at top-level JSON, which ext/json
+         * surfaces as JSON_ERROR_UTF8 (not JSON_ERROR_SYNTAX). yyjson
+         * reports it under UNEXPECTED_CHARACTER; reclassify before
+         * recording. */
+        if (err.pos < json_len
+                && (unsigned char)json[err.pos] >= 0x80) {
+            err.code = YYJSON_READ_ERROR_INVALID_STRING;
+        }
         fastjson_set_error(err.code, err.msg);
         RETURN_FALSE;
     }

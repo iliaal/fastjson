@@ -118,10 +118,14 @@ static inline void dw_emit_newline_indent(fastjson_dw_ctx *ctx, int level)
 /* Apply the JSON_HEX_TAG / HEX_AMP / HEX_APOS / HEX_QUOT substitutions
  * to a string buffer region [start_pos, end_pos). Operates on the
  * smart_str's underlying byte buffer; safe because these substitutions
- * only ever lengthen the region. The targeted bytes never appear as
- * JSON syntax bytes -- they only show up inside string content -- so
- * a byte-level scan over the just-emitted string segment is correct
- * without tracking string-boundary state. */
+ * only ever lengthen the region.
+ *
+ * The scan walks JSON escape sequences explicitly: when we see a '\',
+ * we consume the whole escape (2 bytes for short escapes, 6 for \uXXXX)
+ * before deciding what to do next. Only the '\"' escape is a candidate
+ * for HEX_QUOT substitution. Bare '<', '>', '&', '\'' only ever appear
+ * as string content (yyjson never escapes them), so HEX_TAG/AMP/APOS
+ * substitute every occurrence outside an escape body. */
 static void dw_apply_hex_escapes(fastjson_dw_ctx *ctx,
                                  size_t start_pos)
 {
@@ -146,6 +150,26 @@ static void dw_apply_hex_escapes(fastjson_dw_ctx *ctx,
     smart_str_alloc(&ctx->buf, orig_len * 6, 0);
     for (size_t i = 0; i < orig_len; i++) {
         unsigned char c = (unsigned char)orig[i];
+        if (c == '\\' && i + 1 < orig_len) {
+            unsigned char next = (unsigned char)orig[i + 1];
+            if (quot && next == '"') {
+                smart_str_appendl(&ctx->buf, "\\u0022", 6);
+                i++;
+                continue;
+            }
+            /* Some other JSON escape (\\, \/, \b, \f, \n, \r, \t, \uXXXX).
+             * Copy it verbatim and advance past the escape body so the
+             * scanner doesn't reinterpret its trailing bytes as content. */
+            smart_str_appendc(&ctx->buf, '\\');
+            smart_str_appendc(&ctx->buf, (char)next);
+            if (next == 'u' && i + 5 < orig_len) {
+                smart_str_appendl(&ctx->buf, &orig[i + 2], 4);
+                i += 5;
+            } else {
+                i += 1;
+            }
+            continue;
+        }
         if (tag && c == '<') {
             smart_str_appendl(&ctx->buf, "\\u003C", 6); continue;
         }
@@ -157,11 +181,6 @@ static void dw_apply_hex_escapes(fastjson_dw_ctx *ctx,
         }
         if (apos && c == '\'') {
             smart_str_appendl(&ctx->buf, "\\u0027", 6); continue;
-        }
-        if (quot && c == '\\' && i + 1 < orig_len && orig[i + 1] == '"') {
-            smart_str_appendl(&ctx->buf, "\\u0022", 6);
-            i++;
-            continue;
         }
         smart_str_appendc(&ctx->buf, (char)c);
     }
@@ -238,6 +257,19 @@ static bool dw_emit_double(fastjson_dw_ctx *ctx, double d)
         }
         return false;
     }
+    /* Negative zero: ext/json emits "-0" (without PRESERVE_ZERO_FRACTION)
+     * or "-0.0" (with). The long-path shortcut would cast (zend_long)-0.0
+     * to 0 and lose the sign; yyjson's writer always emits "-0.0" with
+     * the trailing fraction. Emit the right literal directly. */
+    if (d == 0.0 && signbit(d)) {
+        if (ctx->flags & FASTJSON_ENCODE_PRESERVE_ZERO_FRACTION) {
+            smart_str_appendl(&ctx->buf, "-0.0", 4);
+        } else {
+            smart_str_appendl(&ctx->buf, "-0", 2);
+        }
+        return true;
+    }
+
     /* PRESERVE_ZERO_FRACTION polarity: ext/json's default emits
      * integer-valued doubles WITHOUT the .0 ("1230.0" -> "1230");
      * the flag asks to keep .0 (yyjson's default). When the flag is
@@ -504,6 +536,16 @@ static bool dw_emit_object(fastjson_dw_ctx *ctx, zval *zv,
         zval hook_rv;
         if (Z_TYPE_P(item) == IS_PTR) {
             zend_property_info *info = Z_PTR_P(item);
+#if PHP_VERSION_ID >= 80400
+            /* Virtual properties without a get hook contribute no value
+             * to the JSON output (ext/json skips them; otherwise the
+             * read_property would call into hookless storage that
+             * returns undef or throws). */
+            if ((info->flags & ZEND_ACC_VIRTUAL)
+                    && (!info->hooks || !info->hooks[ZEND_PROPERTY_HOOK_GET])) {
+                continue;
+            }
+#endif
             ZVAL_UNDEF(&hook_rv);
             zval *hooked = zend_read_property_ex(info->ce, Z_OBJ_P(zv),
                                                  info->name, false, &hook_rv);

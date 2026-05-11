@@ -36,8 +36,10 @@ var_dump(fastjson_encode(["a" => 1.0, "b" => 2.5], JSON_PRESERVE_ZERO_FRACTION))
 
 echo "---\n";
 
-// Parity vs ext/json on the same inputs.
-$cases = [0.0, 1.0, 1230.0, 3.14, -1.5];
+// Parity vs ext/json on the same inputs (including -0.0, which
+// ext/json emits as "-0"/"-0.0"; casting via the long path would lose
+// the sign).
+$cases = [0.0, -0.0, 1.0, 1230.0, 3.14, -1.5];
 foreach ($cases as $v) {
     if (fastjson_encode($v) !== json_encode($v)) {
         echo "default mismatch on ", var_export($v, true), "\n";

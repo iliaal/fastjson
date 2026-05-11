@@ -17,6 +17,14 @@ catch (ValueError $e) { echo $e->getMessage(), "\n"; }
 
 echo "---\n";
 
+// Empty input + bad depth: ext/json short-circuits on the empty
+// check before validating depth, returning false. fastjson must
+// match -- raising ValueError here would be a divergence.
+var_dump(fastjson_validate("", -1));
+var_dump(fastjson_last_error() === FASTJSON_ERROR_SYNTAX);
+
+echo "---\n";
+
 // Note: $depth on the success path is intentionally NOT enforced.
 // yyjson's validate-only mode has no parse-time depth flag and a
 // post-parse walk would halve success-path throughput; validate
@@ -30,6 +38,9 @@ var_dump(fastjson_validate('not json', 512));
 fastjson_validate(): Argument #2 ($depth) must be greater than 0
 fastjson_validate(): Argument #2 ($depth) must be greater than 0
 fastjson_validate(): Argument #2 ($depth) must be less than %d
+---
+bool(false)
+bool(true)
 ---
 bool(true)
 bool(true)
