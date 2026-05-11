@@ -45,8 +45,9 @@ breakdown, and how to reproduce: see
 [`bench/README.md`](bench/README.md) and
 [`bench/baseline.md`](bench/baseline.md). A visual side-by-side
 including ext/json + PR-120 (SIMD encode) and simdjson_php on the
-same PHP 8.6.0-dev build lives at
-[`docs/baseline.html`](docs/baseline.html) (clone + open).
+same PHP 8.6.0-dev build is published at
+[**iliaal.github.io/fastjson**](https://iliaal.github.io/fastjson/baseline.html)
+(source in [`docs/baseline.html`](docs/baseline.html)).
 
 ## Why another JSON extension
 
