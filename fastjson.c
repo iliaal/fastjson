@@ -89,6 +89,119 @@ bool fastjson_byte_is_valid_utf8_start(const char *s, size_t len, size_t pos)
     return true;
 }
 
+/* Inline helpers mirroring ext/standard/html.c's UTF-8 advance rules.
+ * Keeping the helpers static avoids cross-TU calls in the inner loop. */
+#define FJ_UTF8_TRAIL(c) ((c) >= 0x80 && (c) <= 0xBF)
+#define FJ_UTF8_LEAD(c)  ((c) < 0x80 || ((c) >= 0xC2 && (c) <= 0xF4))
+
+char *fastjson_sanitize_utf8(const char *s, size_t len, zend_long flags,
+                             fj_sanitize_mode mode, size_t *out_len)
+{
+    /* Precedence asymmetry: encode prefers IGNORE on BOTH-bits, decode
+     * prefers SUBSTITUTE. */
+    bool has_ignore = (flags & (1L << 20)) != 0;
+    bool has_subst  = (flags & (1L << 21)) != 0;
+    bool substitute = (mode == FJ_SAN_DECODE)
+        ? has_subst                   /* decode: any SUBSTITUTE wins */
+        : (has_subst && !has_ignore); /* encode: BOTH -> IGNORE strips */
+
+    /* Worst-case output: 3 bytes per input byte (each invalid byte
+     * substituted by the 3-byte U+FFFD). IGNORE-only is <= input-sized. */
+    size_t cap = substitute ? len * 3 + 1 : (len > 0 ? len : 1);
+    char *out = emalloc(cap);
+    char *w = out;
+
+    /* Encode side: mirror ext/standard/html.c::get_next_char (UTR-36
+     * strategy 2 maximal-subpart). Decode side: per-byte advance on
+     * invalid (matches the re2c state machine in ext/json's parser).
+     * Both paths share the same per-byte SUBSTITUTE / IGNORE emit
+     * step, only differing in how far they advance after a bad byte. */
+    bool encode_advance = (mode == FJ_SAN_ENCODE);
+    size_t i = 0;
+    while (i < len) {
+        unsigned char c = (unsigned char)s[i];
+        size_t adv;
+        bool good;
+        if (c < 0x80) {
+            adv = 1; good = true;
+        } else if (c < 0xC2) {
+            /* Lone continuation or 0xC0/0xC1 overlong lead. */
+            adv = 1; good = false;
+        } else if (c < 0xE0) {
+            /* 2-byte sequence. */
+            if (i + 1 >= len || !FJ_UTF8_TRAIL((unsigned char)s[i + 1])) {
+                adv = (i + 1 >= len || FJ_UTF8_LEAD((unsigned char)s[i + 1])) ? 1 : 2;
+                good = false;
+            } else {
+                unsigned int cp = ((c & 0x1f) << 6) | ((unsigned char)s[i + 1] & 0x3f);
+                if (cp < 0x80) { adv = 2; good = false; } /* non-shortest */
+                else           { adv = 2; good = true; }
+            }
+        } else if (c < 0xF0) {
+            /* 3-byte sequence. */
+            size_t avail = len - i;
+            if (avail < 3
+                    || !FJ_UTF8_TRAIL((unsigned char)s[i + 1])
+                    || !FJ_UTF8_TRAIL((unsigned char)s[i + 2])) {
+                if (avail < 2 || FJ_UTF8_LEAD((unsigned char)s[i + 1]))      adv = 1;
+                else if (avail < 3 || FJ_UTF8_LEAD((unsigned char)s[i + 2])) adv = 2;
+                else                                                          adv = 3;
+                good = false;
+            } else {
+                unsigned int cp = ((c & 0x0f) << 12)
+                                | (((unsigned char)s[i + 1] & 0x3f) << 6)
+                                |  ((unsigned char)s[i + 2] & 0x3f);
+                if (cp < 0x800)                       { adv = 3; good = false; }
+                else if (cp >= 0xD800 && cp <= 0xDFFF){ adv = 3; good = false; }
+                else                                   { adv = 3; good = true;  }
+            }
+        } else if (c < 0xF5) {
+            /* 4-byte sequence. */
+            size_t avail = len - i;
+            if (avail < 4
+                    || !FJ_UTF8_TRAIL((unsigned char)s[i + 1])
+                    || !FJ_UTF8_TRAIL((unsigned char)s[i + 2])
+                    || !FJ_UTF8_TRAIL((unsigned char)s[i + 3])) {
+                if (avail < 2 || FJ_UTF8_LEAD((unsigned char)s[i + 1]))      adv = 1;
+                else if (avail < 3 || FJ_UTF8_LEAD((unsigned char)s[i + 2])) adv = 2;
+                else if (avail < 4 || FJ_UTF8_LEAD((unsigned char)s[i + 3])) adv = 3;
+                else                                                          adv = 4;
+                good = false;
+            } else {
+                unsigned int cp = ((c & 0x07) << 18)
+                                | (((unsigned char)s[i + 1] & 0x3f) << 12)
+                                | (((unsigned char)s[i + 2] & 0x3f) << 6)
+                                |  ((unsigned char)s[i + 3] & 0x3f);
+                if (cp < 0x10000 || cp > 0x10FFFF) { adv = 4; good = false; }
+                else                               { adv = 4; good = true;  }
+            }
+        } else {
+            /* 0xF5-0xFF: outside the legal UTF-8 lead range entirely. */
+            adv = 1; good = false;
+        }
+
+        if (good) {
+            memcpy(w, s + i, adv);
+            w += adv;
+        } else {
+            /* Decode-side substitutes one U+FFFD per byte that breaks
+             * the parse, matching the re2c state machine in ext/json's
+             * decoder; collapse the maximal-subpart advance to 1 here. */
+            if (!encode_advance) {
+                adv = 1;
+            }
+            if (substitute) {
+                *w++ = (char)0xEF;
+                *w++ = (char)0xBF;
+                *w++ = (char)0xBD;
+            }
+        }
+        i += adv;
+    }
+    *out_len = (size_t)(w - out);
+    return out;
+}
+
 bool fastjson_input_has_inf_nan_literal(const char *s, size_t len)
 {
     /* Walk outside string literals. Inside "..." backslash escapes

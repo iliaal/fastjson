@@ -88,6 +88,11 @@ static yyjson_write_flag dw_translate_yyjson_flags(zend_long php_flags)
     if (!(php_flags & FASTJSON_ENCODE_UNESCAPED_UNICODE)) {
         yf |= YYJSON_WRITE_ESCAPE_UNICODE;
     }
+    /* IGNORE / SUBSTITUTE: handled by fastjson-side sanitization in
+     * dw_emit_string_ex before yyjson runs. We deliberately do NOT
+     * pass YYJSON_WRITE_ALLOW_INVALID_UNICODE -- yyjson's behavior
+     * there ("emit byte raw, escape with � if needed") doesn't
+     * match ext/json's strip-or-substitute semantics. */
     return yf;
 }
 
@@ -210,6 +215,30 @@ static bool dw_emit_string_ex(fastjson_dw_ctx *ctx, const char *s, size_t len,
     char *cur = ZSTR_VAL(ctx->buf.s) + ZSTR_LEN(ctx->buf.s);
     char *end = yyjson_write_string_to_buf(cur, s, len, ctx->yflags);
     if (UNEXPECTED(end == NULL)) {
+        /* yyjson rejected the string as invalid UTF-8. Under IGNORE /
+         * SUBSTITUTE, sanitize and retry; the sanitizer's output is
+         * always valid UTF-8 so the second yyjson call succeeds. We
+         * only allocate the temporary buffer on this slow path, so
+         * the common (valid-UTF-8) case pays nothing extra. */
+        if (FASTJSON_HAS_UTF8_HANDLING_FLAG(ctx->flags)) {
+            size_t sane_len;
+            /* Encode-side semantics: IGNORE wins on BOTH-bits;
+             * SUBSTITUTE follows the maximal-subpart advance rule. */
+            char *sane = fastjson_sanitize_utf8(s, len, ctx->flags,
+                                                FJ_SAN_ENCODE, &sane_len);
+            smart_str_alloc(&ctx->buf, DW_STR_WORST(sane_len), 0);
+            cur = ZSTR_VAL(ctx->buf.s) + ZSTR_LEN(ctx->buf.s);
+            end = yyjson_write_string_to_buf(cur, sane, sane_len, ctx->yflags);
+            efree(sane);
+            if (EXPECTED(end != NULL)) {
+                ZSTR_LEN(ctx->buf.s) = (size_t)(end - ZSTR_VAL(ctx->buf.s));
+                dw_apply_hex_escapes(ctx, start_pos);
+                return true;
+            }
+            /* Fall through to the error path; sanitization shouldn't
+             * fail, but if yyjson rejects our output we still need a
+             * graceful exit. */
+        }
         fastjson_set_encode_error(FASTJSON_ERROR_UTF8,
             "Malformed UTF-8 characters, possibly incorrectly encoded");
         if (ctx->partial_output) {

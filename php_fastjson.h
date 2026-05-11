@@ -128,4 +128,40 @@ bool fastjson_input_has_inf_nan_literal(const char *s, size_t len);
  * malformed-UTF-8 (UTF8). */
 bool fastjson_byte_is_valid_utf8_start(const char *s, size_t len, size_t pos);
 
+/* Side selector for fastjson_sanitize_utf8. ext/json's encoder and
+ * decoder differ in two compatibility-relevant ways:
+ *
+ *   FJ_SAN_ENCODE: matches json_encode. When IGNORE and SUBSTITUTE
+ *     are both set, IGNORE wins (invalid bytes dropped). On
+ *     SUBSTITUTE alone, the advance-on-invalid count follows
+ *     php_next_utf8_char's maximal-ill-formed-subpart rule (UTR-36
+ *     strategy 2), so a malformed 4-byte sequence like F0 80 80 A
+ *     produces ONE U+FFFD.
+ *
+ *   FJ_SAN_DECODE: matches json_decode. When IGNORE and SUBSTITUTE
+ *     are both set, SUBSTITUTE wins. On SUBSTITUTE, every invalid
+ *     byte that breaks the UTF-8 state machine produces ONE U+FFFD
+ *     (so F0 80 80 yields THREE U+FFFDs).
+ *
+ * The asymmetry exists in ext/json itself, so fastjson mirrors it
+ * to keep upstream tests passing byte-for-byte. */
+typedef enum {
+    FJ_SAN_ENCODE,
+    FJ_SAN_DECODE,
+} fj_sanitize_mode;
+
+/* Sanitize a byte string under JSON_INVALID_UTF8_IGNORE /
+ * JSON_INVALID_UTF8_SUBSTITUTE semantics. Returns a newly-emalloc'd
+ * buffer; the caller must efree() it. The resulting length is
+ * written to *out_len. */
+char *fastjson_sanitize_utf8(const char *s, size_t len, zend_long flags,
+                             fj_sanitize_mode mode, size_t *out_len);
+
+/* Returns true if the value of either UTF-8-handling flag bit is set
+ * in `flags`. Folds the two-bit check the encoder/decoder do many
+ * times into one named test so the IS_STRING hot path stays a
+ * single comparison. */
+#define FASTJSON_HAS_UTF8_HANDLING_FLAG(flags) \
+    (((flags) & ((1L << 20) | (1L << 21))) != 0)
+
 #endif /* PHP_FASTJSON_H */

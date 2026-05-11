@@ -71,9 +71,13 @@ json_encode_pretty_print2.phpt  # ext-json-internals # PRESERVE_ZERO_FRACTION kn
 json_encode_recursion_01.phpt # ext-json-internals # jsonSerialize returning $this
 json_encode_recursion_02.phpt # ext-json-internals # jsonSerialize returning $this
 
-# === JSON_INVALID_UTF8_IGNORE / SUBSTITUTE (not honored) ===
-json_encode_invalid_utf8.phpt # ext-json-internals # JSON_INVALID_UTF8_*
-json_decode_invalid_utf8.phpt # ext-json-internals # JSON_INVALID_UTF8_*
+# === JSON_INVALID_UTF8_IGNORE / SUBSTITUTE (honored) ===
+# fastjson honors both flags with ext/json-matching semantics:
+# IGNORE strips invalid bytes, SUBSTITUTE replaces with U+FFFD.
+# Encode follows php_next_utf8_char's maximal-subpart advance;
+# decode does per-byte advance on invalid (mirroring ext/json's
+# parser). The walker splits on the flag at decode entry so the
+# no-flag hot path is unchanged.
 
 # === History: previously-skipped items now passing ===
 # Decode $depth validation: resolved by argument validation + the
@@ -84,25 +88,22 @@ json_decode_invalid_utf8.phpt # ext-json-internals # JSON_INVALID_UTF8_*
 # happened to coincide with the hex divergence and are re-listed
 # under their primary cause.
 
-# === UTF-8 handling: ext/json error message text + JSON_INVALID_UTF8_* ===
-# These tests assert ext/json's specific "Malformed UTF-8 characters,
-# possibly incorrectly encoded" wording or rely on the
-# JSON_INVALID_UTF8_IGNORE / SUBSTITUTE flags that fastjson does not
-# yet honor. yyjson reports "invalid utf-8 encoding in string" with
-# default-strict UTF-8 handling.
-bug43941.phpt # ext-json-internals # PARTIAL_OUTPUT_ON_ERROR + UTF-8 fallback
+# === UTF-8 handling ===
+# After fastjson honors JSON_INVALID_UTF8_IGNORE / SUBSTITUTE,
+# several of the old UTF-8 + PARTIAL_OUTPUT tests pass cleanly
+# (bug43941, bug55543, bug61978, bug63737, bug68567, bug72787,
+# bug73991). The entries below still fail for orthogonal reasons:
+#  - ext/json's specific "Malformed UTF-8 characters" wording,
+#  - JSON_ERROR_CTRL_CHAR (code 3) which yyjson doesn't surface,
+#  - NUL-byte filtering in stdClass property names,
+#  - and one pending memory-leak in encode + jsonSerialize +
+#    PARTIAL_OUTPUT (bug77843, fastjson-side bug to investigate).
 bug54484.phpt # ext-json-internals # error code numbering for UTF-8 within JSON
-bug55543.phpt # ext-json-internals # UTF-8 message text + flags
 bug61537.phpt # ext-json-internals # ext/json UTF-8 message text
-bug61978.phpt # ext-json-internals # ext/json UTF-8 message text
 bug62010.phpt # ext-json-internals # ext/json UTF-8 message text
-bug63737.phpt # ext-json-internals # ext/json UTF-8 message text
-bug68546.phpt # ext-json-internals # invalid UTF-8 + PARTIAL_OUTPUT
-bug68567.phpt # ext-json-internals # invalid UTF-8 + PARTIAL_OUTPUT
-bug69187.phpt # ext-json-internals # invalid UTF-8 + PARTIAL_OUTPUT
-bug72787.phpt # ext-json-internals # invalid UTF-8 + PARTIAL_OUTPUT
-bug73991.phpt # ext-json-internals # invalid UTF-8 + PARTIAL_OUTPUT
-bug77843.phpt # ext-json-internals # invalid UTF-8 + PARTIAL_OUTPUT
+bug68546.phpt # ext-json-internals # NUL bytes in property names
+bug69187.phpt # ext-json-internals # JSON_ERROR_CTRL_CHAR code numbering
+bug77843.phpt # bug-report # memory leak in encode + JsonSerializable + PARTIAL_OUTPUT
 
 # === Object property keys with embedded NUL (ext/json strips them) ===
 bug66021.phpt # ext-json-internals # NUL bytes in property names
