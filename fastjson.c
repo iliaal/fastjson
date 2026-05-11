@@ -138,7 +138,8 @@ PHP_FUNCTION(fastjson_validate)
 
     /* Depth enforcement on the success path is intentionally NOT done
      * here -- it would require walking the parsed yyjson_doc, which
-     * doubles the success-path cost. todos/001 keeps the rationale. */
+     * doubles the success-path cost. yyjson's internal recursion guard
+     * still rejects pathological nesting before stack exhaustion. */
     yyjson_read_flag yflags = YYJSON_READ_VALIDATE_ONLY;
     if (flags & FASTJSON_DECODE_INVALID_UTF8_IGNORE) {
         yflags |= YYJSON_READ_ALLOW_INVALID_UNICODE;

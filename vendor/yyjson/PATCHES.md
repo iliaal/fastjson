@@ -18,7 +18,6 @@ Re-apply each patch when upgrading the vendored sources via
 lowercase (`é`). Both are spec-equivalent (RFC 8259 §7), but
 fastjson's parity goal with `ext/json` makes byte-equality a target.
 yyjson exposes no flag for case selection; the table is hardcoded.
-Originally documented in `todos/002-pending-low-encode-uppercase-unicode-escapes.md`.
 
 **Patch.** In-place sed over the table region, replacing single-quoted
 uppercase letters with their lowercase equivalents.

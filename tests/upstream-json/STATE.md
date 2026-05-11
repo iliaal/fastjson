@@ -19,11 +19,10 @@ skiplist is the contract surface: every entry there names a category
 plus a one-line reason or TODO reference.
 
 Net change since the harness landed: **+8 passing tests** from
-resolving `todos/002` via vendor patch P-001 (lowercase `\uXXXX`
-hex digits in `vendor/yyjson/yyjson.c`'s `esc_hex_char_table`); the
-remaining UTF-8 / PARTIAL_OUTPUT entries that previously coincided
-with the hex divergence are now categorized under their primary
-cause.
+vendor patch P-001 (lowercase `\uXXXX` hex digits in
+`vendor/yyjson/yyjson.c`'s `esc_hex_char_table`); the remaining
+UTF-8 / PARTIAL_OUTPUT entries that previously coincided with the
+hex divergence are now categorized under their primary cause.
 
 ## Skiplist categories
 
@@ -44,16 +43,13 @@ cause.
     honored.
 
 - **doc-divergence** (4 tests). Behavior explicitly diverges from
-  ext/json with a TODO entry:
+  ext/json:
   - `pass001.*` (3 tests): JSON_checker round-trip exercises fp
     formatting (yyjson's `100000000000000000.0` vs ext/json's
     `1.0e+17`); not a target.
   - U+2028 / U+2029 line separator escaping (1 test). yyjson treats
     them as ordinary code points; ext/json always escapes for JSONP
     safety.
-  - `todos/001`: **resolved** by encode + decode depth enforcement
-    + argument validation parity.
-  - `todos/002`: **resolved** by `vendor/yyjson/PATCHES.md` P-001.
 
 - **bug-report** (1 test). `gh15168.phpt`:
   `zend.max_allowed_stack_size` overflow detection not implemented;
@@ -70,20 +66,20 @@ cause.
    failures.
 3. For each failure, decide:
    - Is this a fastjson bug? Add to `.skiplist` under
-     `bug-report` and file a `todos/NNN-*.md` capturing it.
+     `bug-report` and capture the issue in CHANGELOG / a PHPT.
    - Is this a feature we choose not to support? Add under
      `ext-json-internals` with the feature name.
    - Is this an explicit divergence? Add under `doc-divergence`
-     and reference the relevant `todos/NNN-*.md`.
+     with a one-line reason.
 4. Re-sync (the skiplist is consulted at sync time, so skipped
    tests aren't generated).
 
 ## Reaching 100% non-skip pass rate
 
-Realistic. The two doc-divergence todos cover ~30 tests; resolving
-either one (likely `todos/002` is cheaper than `todos/001`) clears a
-batch. The ext-json-internals categories grow as fastjson honors more
-flags; each lands a few more passing tests.
+Realistic. The two doc-divergences (yyjson's fp formatting and the
+U+2028/U+2029 emit policy) cover the residual unmatched bytes. The
+ext-json-internals categories grow as fastjson honors more flags;
+each lands a few more passing tests.
 
 ## Reaching parity with full ext/json
 

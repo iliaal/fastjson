@@ -17,9 +17,11 @@ catch (ValueError $e) { echo $e->getMessage(), "\n"; }
 
 echo "---\n";
 
-// Note: $depth on the success path is intentionally NOT enforced
-// (todos/001). Validate currently always returns true for valid JSON
-// regardless of nesting depth, given a positive in-range $depth.
+// Note: $depth on the success path is intentionally NOT enforced.
+// yyjson's validate-only mode has no parse-time depth flag and a
+// post-parse walk would halve success-path throughput; validate
+// returns true for valid JSON regardless of nesting given positive
+// in-range $depth.
 var_dump(fastjson_validate('[[[1]]]', 1));   // would be NULL on json_decode(d=1) but validate returns true
 var_dump(fastjson_validate('[[[1]]]', 4));
 var_dump(fastjson_validate('not json', 512));

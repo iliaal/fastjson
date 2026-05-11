@@ -5,7 +5,7 @@
 #   ext-json-internals : exercises ext/json-only behavior fastjson does
 #                        not currently aim to mirror byte-for-byte.
 #   doc-divergence     : asserts a behavior fastjson explicitly diverges
-#                        from with a TODO entry (todos/NNN-*.md).
+#                        from, with a one-line reason inline.
 #   bug-report         : tracks a fastjson bug; remove once fixed.
 #
 # Re-run with:
@@ -75,15 +75,14 @@ json_encode_recursion_02.phpt # ext-json-internals # jsonSerialize returning $th
 json_encode_invalid_utf8.phpt # ext-json-internals # JSON_INVALID_UTF8_*
 json_decode_invalid_utf8.phpt # ext-json-internals # JSON_INVALID_UTF8_*
 
-# === Decode $depth validation (todos/001) — RESOLVED ===
-# All entries previously here were resolved by the encode/decode/validate
-# argument validation + decode depth-walker landing. Empty section
-# preserved for grep continuity.
-# todos/002 (uppercase \u hex) was resolved by vendor patch P-001
-# (vendor/yyjson/PATCHES.md). ~8 of the previously-skipped tests now
+# === History: previously-skipped items now passing ===
+# Decode $depth validation: resolved by argument validation + the
+# decode depth-walker landing in v0.1.0.
+# Uppercase \uXXXX hex: resolved by vendor patch P-001 (see
+# vendor/yyjson/PATCHES.md). ~8 of the previously-skipped tests now
 # pass cleanly. The entries below failed for *other* reasons that
-# happened to coincide with the hex divergence; re-listed under their
-# primary cause.
+# happened to coincide with the hex divergence and are re-listed
+# under their primary cause.
 
 # === UTF-8 handling: ext/json error message text + JSON_INVALID_UTF8_* ===
 # These tests assert ext/json's specific "Malformed UTF-8 characters,

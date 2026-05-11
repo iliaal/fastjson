@@ -117,8 +117,9 @@ mirror byte-for-byte.
       categorized skiplist (`tests/upstream-json/.skiplist`,
       `tests/upstream-json/STATE.md`)
 - [ ] `fastjson_validate` success-path depth enforcement (currently
-      argument-validated but the cap is not walked; see
-      [`todos/001`](todos/001-partial-low-validate-depth-enforcement.md))
+      argument-validated but the cap is not walked, since yyjson's
+      validate-only mode has no parse-time depth flag and a post-parse
+      walk halves the success-path throughput)
 - [ ] Streaming / incremental decode and encode
 
 ## License

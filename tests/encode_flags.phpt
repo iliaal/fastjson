@@ -19,8 +19,8 @@ var_dump(fastjson_encode("a/b/c", JSON_UNESCAPED_SLASHES));
 echo "---\n";
 
 // Default: non-ASCII as \uXXXX escapes (matches ext/json default).
-// Hex digit case differs from ext/json (uppercase here, lowercase
-// upstream); see todos/002. Round-trip via decode for correctness.
+// Hex digit case is byte-identical to ext/json via vendor patch P-001
+// (see vendor/yyjson/PATCHES.md). Round-trip via decode for correctness.
 $encoded = fastjson_encode("héllo");
 var_dump(strpos($encoded, '\u00') !== false);   // some \u escape present
 var_dump(fastjson_decode($encoded) === "héllo"); // round-trips
