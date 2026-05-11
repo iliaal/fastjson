@@ -141,6 +141,24 @@ jobs:
       - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y llvm clang re2c bison autoconf
 
+      - name: Configure runtime for ASAN
+        # Two GitHub-runner-specific gotchas that turn the configure
+        # step into "cannot run C compiled programs":
+        #
+        # 1. -shared-libasan links the asan runtime as a separate .so so
+        #    that __cxa_throw stays resolvable across dlopen(); without
+        #    LD_LIBRARY_PATH pointing at clang's resource dir, every
+        #    asan-instrumented binary fails at startup with
+        #    "error while loading shared libraries: libclang_rt.asan-*.so".
+        #
+        # 2. Recent Ubuntu kernels default to 32-bit mmap entropy, which
+        #    collides with ASAN's shadow-memory layout. Knocking
+        #    vm.mmap_rnd_bits down to 28 puts it back in range.
+        run: |
+          ASAN_LIB_DIR=$(clang -print-resource-dir)/lib/linux
+          echo "LD_LIBRARY_PATH=$ASAN_LIB_DIR" >>"$GITHUB_ENV"
+          sudo sysctl -w vm.mmap_rnd_bits=28
+
       - name: Build PHP with ASAN (-shared-libasan keeps __cxa_throw resolvable across dlopen)
         run: |
           git clone --depth=1 --branch=PHP-${{ matrix.php }} https://github.com/php/php-src.git /tmp/php-src
@@ -154,7 +172,8 @@ jobs:
             --disable-zts \
             --disable-all \
             --enable-cli \
-            --prefix=/tmp/php-asan
+            --prefix=/tmp/php-asan \
+            || { echo "==== config.log tail ===="; tail -200 config.log; exit 1; }
           make -j$(nproc)
           make install
 
