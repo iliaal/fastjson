@@ -177,33 +177,41 @@ static void dw_apply_hex_escapes(fastjson_dw_ctx *ctx,
  * case. 64 is generous. */
 #define DW_NUM_WORST 64
 
-static void dw_emit_string(fastjson_dw_ctx *ctx, const char *s, size_t len)
+/* Returns true on success, false if the caller should abort the encode.
+ * On invalid UTF-8 with PARTIAL_OUTPUT, emits "null" (value site) and
+ * returns true so the caller continues; without PARTIAL_OUTPUT the
+ * buffer is unchanged and the function returns false. Object-key
+ * callers want a different partial substitution (`""` not `null`) and
+ * therefore pass is_key=true to suppress the substitution here. */
+static bool dw_emit_string_ex(fastjson_dw_ctx *ctx, const char *s, size_t len,
+                              bool is_key)
 {
     size_t start_pos = ctx->buf.s ? ZSTR_LEN(ctx->buf.s) : 0;
     smart_str_alloc(&ctx->buf, DW_STR_WORST(len), 0);
     char *cur = ZSTR_VAL(ctx->buf.s) + ZSTR_LEN(ctx->buf.s);
     char *end = yyjson_write_string_to_buf(cur, s, len, ctx->yflags);
     if (UNEXPECTED(end == NULL)) {
-        /* Invalid UTF-8 + ESCAPE_UNICODE + !ALLOW_INVALID_UNICODE.
-         * yyjson refused. Match ext/json: emit null and record UTF-8
-         * error. PARTIAL_OUTPUT_ON_ERROR governs whether we abort. */
         fastjson_set_encode_error(FASTJSON_ERROR_UTF8,
             "Malformed UTF-8 characters, possibly incorrectly encoded");
         if (ctx->partial_output) {
-            smart_str_appendl(&ctx->buf, "null", 4);
-        } else {
-            /* Signal failure to caller via a marker; recursion unwinds
-             * and the top-level entry point returns false. We use the
-             * smart_str cursor as a state holder: leaving buf.s = NULL
-             * by truncating to 0 isn't enough since we may already
-             * have written something. The recursion unwinds via the
-             * boolean return from dw_encode_zval; this function is
-             * called from there. */
+            if (is_key) {
+                /* ext/json substitutes an empty quoted key here. */
+                smart_str_appendl(&ctx->buf, "\"\"", 2);
+            } else {
+                smart_str_appendl(&ctx->buf, "null", 4);
+            }
+            return true;
         }
-        return;
+        return false;
     }
     ZSTR_LEN(ctx->buf.s) = (size_t)(end - ZSTR_VAL(ctx->buf.s));
     dw_apply_hex_escapes(ctx, start_pos);
+    return true;
+}
+
+static inline bool dw_emit_string(fastjson_dw_ctx *ctx, const char *s, size_t len)
+{
+    return dw_emit_string_ex(ctx, s, len, false);
 }
 
 static void dw_emit_long(fastjson_dw_ctx *ctx, zend_long n)
@@ -282,12 +290,16 @@ static bool dw_partial_or_fail(fastjson_dw_ctx *ctx,
 
 /* Emit an object key followed by ':'. Object keys are always strings
  * in JSON; for integer keys we stringify the long. NUMERIC_CHECK
- * doesn't apply to keys (ext/json only honors it for values). */
-static void dw_emit_object_key(fastjson_dw_ctx *ctx, zend_string *key,
+ * doesn't apply to keys (ext/json only honors it for values).
+ * Returns false if the caller should abort the encode (non-partial
+ * UTF-8 failure on a string key). */
+static bool dw_emit_object_key(fastjson_dw_ctx *ctx, zend_string *key,
                                zend_ulong index)
 {
     if (key) {
-        dw_emit_string(ctx, ZSTR_VAL(key), ZSTR_LEN(key));
+        if (!dw_emit_string_ex(ctx, ZSTR_VAL(key), ZSTR_LEN(key), true)) {
+            return false;
+        }
     } else {
         /* Integer key: digits + optional minus. No escape needed;
          * emit directly with surrounding quotes. */
@@ -303,6 +315,7 @@ static void dw_emit_object_key(fastjson_dw_ctx *ctx, zend_string *key,
     if (ctx->pretty_print) {
         smart_str_appendc(&ctx->buf, ' ');
     }
+    return true;
 }
 
 static bool dw_emit_array(fastjson_dw_ctx *ctx, HashTable *ht,
@@ -358,8 +371,8 @@ static bool dw_emit_array(fastjson_dw_ctx *ctx, HashTable *ht,
             ZVAL_DEREF(item);
             if (!first) smart_str_appendc(&ctx->buf, ',');
             if (pretty) dw_emit_newline_indent(ctx, ctx->indent_level);
-            dw_emit_object_key(ctx, key, index);
-            if (!dw_encode_zval(ctx, item, remaining_depth - 1)) {
+            if (!dw_emit_object_key(ctx, key, index)
+                    || !dw_encode_zval(ctx, item, remaining_depth - 1)) {
                 if (need_recursion_guard) GC_UNPROTECT_RECURSION(ht);
                 if (pretty && !empty) ctx->indent_level--;
                 return false;
@@ -428,7 +441,12 @@ static bool dw_emit_object(fastjson_dw_ctx *ctx, zval *zv,
         return dw_emit_jsonserializable(ctx, zv, remaining_depth);
     }
 
-    HashTable *props = Z_OBJPROP_P(zv);
+    /* Use the JSON-purpose property view so engine objects (DateTime,
+     * ArrayObject, etc.) get the same property set ext/json sees, and
+     * stdClass's protected/private members get filtered out at the
+     * source. Must be paired with zend_release_properties() on every
+     * exit path. */
+    HashTable *props = zend_get_properties_for(zv, ZEND_PROP_PURPOSE_JSON);
     if (props == NULL) {
         return dw_partial_or_fail(ctx, FASTJSON_ERROR_UNSUPPORTED_TYPE,
             "Object has no properties", false);
@@ -437,6 +455,7 @@ static bool dw_emit_object(fastjson_dw_ctx *ctx, zval *zv,
     bool need_recursion_guard = !(GC_FLAGS(props) & GC_IMMUTABLE);
     if (need_recursion_guard) {
         if (GC_IS_RECURSIVE(props)) {
+            zend_release_properties(props);
             return dw_partial_or_fail(ctx, FASTJSON_ERROR_RECURSION,
                 "Recursion detected", false);
         }
@@ -462,20 +481,35 @@ static bool dw_emit_object(fastjson_dw_ctx *ctx, zval *zv,
     zend_ulong index;
     zval *item;
     ZEND_HASH_FOREACH_KEY_VAL(props, index, key, item) {
+        /* Skip protected/private members. zend_get_properties_for with
+         * PURPOSE_JSON already filters these for stdClass, but custom
+         * get_properties_for handlers may still hand back the raw
+         * property table. Mangled keys carry the "\0class\0name" shape;
+         * filter them out the same way ext/json does. */
+        if (key && ZSTR_VAL(key)[0] == '\0' && ZSTR_LEN(key) > 0) {
+            continue;
+        }
         /* Declared typed/untyped properties live in
          * zend_object.properties_table; the get_properties HT stores
          * IS_INDIRECT zvals pointing to them. Resolve, skip undef. */
         if (Z_TYPE_P(item) == IS_INDIRECT) {
             item = Z_INDIRECT_P(item);
         }
+        /* IS_PTR entries are PHP 8.4+ hooked-property markers; skipping
+         * them is a known divergence from ext/json (which invokes the
+         * get hook and serializes the result). Tracked separately. */
+        if (Z_TYPE_P(item) == IS_PTR) {
+            continue;
+        }
         if (Z_ISUNDEF_P(item)) continue;
         ZVAL_DEREF(item);
         if (!first) smart_str_appendc(&ctx->buf, ',');
         if (pretty) dw_emit_newline_indent(ctx, ctx->indent_level);
-        dw_emit_object_key(ctx, key, index);
-        if (!dw_encode_zval(ctx, item, remaining_depth - 1)) {
+        if (!dw_emit_object_key(ctx, key, index)
+                || !dw_encode_zval(ctx, item, remaining_depth - 1)) {
             if (need_recursion_guard) GC_UNPROTECT_RECURSION(props);
             if (pretty && !empty) ctx->indent_level--;
+            zend_release_properties(props);
             return false;
         }
         first = false;
@@ -487,6 +521,7 @@ static bool dw_emit_object(fastjson_dw_ctx *ctx, zval *zv,
     smart_str_appendc(&ctx->buf, '}');
 
     if (need_recursion_guard) GC_UNPROTECT_RECURSION(props);
+    zend_release_properties(props);
     return true;
 }
 
@@ -526,19 +561,7 @@ static bool dw_encode_zval(fastjson_dw_ctx *ctx, zval *zv,
             }
             /* fall through to string emission */
         }
-        size_t snap = ctx->buf.s ? ZSTR_LEN(ctx->buf.s) : 0;
-        dw_emit_string(ctx, Z_STRVAL_P(zv), Z_STRLEN_P(zv));
-        /* dw_emit_string handles the invalid-UTF-8 case by either
-         * appending "null" (PARTIAL) or recording the error and
-         * leaving the buffer unchanged from snap. We can detect the
-         * abort case by checking the global error code AND that the
-         * buffer is unchanged. */
-        if (UNEXPECTED(FASTJSON_G(last_err_code) == FASTJSON_ERROR_UTF8
-                       && !ctx->partial_output
-                       && (ctx->buf.s ? ZSTR_LEN(ctx->buf.s) : 0) == snap)) {
-            return false;
-        }
-        return true;
+        return dw_emit_string(ctx, Z_STRVAL_P(zv), Z_STRLEN_P(zv));
     }
     case IS_ARRAY: {
         bool force_object = (ctx->flags & FASTJSON_ENCODE_FORCE_OBJECT) != 0;

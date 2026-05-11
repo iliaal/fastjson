@@ -93,19 +93,38 @@ PHP_FUNCTION(fastjson_validate)
         RETURN_THROWS();
     }
 
+    /* ext/json's json_validate accepts only JSON_INVALID_UTF8_IGNORE
+     * in $flags and rejects any other bit with a ValueError. Mirror
+     * that contract verbatim. */
+    if (flags & ~(zend_long)FASTJSON_DECODE_INVALID_UTF8_IGNORE) {
+        zend_argument_value_error(3,
+            "must be a valid flag (allowed flags: JSON_INVALID_UTF8_IGNORE)");
+        RETURN_THROWS();
+    }
+
     /* Depth enforcement on the success path is intentionally NOT done
      * here -- it would require walking the parsed yyjson_doc, which
-     * doubles the success-path cost. todos/001 keeps the rationale.
-     * flags is reserved for v0.4+. */
-    (void)flags;
+     * doubles the success-path cost. todos/001 keeps the rationale. */
+    yyjson_read_flag yflags = YYJSON_READ_VALIDATE_ONLY;
+    if (flags & FASTJSON_DECODE_INVALID_UTF8_IGNORE) {
+        yflags |= YYJSON_READ_ALLOW_INVALID_UNICODE;
+    }
 
     yyjson_read_err err;
     /* yyjson patch P-002: validate-only mode skips val_hdr allocation
      * (~2/3 of peak memory). The returned doc is a stub sentinel; we
      * just check non-NULL and free it. See vendor/yyjson/PATCHES.md. */
-    yyjson_doc *doc = yyjson_read_opts(json, json_len,
-                                       YYJSON_READ_VALIDATE_ONLY,
+    yyjson_doc *doc = yyjson_read_opts(json, json_len, yflags,
                                        &fastjson_php_alc, &err);
+    if (doc == NULL && err.msg
+            && strcmp(err.msg, "number is infinity when parsed as double") == 0) {
+        /* Match ext/json: exponent-overflow numbers like "1e309" are
+         * valid JSON values (decoded to INF). See fastjson_decode.c
+         * for the corner case around mixing with literal Infinity/NaN. */
+        doc = yyjson_read_opts(json, json_len,
+                               yflags | YYJSON_READ_ALLOW_INF_AND_NAN,
+                               &fastjson_php_alc, &err);
+    }
 
     if (doc == NULL) {
         fastjson_set_error(err.code, err.msg);

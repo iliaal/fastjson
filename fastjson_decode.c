@@ -247,9 +247,12 @@ PHP_FUNCTION(fastjson_decode)
         RETURN_THROWS();
     }
 
-    /* assoc=null currently maps to false. When JSON_OBJECT_AS_ARRAY
-     * (flag 1<<0) lands, null will pivot on that bit. */
-    bool use_assoc = !assoc_is_null && assoc;
+    /* ext/json contract: explicit $associative wins; when null, the
+     * JSON_OBJECT_AS_ARRAY bit in $flags pivots. Defaults to stdClass
+     * when neither is set. */
+    bool use_assoc = assoc_is_null
+        ? ((flags & FASTJSON_DECODE_OBJECT_AS_ARRAY) != 0)
+        : (bool)assoc;
 
     /* Translate fastjson decode flags into yyjson_read_flag bits.
      * BIGINT_AS_STRING -> BIGNUM_AS_RAW so numbers that overflow
@@ -274,6 +277,19 @@ PHP_FUNCTION(fastjson_decode)
     yyjson_read_err err;
     yyjson_doc *doc = yyjson_read_opts(json, json_len, yflags,
                                        &fastjson_php_alc, &err);
+    if (doc == NULL && err.msg
+            && strcmp(err.msg, "number is infinity when parsed as double") == 0) {
+        /* yyjson rejects exponent-overflow numbers like "1e309" by
+         * default; ext/json accepts and decodes to INF. Retry with
+         * ALLOW_INF_AND_NAN to match. The retry also accepts the
+         * literal tokens Infinity/-Infinity/NaN which ext/json
+         * rejects; in inputs that combine overflow with one of those
+         * literals fastjson over-accepts compared to ext/json. The
+         * far more common case (pure overflow) lines up byte-for-byte. */
+        doc = yyjson_read_opts(json, json_len,
+                               yflags | YYJSON_READ_ALLOW_INF_AND_NAN,
+                               &fastjson_php_alc, &err);
+    }
     if (doc == NULL) {
         /* ext/json classifies any non-ASCII byte at a parse-error
          * position as JSON_ERROR_UTF8, not JSON_ERROR_SYNTAX. yyjson
@@ -325,5 +341,11 @@ PHP_FUNCTION(fastjson_decode)
     }
 
     yyjson_doc_free(doc);
-    fastjson_clear_error();
+    /* Match ext/json's THROW_ON_ERROR contract: when the caller opted
+     * into exceptions for errors, the global error state is the
+     * caller's previous state, not "no error". Only clear on the
+     * non-throw success path. */
+    if (!throw_mode) {
+        fastjson_clear_error();
+    }
 }
