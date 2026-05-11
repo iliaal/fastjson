@@ -43,7 +43,10 @@ it's a real consideration.
 Methodology, per-file numbers, small-corpus + per-call latency
 breakdown, and how to reproduce: see
 [`bench/README.md`](bench/README.md) and
-[`bench/baseline.md`](bench/baseline.md).
+[`bench/baseline.md`](bench/baseline.md). A visual side-by-side
+including ext/json + PR-120 (SIMD encode) and simdjson_php on the
+same PHP 8.6.0-dev build lives at
+[`docs/baseline.html`](docs/baseline.html) (clone + open).
 
 ## Why another JSON extension
 
@@ -73,7 +76,7 @@ sudo make install
 echo "extension=fastjson.so" | sudo tee /etc/php/8.3/cli/conf.d/30-fastjson.ini
 ```
 
-## Usage (planned API)
+## Usage
 
 ```php
 $json = fastjson_encode(['hello' => 'world']);     // string|false
@@ -85,33 +88,38 @@ if ($data === null && fastjson_last_error() !== 0) {
 }
 ```
 
-Function signatures track `ext/json` so call sites can be migrated by
-search-and-replace once the function set is complete.
+Function signatures track `ext/json` so call sites migrate by
+search-and-replace from `json_*` to `fastjson_*`. Honored flags on
+encode: `JSON_PRETTY_PRINT`, `JSON_UNESCAPED_SLASHES`,
+`JSON_UNESCAPED_UNICODE`, `JSON_FORCE_OBJECT`, `JSON_HEX_TAG`,
+`JSON_HEX_AMP`, `JSON_HEX_APOS`, `JSON_HEX_QUOT`,
+`JSON_NUMERIC_CHECK`, `JSON_PRESERVE_ZERO_FRACTION`,
+`JSON_PARTIAL_OUTPUT_ON_ERROR`, `JSON_THROW_ON_ERROR`. On decode:
+`JSON_OBJECT_AS_ARRAY`, `JSON_BIGINT_AS_STRING`, `JSON_THROW_ON_ERROR`.
+On validate: `JSON_INVALID_UTF8_IGNORE` (other bits raise `ValueError`
+per ext/json's contract). PHP 8.4 property hooks and `JsonSerializable`
+are honored. See [`CHANGELOG.md`](CHANGELOG.md) and the divergences
+list at the bottom of that file for behavior fastjson does not aim to
+mirror byte-for-byte.
 
 ## Roadmap
 
-- [x] Scaffold, build pipeline, CI matrix
-- [x] Vendor yyjson sources (0.12.0, MIT)
-- [x] `fastjson_validate`
-- [x] `fastjson_last_error` / `fastjson_last_error_msg`
-- [x] `fastjson_decode` (object + assoc paths; `$depth` accepted but
-      see todos/001)
-- [x] `fastjson_encode` (PRETTY_PRINT, UNESCAPED_SLASHES,
-      UNESCAPED_UNICODE, FORCE_OBJECT, THROW_ON_ERROR; recursion
-      guard; depth bound; INF/NAN rejected; see todos/002 for the
-      uppercase-hex divergence vs ext/json)
-- [x] Compat harness: `php-src/ext/json/tests/*.phpt` runs against
-      fastjson via `scripts/sync-upstream-json-tests.sh`. Current:
-      50 / 50 non-skipped tests pass (53 rewritten, 3 environment-skips),
-      45 skipped with categorized reasons
-      (`tests/upstream-json/.skiplist`). See
-      `tests/upstream-json/STATE.md`.
-- [ ] Benchmark harness vs `ext/json` with canonical corpora
-      (twitter.json, citm_catalog.json, etc.)
-- [ ] Compat: run `php-src/ext/json/tests/*.phpt` against fastjson
-      (symbol-rewrite the upstream suite, gate divergences as
-      documented intentional differences)
-- [ ] Streaming/incremental decode and encode (deferred from v0.1)
+- [x] Vendored yyjson 0.12.0 (MIT) + three local patches in
+      [`vendor/yyjson/PATCHES.md`](vendor/yyjson/PATCHES.md)
+- [x] `fastjson_encode` / `fastjson_decode` / `fastjson_validate` /
+      `fastjson_last_error` / `fastjson_last_error_msg` with
+      ext/json-compatible flags and error codes
+- [x] Benchmark harness on simdjson_php's canonical corpus, including
+      vs `simdjson_php` and ext/json with PR-120 SIMD encode applied
+      (see [`bench/README.md`](bench/README.md),
+      [`bench/baseline.md`](bench/baseline.md))
+- [x] Compat harness against `php-src/ext/json/tests/*.phpt` with
+      categorized skiplist (`tests/upstream-json/.skiplist`,
+      `tests/upstream-json/STATE.md`)
+- [ ] `fastjson_validate` success-path depth enforcement (currently
+      argument-validated but the cap is not walked; see
+      [`todos/001`](todos/001-partial-low-validate-depth-enforcement.md))
+- [ ] Streaming / incremental decode and encode
 
 ## License
 
