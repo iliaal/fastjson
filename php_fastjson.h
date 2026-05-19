@@ -157,6 +157,15 @@ typedef enum {
 char *fastjson_sanitize_utf8(const char *s, size_t len, zend_long flags,
                              fj_sanitize_mode mode, size_t *out_len);
 
+/* Returns true if `s[0..len)` is well-formed UTF-8 by the same
+ * per-codepoint rules fastjson_sanitize_utf8 uses to detect bad bytes
+ * (no overlongs, no surrogates, no out-of-range, no truncated trails).
+ * Single pass, no allocation. Callers use this on the IGNORE / SUBSTITUTE
+ * decode path to skip the sanitize alloc+copy when the input is already
+ * clean -- the common case for defensive callers that always pass the
+ * flag. */
+bool fastjson_utf8_well_formed(const char *s, size_t len);
+
 /* Returns true if the value of either UTF-8-handling flag bit is set
  * in `flags`. Folds the two-bit check the encoder/decoder do many
  * times into one named test so the IS_STRING hot path stays a

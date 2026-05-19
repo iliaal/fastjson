@@ -210,6 +210,57 @@ char *fastjson_sanitize_utf8(const char *s, size_t len, zend_long flags,
     return out;
 }
 
+bool fastjson_utf8_well_formed(const char *s, size_t len)
+{
+    /* Mirror fastjson_sanitize_utf8's per-codepoint rules without writing
+     * or allocating. Any byte sequence that the sanitizer would have
+     * dropped or substituted returns false here; valid sequences return
+     * true. Two functions, one ruleset -- keep them in lockstep. */
+    size_t i = 0;
+    while (i < len) {
+        unsigned char c = (unsigned char)s[i];
+        if (c < 0x80) {
+            i += 1;
+        } else if (c < 0xC2) {
+            return false;                                    /* lone trail / overlong lead */
+        } else if (c < 0xE0) {
+            if (i + 1 >= len) return false;
+            if (!FJ_UTF8_TRAIL((unsigned char)s[i + 1])) return false;
+            unsigned int cp = ((c & 0x1f) << 6) | ((unsigned char)s[i + 1] & 0x3f);
+            if (cp < 0x80) return false;                     /* non-shortest */
+            i += 2;
+        } else if (c < 0xF0) {
+            if (i + 3 > len) return false;
+            if (!FJ_UTF8_TRAIL((unsigned char)s[i + 1])
+                    || !FJ_UTF8_TRAIL((unsigned char)s[i + 2])) {
+                return false;
+            }
+            unsigned int cp = ((c & 0x0f) << 12)
+                            | (((unsigned char)s[i + 1] & 0x3f) << 6)
+                            |  ((unsigned char)s[i + 2] & 0x3f);
+            if (cp < 0x800)                       return false; /* non-shortest */
+            if (cp >= 0xD800 && cp <= 0xDFFF)     return false; /* surrogate */
+            i += 3;
+        } else if (c < 0xF5) {
+            if (i + 4 > len) return false;
+            if (!FJ_UTF8_TRAIL((unsigned char)s[i + 1])
+                    || !FJ_UTF8_TRAIL((unsigned char)s[i + 2])
+                    || !FJ_UTF8_TRAIL((unsigned char)s[i + 3])) {
+                return false;
+            }
+            unsigned int cp = ((c & 0x07) << 18)
+                            | (((unsigned char)s[i + 1] & 0x3f) << 12)
+                            | (((unsigned char)s[i + 2] & 0x3f) << 6)
+                            |  ((unsigned char)s[i + 3] & 0x3f);
+            if (cp < 0x10000 || cp > 0x10FFFF) return false;
+            i += 4;
+        } else {
+            return false;                                    /* 0xF5..0xFF illegal lead */
+        }
+    }
+    return true;
+}
+
 bool fastjson_input_has_inf_nan_literal(const char *s, size_t len)
 {
     /* Walk outside string literals. Inside "..." backslash escapes

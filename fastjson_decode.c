@@ -298,6 +298,13 @@ static bool fastjson_yyval_to_zval_sanitize(yyjson_val *val, bool assoc,
     case YYJSON_TYPE_STR: {
         const char *raw = yyjson_get_str(val);
         size_t raw_len = yyjson_get_len(val);
+        /* Fast path: defensive callers often set IGNORE / SUBSTITUTE on
+         * every decode even when the payload is clean UTF-8. Scan first
+         * so a well-formed string skips the sanitize alloc + copy. */
+        if (fastjson_utf8_well_formed(raw, raw_len)) {
+            ZVAL_STRINGL(out, raw, raw_len);
+            return true;
+        }
         size_t sane_len;
         char *sane = fastjson_sanitize_utf8(raw, raw_len, flags,
                                             FJ_SAN_DECODE, &sane_len);
@@ -363,24 +370,32 @@ static bool fastjson_yyval_to_zval_sanitize(yyjson_val *val, bool assoc,
             yyjson_val *vval = yyjson_obj_iter_get_val(key);
             const char *kstr = yyjson_get_str(key);
             size_t klen = yyjson_get_len(key);
-            size_t sane_klen;
-            char *sane_key = fastjson_sanitize_utf8(kstr, klen, flags,
-                                                    FJ_SAN_DECODE, &sane_klen);
+            /* Same fast path as the string-value case above: a
+             * well-formed key skips the sanitize alloc + copy and uses
+             * yyjson's borrowed pointer directly. */
+            bool key_owned = false;
+            const char *use_key = kstr;
+            size_t use_klen = klen;
+            if (!fastjson_utf8_well_formed(kstr, klen)) {
+                use_key = fastjson_sanitize_utf8(kstr, klen, flags,
+                                                 FJ_SAN_DECODE, &use_klen);
+                key_owned = true;
+            }
             zval child;
             if (!fastjson_yyval_to_zval_sanitize(vval, assoc,
                                                  remaining_depth - 1, flags, &child)) {
-                efree(sane_key);
+                if (key_owned) efree((char *)use_key);
                 zval_ptr_dtor(&child);
                 return false;
             }
             if (assoc) {
-                zend_symtable_str_update(ht, sane_key, sane_klen, &child);
+                zend_symtable_str_update(ht, use_key, use_klen, &child);
             } else {
-                zend_string *zk = zend_string_init(sane_key, sane_klen, 0);
+                zend_string *zk = zend_string_init(use_key, use_klen, 0);
                 zend_hash_update(ht, zk, &child);
                 zend_string_release_ex(zk, 0);
             }
-            efree(sane_key);
+            if (key_owned) efree((char *)use_key);
         }
         return true;
     }

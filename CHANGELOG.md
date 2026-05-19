@@ -6,6 +6,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Use-after-free in `fastjson_encode` for PHP 8.4 objects whose property has a SET hook but no GET hook and is not virtual. The engine's trivial-read fast path returns a borrowed pointer to the backing field; the previous stash logic released a refcount it never owned and freed the backing zend_string while the object still pointed at it. ASAN regression added. Surfaced by `/codesage-review` (fnd_f77a591f).
+- 32-bit `zend_long` overflow in `dw_emit_double`'s integer-valued-double shortcut. On 32-bit PHP, `fastjson_encode(1e10)` could emit INT32-saturated garbage instead of a valid JSON number; the shortcut bound is now gated on `SIZEOF_ZEND_LONG`. Surfaced by `/codesage-review` (fnd_23254098).
+- ext/json parity for integer-valued doubles between `1e15` and `1e17`. The double shortcut bound was `1e15`, so `fastjson_encode(1e16)` fell through to yyjson's REAL writer and emitted `"10000000000000000.0"` while `json_encode(1e16)` emits `"10000000000000000"`. The 64-bit bound now widens to a strict `< 1e17`, matching the cutoff where `php_gcvt` itself switches to scientific notation. `1.5e16`, `2.5e16`, `9.99e16`, and the negative range round-trip byte-identically to `json_encode`.
+
+### Performance
+
+- `JSON_HEX_TAG`/`HEX_AMP`/`HEX_APOS`/`HEX_QUOT` now scan first and skip the rewrite + temp allocation entirely when no candidates exist. When candidates exist, growth is reserved exactly (5 extra bytes per hit) instead of the 6× worst case. Defensive callers asserting HEX flags on payloads that don't contain the substituted characters no longer pay the rewrite cost. Benchmark: ~4× speedup on the no-hit case (532 µs → 125 µs on 1k strings); ~13% regression on the all-hit case from the extra scan pass. (CR-002)
+- `fastjson_decode` with `JSON_INVALID_UTF8_IGNORE` / `SUBSTITUTE` now scans each string and object key with a no-allocation UTF-8 validator first, and only invokes the sanitizer on byte sequences that actually need replacement. Valid UTF-8 inputs no longer pay a per-string sanitize allocation and copy. Benchmark: ~36% speedup on object-heavy clean-UTF-8 decode with IGNORE (964 µs → 612 µs). (CR-003)
+- `dw_emit_double`'s integer-valued-double shortcut checks the cheap range bound before calling `floor()`. Non-integer or out-of-range doubles in number-heavy arrays no longer pay libm per element. (CR-004)
+
 ## [0.2.1] - 2026-05-11
 
 ### Build

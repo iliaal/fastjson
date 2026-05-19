@@ -141,18 +141,48 @@ static void dw_apply_hex_escapes(fastjson_dw_ctx *ctx,
     bool quot = flags & FASTJSON_ENCODE_HEX_QUOT;
     if (!(tag || amp || apos || quot)) return;
 
-    /* Two-pass approach is cleanest given smart_str's lack of insert
-     * primitives: read the original bytes into a temp, then rewrite
-     * over them with substitutions applied. The smart_str_alloc up
-     * front reserves worst-case space (each input byte -> 6 output). */
     size_t orig_len = ZSTR_LEN(ctx->buf.s) - start_pos;
     if (orig_len == 0) return;
 
+    /* Pass 1: scan in place for replacement candidates and count them.
+     * Skips the alloc / copy / rewrite work entirely when the string
+     * carries none (the common case: HEX flags asserted defensively on
+     * payloads that don't include the substituted characters). Each
+     * replacement adds exactly 5 bytes (one source byte expands to a
+     * six-byte \uXXXX), so the growth bound is precise. */
+    const char *src = ZSTR_VAL(ctx->buf.s) + start_pos;
+    size_t hits = 0;
+    for (size_t i = 0; i < orig_len; i++) {
+        unsigned char c = (unsigned char)src[i];
+        if (c == '\\' && i + 1 < orig_len) {
+            unsigned char next = (unsigned char)src[i + 1];
+            if (quot && next == '"') {
+                hits++;
+                i++;
+                continue;
+            }
+            /* Skip past the JSON escape body so its trailing hex digits
+             * (in \uXXXX) aren't misread as content candidates. */
+            if (next == 'u' && i + 5 < orig_len) {
+                i += 5;
+            } else {
+                i += 1;
+            }
+            continue;
+        }
+        if (tag  && (c == '<' || c == '>')) { hits++; continue; }
+        if (amp  && c == '&')               { hits++; continue; }
+        if (apos && c == '\'')              { hits++; continue; }
+    }
+    if (hits == 0) return;
+
+    /* Pass 2: rewrite over a temp copy of the region. Reserve exact
+     * growth (5 extra bytes per hit) rather than the worst-case 6x. */
     char *orig = emalloc(orig_len);
     memcpy(orig, ZSTR_VAL(ctx->buf.s) + start_pos, orig_len);
 
     ZSTR_LEN(ctx->buf.s) = start_pos;
-    smart_str_alloc(&ctx->buf, orig_len * 6, 0);
+    smart_str_alloc(&ctx->buf, orig_len + hits * 5, 0);
     for (size_t i = 0; i < orig_len; i++) {
         unsigned char c = (unsigned char)orig[i];
         if (c == '\\' && i + 1 < orig_len) {
@@ -303,11 +333,42 @@ static bool dw_emit_double(fastjson_dw_ctx *ctx, double d)
      * integer-valued doubles WITHOUT the .0 ("1230.0" -> "1230");
      * the flag asks to keep .0 (yyjson's default). When the flag is
      * unset and the value is integer-valued + lossless, route through
-     * the long path. */
+     * the long path. The bound stays strictly inside zend_long so the
+     * cast is defined and lines up with the range where json_encode
+     * itself prefers fixed-notation over scientific.
+     *
+     * 64-bit: strict `< 1e17`. php_gcvt at serialize_precision=-1 emits
+     * fixed-notation for integer-valued doubles up to but not including
+     * 1e17 (where it switches to "1.0e+17"). Matching that cutoff means
+     * 1e16, 1.5e16, 2.5e16, 9.99e16 all round-trip byte-identically to
+     * json_encode. Above 1e17 we fall through to yyjson's REAL writer
+     * and accept the residual ".0" divergence -- agreeing with
+     * json_encode there would need a scientific-notation writer.
+     * 1e17 fits in int64_t with room to spare (ZEND_LONG_MAX ~ 9.22e18)
+     * and is well below 2^63, so the cast stays defined; the widely-used
+     * `<= (double)ZEND_LONG_MAX` idiom is unsafe at the boundary because
+     * that conversion rounds to 2^63.
+     *
+     * 32-bit (zend_long = int32_t, ZEND_LONG_MAX = 2^31 - 1): 2147483647
+     * fits in a double exactly, so the canonical `<= (double)ZEND_LONG_MAX`
+     * idiom is safe and used as-is.
+     *
+     * Order: cheap flag + bound test first (a single fabs + compare),
+     * then cast and verify integer-ness via (double)l == d. Avoids the
+     * libm floor() call on the common non-integer / out-of-range path
+     * (number-heavy double arrays previously paid floor() per element). */
     if (!(ctx->flags & FASTJSON_ENCODE_PRESERVE_ZERO_FRACTION)
-            && d == floor(d) && fabs(d) <= 1e15) {
-        dw_emit_long(ctx, (zend_long)d);
-        return true;
+#if SIZEOF_ZEND_LONG >= 8
+            && fabs(d) < 1e17
+#else
+            && fabs(d) <= (double)ZEND_LONG_MAX
+#endif
+        ) {
+        zend_long l = (zend_long)d;
+        if ((double)l == d) {
+            dw_emit_long(ctx, l);
+            return true;
+        }
     }
     smart_str_alloc(&ctx->buf, DW_NUM_WORST, 0);
     yyjson_val v;
@@ -579,6 +640,11 @@ static bool dw_emit_object(fastjson_dw_ctx *ctx, zval *zv,
             zval *hooked = zend_read_property_ex(info->ce, Z_OBJ_P(zv),
                                                  info->name, false, &hook_rv);
             if (EG(exception)) {
+                /* A partial get hook may have written a refcounted value
+                 * into hook_rv before throwing; release it. No-op when
+                 * the engine returned a borrowed pointer (hook_rv stayed
+                 * IS_UNDEF). */
+                zval_ptr_dtor(&hook_rv);
                 if (need_recursion_guard) GC_UNPROTECT_RECURSION(props);
                 if (pretty && !empty) ctx->indent_level--;
                 zend_release_properties(props);
@@ -588,7 +654,20 @@ static bool dw_emit_object(fastjson_dw_ctx *ctx, zval *zv,
                 zend_hash_init(&ctx->retval_stash, 0, NULL, ZVAL_PTR_DTOR, 0);
                 ctx->retval_stash_inited = true;
             }
-            item = zend_hash_next_index_insert(&ctx->retval_stash, hooked);
+            /* Copy into the stash regardless of which return shape the
+             * engine used. When `hooked != &hook_rv`, the engine took the
+             * trivial-read fast path and returned a borrowed pointer to
+             * OBJ_PROP(...) without an addref — inserting that pointer
+             * straight into a ZVAL_PTR_DTOR hash would later decrement
+             * the object's own property-table refcount and trigger a UAF
+             * on the next read. ZVAL_COPY uniformly addrefs; the stash's
+             * dtor balances it. When `hooked == &hook_rv` the engine
+             * already addref'd into hook_rv, so we release that extra
+             * reference here (the copy carries the one the stash owns). */
+            zval stash_copy;
+            ZVAL_COPY(&stash_copy, hooked);
+            zval_ptr_dtor(&hook_rv);
+            item = zend_hash_next_index_insert(&ctx->retval_stash, &stash_copy);
         }
         if (Z_ISUNDEF_P(item)) continue;
         ZVAL_DEREF(item);
