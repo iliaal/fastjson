@@ -252,7 +252,7 @@
 
 <h1>fastjson 0.1.0 <span class="pill">benchmark baseline</span></h1>
 <p class="lede">
-A PHP extension that wraps <a href="https://github.com/ibireme/yyjson">yyjson</a> behind a <code>fastjson_*</code> API mirroring ext/json. Side-by-side numbers against stock <code>ext/json</code> and <code>simdjson_php</code> on a 21-file corpus. Baseline is vanilla PHP 8.6.0-dev built from current master. For encode we also include ext/json with <a href="https://github.com/php/php-src/pull/20120">PR-120</a> applied (the SIMD encode patch is currently open against PHP master, not yet merged) so the patch's effect is visible.
+A PHP extension that wraps <a href="https://github.com/ibireme/yyjson">yyjson</a> behind a <code>fastjson_*</code> API mirroring ext/json. Side-by-side numbers against stock <code>ext/json</code> and <code>simdjson_php</code> on a 21-file corpus. Baseline is vanilla PHP 8.6.0-dev built from current master. For encode we also include ext/json with <a href="https://github.com/php/php-src/pull/17734">php-src#17734</a> applied (the SIMD encode patch is currently open against PHP master, not yet merged) so the patch's effect is visible.
 </p>
 
 <p class="meta">
@@ -264,7 +264,7 @@ A PHP extension that wraps <a href="https://github.com/ibireme/yyjson">yyjson</a
 
 <h2>Decode <span class="pill">vanilla PHP 8.6.0-dev</span></h2>
 
-<p>Three decoders, one PHP build. PR-120 doesn't affect decode (encode-only patch), so this section is the same regardless of whether the patch is applied.</p>
+<p>Three decoders, one PHP build. php-src#17734 doesn't affect decode (encode-only patch), so this section is the same regardless of whether the patch is applied.</p>
 
 <div class="hero">
   <div class="label-row">
@@ -366,9 +366,9 @@ A PHP extension that wraps <a href="https://github.com/ibireme/yyjson">yyjson</a
   <span style="color: var(--muted)">fastjson wins 5 of 6 small files; simdjson catches it on the 11 KB repeat case.</span>
 </div>
 
-<h2>Encode <span class="pill">PR-120 effect visible</span></h2>
+<h2>Encode <span class="pill">php-src#17734 effect visible</span></h2>
 
-<p>This section adds a third column: ext/json on PHP 8.6.0-dev with PR-120 applied. The patch SIMD-accelerates long-string encoding; on a JSON-shaped corpus the SIMD setup cost amortizes only on inputs with large string payloads.</p>
+<p>This section adds a third column: ext/json on PHP 8.6.0-dev with php-src#17734 applied. The patch SIMD-accelerates long-string encoding; on a JSON-shaped corpus the SIMD setup cost amortizes only on inputs with large string payloads.</p>
 
 <div class="hero">
   <div class="label-row">
@@ -377,7 +377,7 @@ A PHP extension that wraps <a href="https://github.com/ibireme/yyjson">yyjson</a
     <div class="num">178 <span class="u">MB/s</span></div>
   </div>
   <div class="label-row">
-    <div class="who">ext/json + PR-120<span class="v">8.6.0-dev with SIMD encode patch</span></div>
+    <div class="who">ext/json + php-src#17734<span class="v">8.6.0-dev with SIMD encode patch</span></div>
     <div class="bar-wrap"><div class="bar" style="width: 14.6%; background: var(--c-pr120);"></div></div>
     <div class="num">159 <span class="u">MB/s</span></div>
   </div>
@@ -392,12 +392,12 @@ A PHP extension that wraps <a href="https://github.com/ibireme/yyjson">yyjson</a
     <div></div>
   </div>
   <div class="caption">
-    Aggregate encode on the 14.81 MB corpus. fastjson is <strong class="up" style="color:var(--c-up)">5.80&times;</strong> vanilla ext/json, <strong class="up" style="color:var(--c-up)">6.51&times;</strong> ext/json with PR-120. PR-120 lands at <strong>0.89&times;</strong> vanilla on this corpus shape (mostly small fields).
+    Aggregate encode on the 14.81 MB corpus. fastjson is <strong class="up" style="color:var(--c-up)">5.80&times;</strong> vanilla ext/json, <strong class="up" style="color:var(--c-up)">6.51&times;</strong> ext/json with php-src#17734. php-src#17734 lands at <strong>0.89&times;</strong> vanilla on this corpus shape (mostly small fields).
   </div>
 </div>
 
 <div class="callout">
-  <strong>PR-120's effect is workload-shape dependent.</strong> The SIMD encoder shines on inputs with long string payloads. The microbenchmark <code>json_encode(str_repeat('a', 1048576))</code> reports <strong class="up" style="color:var(--c-up)">10,032 MB/s</strong> with PR-120 vs <strong>1,597 MB/s</strong> on vanilla 8.6 &mdash; a <strong class="up" style="color:var(--c-up)">6.28&times;</strong> SIMD win. On JSON-shaped corpora with many small string fields, per-call SIMD setup dominates and the aggregate lands below vanilla. The per-file table makes the workload split visible.
+  <strong>php-src#17734's effect is workload-shape dependent.</strong> The SIMD encoder shines on inputs with long string payloads. The microbenchmark <code>json_encode(str_repeat('a', 1048576))</code> reports <strong class="up" style="color:var(--c-up)">10,032 MB/s</strong> with php-src#17734 vs <strong>1,597 MB/s</strong> on vanilla 8.6 &mdash; a <strong class="up" style="color:var(--c-up)">6.28&times;</strong> SIMD win. On JSON-shaped corpora with many small string fields, per-call SIMD setup dominates and the aggregate lands below vanilla. The per-file table makes the workload split visible.
 </div>
 
 <h3>Per-file encode, large corpus</h3>
@@ -407,9 +407,9 @@ A PHP extension that wraps <a href="https://github.com/ibireme/yyjson">yyjson</a
     <tr>
       <th>File</th><th>Size</th>
       <th>ext/json<span class="sub">vanilla 8.6</span></th>
-      <th>ext/json+PR-120<span class="sub">8.6 + patch</span></th>
+      <th>ext/json+php-src#17734<span class="sub">8.6 + patch</span></th>
       <th>fastjson<span class="sub">vanilla 8.6</span></th>
-      <th>PR-120 vs<span class="sub">vanilla</span></th>
+      <th>php-src#17734 vs<span class="sub">vanilla</span></th>
       <th>fastjson vs<span class="sub">vanilla ext/json</span></th>
     </tr>
   </thead>
@@ -437,9 +437,9 @@ A PHP extension that wraps <a href="https://github.com/ibireme/yyjson">yyjson</a
 
 <div class="legend">
   <span><span class="sw" style="background: var(--c-fast);"></span>fastjson best (every file)</span>
-  <span><span class="sw" style="background: var(--c-up);"></span>PR-120 wins (3 files)</span>
-  <span><span class="sw" style="background: var(--c-down);"></span>PR-120 loses (12 files)</span>
-  <span style="color: var(--muted)">PR-120 visibly wins on <code>stringifiedphp</code> (long stringified PHP source, 2.11&times;) and <code>gsoc-2018</code> (date-heavy strings, 1.26&times;).</span>
+  <span><span class="sw" style="background: var(--c-up);"></span>php-src#17734 wins (3 files)</span>
+  <span><span class="sw" style="background: var(--c-down);"></span>php-src#17734 loses (12 files)</span>
+  <span style="color: var(--muted)">php-src#17734 visibly wins on <code>stringifiedphp</code> (long stringified PHP source, 2.11&times;) and <code>gsoc-2018</code> (date-heavy strings, 1.26&times;).</span>
 </div>
 
 <h3>Per-file encode, small corpus</h3>
@@ -608,7 +608,7 @@ A PHP extension that wraps <a href="https://github.com/ibireme/yyjson">yyjson</a
 <div class="takeaway-grid">
   <div class="takeaway">
     <h3 style="color: var(--c-ext);">ext/json</h3>
-    <p style="color: var(--ink); font-size: 0.92rem;">Always there. No install. Streaming validate at ~80 bytes of state. PR-120 (currently open) accelerates encoder long-string paths but is a net loss on JSON-shaped corpora today.</p>
+    <p style="color: var(--ink); font-size: 0.92rem;">Always there. No install. Streaming validate at ~80 bytes of state. php-src#17734 (currently open) accelerates encoder long-string paths but is a net loss on JSON-shaped corpora today.</p>
   </div>
   <div class="takeaway">
     <h3 style="color: var(--c-fast);">fastjson 0.1.0</h3>
@@ -628,8 +628,8 @@ A PHP extension that wraps <a href="https://github.com/ibireme/yyjson">yyjson</a
 </details>
 
 <details>
-<summary>How the PR-120 column was produced</summary>
-<p>PR-120 (<a href="https://github.com/php/php-src/pull/20120">php/php-src#20120</a>) is currently open against PHP master, not merged. The vanilla 8.6 baseline is built from <code>php-src</code> master without the patch; the PR-120 column is built from the same tree with the three patched files (<code>ext/json/json_encoder.c</code>, <code>ext/standard/html.c</code>, <code>ext/standard/html.h</code>) applied. Both are release builds (<code>--disable-debug</code>, <code>-O2</code>); same configure flags. fastjson and simdjson_php are rebuilt against each PHP install.</p>
+<summary>How the php-src#17734 column was produced</summary>
+<p>php-src#17734 (<a href="https://github.com/php/php-src/pull/17734">php/php-src#17734</a>) is currently open against PHP master, not merged. The vanilla 8.6 baseline is built from <code>php-src</code> master without the patch; the php-src#17734 column is built from the same tree with the three patched files (<code>ext/json/json_encoder.c</code>, <code>ext/standard/html.c</code>, <code>ext/standard/html.h</code>) applied. Both are release builds (<code>--disable-debug</code>, <code>-O2</code>); same configure flags. fastjson and simdjson_php are rebuilt against each PHP install.</p>
 </details>
 
 <details>

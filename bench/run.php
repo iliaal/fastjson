@@ -13,8 +13,8 @@
  *
  * The "ext/json" column reflects whatever PHP build is hosting this
  * process. Run against ~/php-install-PHP-8.4-pr120 to compare against
- * the PR-120 SIMD-encoded ext/json; against an unpatched build to
- * compare against today's ext/json.
+ * the php-src#17734 SIMD-encoded ext/json; against an unpatched build
+ * to compare against today's ext/json.
  *
  * Methodology:
  *   - Throughput: N iterations of encode + decode + validate per
