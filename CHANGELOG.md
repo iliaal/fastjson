@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-19
+
 ### Fixed
 
 - Use-after-free in `fastjson_encode` for PHP 8.4 objects whose property has a SET hook but no GET hook and is not virtual. The engine's trivial-read fast path returns a borrowed pointer to the backing field; the previous stash logic released a refcount it never owned and freed the backing zend_string while the object still pointed at it. ASAN regression added. Surfaced by `/codesage-review` (fnd_f77a591f).
@@ -176,7 +178,8 @@ backed by yyjson 0.12.0.
 - U+2028 / U+2029 line separators emitted as ordinary code points
   (yyjson default). ext/json always escapes for JSONP safety.
 
-[Unreleased]: https://github.com/iliaal/fastjson/compare/0.2.1...HEAD
+[Unreleased]: https://github.com/iliaal/fastjson/compare/0.3.0...HEAD
+[0.3.0]: https://github.com/iliaal/fastjson/releases/tag/0.3.0
 [0.2.1]: https://github.com/iliaal/fastjson/releases/tag/0.2.1
 [0.2.0]: https://github.com/iliaal/fastjson/releases/tag/0.2.0
 [0.1.0]: https://github.com/iliaal/fastjson/releases/tag/0.1.0
