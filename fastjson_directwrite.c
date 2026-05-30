@@ -67,7 +67,6 @@ typedef struct fastjson_dw_ctx {
     yyjson_write_flag yflags;   /* translated to yyjson's flag enum
                                  * once at top-level; reused by every
                                  * call to yyjson_write_string_to_buf */
-    bool            escape_slashes;
     bool            partial_output;
     bool            pretty_print;
     int             indent_level;  /* current pretty-print depth; 0 at
@@ -758,7 +757,6 @@ zend_string *fastjson_directwrite_encode(zval *value, zend_long flags,
     memset(&ctx, 0, sizeof(ctx));
     ctx.flags = flags;
     ctx.yflags = dw_translate_yyjson_flags(flags);
-    ctx.escape_slashes = !(flags & FASTJSON_ENCODE_UNESCAPED_SLASHES);
     ctx.partial_output = (flags & FASTJSON_ENCODE_PARTIAL_OUTPUT_ON_ERROR) != 0;
     ctx.pretty_print = (flags & FASTJSON_ENCODE_PRETTY_PRINT) != 0;
     ctx.retval_stash_inited = false;
