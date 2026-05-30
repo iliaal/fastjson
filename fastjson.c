@@ -470,8 +470,22 @@ PHP_MINFO_FUNCTION(fastjson)
     php_info_print_table_end();
 }
 
+/* Declare ext/json as an OPTIONAL dependency. This is purely a
+ * load-ordering guarantee: when ext/json is present (every standard
+ * PHP build), the engine runs its MINIT before ours, so the
+ * JsonException / JsonSerializable lookups in PHP_MINIT_FUNCTION below
+ * reliably resolve out of CG(class_table) regardless of static-vs-shared
+ * build or registration order. OPTIONAL (not REQUIRED) deliberately
+ * preserves the documented degrade-gracefully behavior when ext/json is
+ * somehow absent: the class-entry pointers stay NULL and fastjson still
+ * loads (throwing \Exception, ignoring JsonSerializable). */
+static const zend_module_dep fastjson_deps[] = {
+    ZEND_MOD_OPTIONAL("json")
+    ZEND_MOD_END
+};
+
 zend_module_entry fastjson_module_entry = {
-    STANDARD_MODULE_HEADER,
+    STANDARD_MODULE_HEADER_EX, NULL, fastjson_deps,
     "fastjson",
     ext_functions,
     PHP_MINIT(fastjson),
