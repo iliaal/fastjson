@@ -27,6 +27,59 @@
 #include "fastjson_alloc.h"
 #include "yyjson.h"
 
+/* yyjson NUM -> zval. Real -> double; uint <= INT64_MAX -> long; a
+ * larger uint becomes a decimal string under JSON_BIGINT_AS_STRING and
+ * otherwise widens to double (matching ext/json, which never wraps a
+ * uint past LONG_MAX into a negative long); sint -> long. Shared by
+ * both decode walkers and force-inlined so the hot path stays
+ * call-free. */
+static zend_always_inline void fj_num_to_zval(yyjson_val *val,
+                                              zend_long flags, zval *out)
+{
+    if (yyjson_is_real(val)) {
+        ZVAL_DOUBLE(out, yyjson_get_real(val));
+    } else if (yyjson_is_uint(val)) {
+        uint64_t u = yyjson_get_uint(val);
+        if (u <= (uint64_t)ZEND_LONG_MAX) {
+            ZVAL_LONG(out, (zend_long)u);
+        } else if (flags & FASTJSON_DECODE_BIGINT_AS_STRING) {
+            char buf[24];
+            int len = snprintf(buf, sizeof(buf), "%" PRIu64, u);
+            ZVAL_STRINGL(out, buf, (size_t)len);
+        } else {
+            ZVAL_DOUBLE(out, (double)u);
+        }
+    } else { /* SINT */
+        ZVAL_LONG(out, (zend_long)yyjson_get_sint(val));
+    }
+}
+
+/* yyjson RAW -> zval. yyjson emits YYJSON_TYPE_RAW under
+ * YYJSON_READ_BIGNUM_AS_RAW for two distinct cases:
+ *   1. Big integers that overflow int64/uint64. ext/json's
+ *      JSON_BIGINT_AS_STRING wants these as strings; passthrough.
+ *   2. Floats whose exponent overflows a double (e.g. 1e309).
+ *      ext/json decodes those to PHP INF -- BIGINT_AS_STRING does NOT
+ *      apply to floats. Re-parse via strtod so we return the same
+ *      float ext/json would.
+ * Float shape: presence of '.', 'e', or 'E' in the raw text. Shared by
+ * both decode walkers and force-inlined to keep the hot path call-free. */
+static zend_always_inline void fj_raw_to_zval(yyjson_val *val, zval *out)
+{
+    const char *raw = yyjson_get_raw(val);
+    size_t raw_len = yyjson_get_len(val);
+    bool is_float = false;
+    for (size_t i = 0; i < raw_len; i++) {
+        char c = raw[i];
+        if (c == '.' || c == 'e' || c == 'E') { is_float = true; break; }
+    }
+    if (is_float) {
+        ZVAL_DOUBLE(out, zend_strtod(raw, NULL));
+    } else {
+        ZVAL_STRINGL(out, raw, raw_len);
+    }
+}
+
 /* Recursive walker: yyjson_val -> zval. Returns true on success, false
  * on FASTJSON_ERROR_DEPTH (the only mid-walk failure mode). On failure
  * `out` is left as a partial zend_array/zend_object whose
@@ -74,54 +127,12 @@ static bool fastjson_yyval_to_zval(yyjson_val *val, bool assoc,
         return true;
 
     case YYJSON_TYPE_NUM:
-        if (yyjson_is_real(val)) {
-            ZVAL_DOUBLE(out, yyjson_get_real(val));
-        } else if (yyjson_is_uint(val)) {
-            uint64_t u = yyjson_get_uint(val);
-            /* PHP zend_long is signed 64-bit on LP64 builds. uint64
-             * values above LONG_MAX would silently wrap negative if
-             * we cast directly; ext/json's behaviour for that range
-             * is to widen to double. Match it.
-             * JSON_BIGINT_AS_STRING overrides the widen: format the
-             * uint64 as decimal and emit as a PHP string instead. */
-            if (u <= (uint64_t)ZEND_LONG_MAX) {
-                ZVAL_LONG(out, (zend_long)u);
-            } else if (flags & FASTJSON_DECODE_BIGINT_AS_STRING) {
-                char buf[24];
-                int len = snprintf(buf, sizeof(buf), "%" PRIu64, u);
-                ZVAL_STRINGL(out, buf, (size_t)len);
-            } else {
-                ZVAL_DOUBLE(out, (double)u);
-            }
-        } else { /* SINT */
-            ZVAL_LONG(out, (zend_long)yyjson_get_sint(val));
-        }
+        fj_num_to_zval(val, flags, out);
         return true;
 
-    case YYJSON_TYPE_RAW: {
-        /* yyjson emits YYJSON_TYPE_RAW under YYJSON_READ_BIGNUM_AS_RAW
-         * for two distinct cases:
-         *   1. Big integers that overflow int64/uint64. ext/json's
-         *      JSON_BIGINT_AS_STRING wants these as strings; passthrough.
-         *   2. Floats whose exponent overflows a double (e.g. 1e309).
-         *      ext/json decodes those to PHP INF -- BIGINT_AS_STRING
-         *      does NOT apply to floats. Re-parse via strtod so we
-         *      return the same float ext/json would.
-         * Float shape: presence of '.', 'e', or 'E' in the raw text. */
-        const char *raw = yyjson_get_raw(val);
-        size_t raw_len = yyjson_get_len(val);
-        bool is_float = false;
-        for (size_t i = 0; i < raw_len; i++) {
-            char c = raw[i];
-            if (c == '.' || c == 'e' || c == 'E') { is_float = true; break; }
-        }
-        if (is_float) {
-            ZVAL_DOUBLE(out, zend_strtod(raw, NULL));
-        } else {
-            ZVAL_STRINGL(out, raw, raw_len);
-        }
+    case YYJSON_TYPE_RAW:
+        fj_raw_to_zval(val, out);
         return true;
-    }
 
     case YYJSON_TYPE_STR: {
         /* UTF-8 sanitization for JSON_INVALID_UTF8_IGNORE / SUBSTITUTE
@@ -266,35 +277,11 @@ static bool fastjson_yyval_to_zval_sanitize(yyjson_val *val, bool assoc,
         ZVAL_BOOL(out, yyjson_get_bool(val));
         return true;
     case YYJSON_TYPE_NUM:
-        if (yyjson_is_real(val)) {
-            ZVAL_DOUBLE(out, yyjson_get_real(val));
-        } else if (yyjson_is_uint(val)) {
-            uint64_t u = yyjson_get_uint(val);
-            if (u <= (uint64_t)ZEND_LONG_MAX) {
-                ZVAL_LONG(out, (zend_long)u);
-            } else if (flags & FASTJSON_DECODE_BIGINT_AS_STRING) {
-                char buf[24];
-                int len = snprintf(buf, sizeof(buf), "%" PRIu64, u);
-                ZVAL_STRINGL(out, buf, (size_t)len);
-            } else {
-                ZVAL_DOUBLE(out, (double)u);
-            }
-        } else {
-            ZVAL_LONG(out, (zend_long)yyjson_get_sint(val));
-        }
+        fj_num_to_zval(val, flags, out);
         return true;
-    case YYJSON_TYPE_RAW: {
-        const char *raw = yyjson_get_raw(val);
-        size_t raw_len = yyjson_get_len(val);
-        bool is_float = false;
-        for (size_t i = 0; i < raw_len; i++) {
-            char c = raw[i];
-            if (c == '.' || c == 'e' || c == 'E') { is_float = true; break; }
-        }
-        if (is_float) ZVAL_DOUBLE(out, zend_strtod(raw, NULL));
-        else          ZVAL_STRINGL(out, raw, raw_len);
+    case YYJSON_TYPE_RAW:
+        fj_raw_to_zval(val, out);
         return true;
-    }
     case YYJSON_TYPE_STR: {
         const char *raw = yyjson_get_str(val);
         size_t raw_len = yyjson_get_len(val);
