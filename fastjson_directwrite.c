@@ -601,6 +601,14 @@ static bool dw_emit_object(fastjson_dw_ctx *ctx, zval *zv,
     zend_string *key;
     zend_ulong index;
     zval *item;
+    /* Capture the object up front: zv may be an interior pointer into
+     * ctx->retval_stash (when this object came from a JsonSerializable
+     * return, dw_emit_jsonserializable passes the stashed slot down).
+     * The hooked-property branch below inserts into that same stash,
+     * which can rehash and relocate arData mid-loop, dangling zv. The
+     * zend_object never moves, so read it once here and never deref zv
+     * again inside the loop. */
+    zend_object *obj = Z_OBJ_P(zv);
     ZEND_HASH_FOREACH_KEY_VAL(props, index, key, item) {
         /* Skip protected/private members. zend_get_properties_for with
          * PURPOSE_JSON already filters these for stdClass, but custom
@@ -636,7 +644,7 @@ static bool dw_emit_object(fastjson_dw_ctx *ctx, zval *zv,
             }
 #endif
             ZVAL_UNDEF(&hook_rv);
-            zval *hooked = zend_read_property_ex(info->ce, Z_OBJ_P(zv),
+            zval *hooked = zend_read_property_ex(info->ce, obj,
                                                  info->name, false, &hook_rv);
             if (EG(exception)) {
                 /* A partial get hook may have written a refcounted value
