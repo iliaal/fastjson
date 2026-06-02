@@ -19,6 +19,8 @@
 #include <stdio.h>
 
 #include "php.h"
+#include "php_streams.h"
+#include "ext/standard/file.h"
 #include "Zend/zend_call_stack.h"
 #include "Zend/zend_exceptions.h"
 #include "Zend/zend_smart_str.h"
@@ -392,61 +394,21 @@ static bool fastjson_yyval_to_zval_sanitize(yyjson_val *val, bool assoc,
     }
 }
 
-PHP_FUNCTION(fastjson_decode)
+/* Shared decode core for fastjson_decode and fastjson_file_decode.
+ * Runs the yyjson read (with the inf/nan-overflow retry and parse-error
+ * UTF-8 reclassification), dispatches the appropriate walker into
+ * `return_value`, and honors the JSON_THROW_ON_ERROR state-preservation
+ * contract. $depth must already be validated and, in non-throw mode,
+ * the caller must already have cleared the error state; saved_err_* is
+ * the snapshot to restore on the throw path. The param is named
+ * `return_value` so RETURN_NULL() / RETURN_THROWS() expand correctly. */
+static void fastjson_decode_into(const char *json, size_t json_len,
+                                 bool use_assoc, zend_long depth,
+                                 zend_long flags, bool throw_mode,
+                                 zend_long saved_err_code,
+                                 const char *saved_err_msg,
+                                 zval *return_value)
 {
-    char *json;
-    size_t json_len;
-    bool assoc = false;
-    bool assoc_is_null = true;
-    zend_long depth = 512;
-    zend_long flags = 0;
-
-    ZEND_PARSE_PARAMETERS_START(1, 4)
-        Z_PARAM_STRING(json, json_len)
-        Z_PARAM_OPTIONAL
-        Z_PARAM_BOOL_OR_NULL(assoc, assoc_is_null)
-        Z_PARAM_LONG(depth)
-        Z_PARAM_LONG(flags)
-    ZEND_PARSE_PARAMETERS_END();
-
-    /* JSON_THROW_ON_ERROR contract: on error, throw a JsonException
-     * and leave the GLOBAL fastjson_last_error state unchanged. This
-     * is how ext/json behaves (json_exceptions_error_clearing.phpt).
-     * We snapshot global state at entry and restore it on the throw
-     * path. The success path clears as usual on entry; non-throw
-     * failure path persists the error normally. */
-    bool throw_mode = (flags & FASTJSON_DECODE_THROW_ON_ERROR) != 0;
-    zend_long saved_err_code = FASTJSON_G(last_err_code);
-    const char *saved_err_msg = FASTJSON_G(last_err_msg);
-
-    /* In non-throw mode, ext/json clears the error state up front so
-     * any argument-validation ValueError leaves last_error as NONE
-     * rather than whatever a previous call recorded. THROW_ON_ERROR
-     * mode preserves the prior state per its own contract. */
-    if (!throw_mode) {
-        fastjson_clear_error();
-    }
-
-    /* Match ext/json's argument validation contract verbatim:
-     *   depth <= 0          -> ValueError "must be greater than 0"
-     *   depth > INT_MAX     -> ValueError "must be less than %d"
-     * Both are arg #3 (after $json, $associative). */
-    if (depth <= 0) {
-        zend_argument_value_error(3, "must be greater than 0");
-        RETURN_THROWS();
-    }
-    if (depth > INT_MAX) {
-        zend_argument_value_error(3, "must be less than %d", INT_MAX);
-        RETURN_THROWS();
-    }
-
-    /* ext/json contract: explicit $associative wins; when null, the
-     * JSON_OBJECT_AS_ARRAY bit in $flags pivots. Defaults to stdClass
-     * when neither is set. */
-    bool use_assoc = assoc_is_null
-        ? ((flags & FASTJSON_DECODE_OBJECT_AS_ARRAY) != 0)
-        : (bool)assoc;
-
     /* Translate fastjson decode flags into yyjson_read_flag bits.
      * BIGINT_AS_STRING -> BIGNUM_AS_RAW so numbers that overflow
      * uint64/double are surfaced as YYJSON_TYPE_RAW (raw digit string).
@@ -467,7 +429,7 @@ PHP_FUNCTION(fastjson_decode)
     }
 
     yyjson_read_err err;
-    yyjson_doc *doc = yyjson_read_opts(json, json_len, yflags,
+    yyjson_doc *doc = yyjson_read_opts((char *)json, json_len, yflags,
                                        &fastjson_php_alc, &err);
     if (doc == NULL && err.msg
             && strcmp(err.msg, "number is infinity when parsed as double") == 0
@@ -479,7 +441,7 @@ PHP_FUNCTION(fastjson_decode)
          * (yyjson's flag would otherwise accept them, but ext/json
          * doesn't). The far more common case (pure overflow, no
          * literal tokens) lines up byte-for-byte. */
-        doc = yyjson_read_opts(json, json_len,
+        doc = yyjson_read_opts((char *)json, json_len,
                                yflags | YYJSON_READ_ALLOW_INF_AND_NAN,
                                &fastjson_php_alc, &err);
     }
@@ -546,4 +508,148 @@ PHP_FUNCTION(fastjson_decode)
     if (!throw_mode) {
         fastjson_clear_error();
     }
+}
+
+PHP_FUNCTION(fastjson_decode)
+{
+    char *json;
+    size_t json_len;
+    bool assoc = false;
+    bool assoc_is_null = true;
+    zend_long depth = 512;
+    zend_long flags = 0;
+
+    ZEND_PARSE_PARAMETERS_START(1, 4)
+        Z_PARAM_STRING(json, json_len)
+        Z_PARAM_OPTIONAL
+        Z_PARAM_BOOL_OR_NULL(assoc, assoc_is_null)
+        Z_PARAM_LONG(depth)
+        Z_PARAM_LONG(flags)
+    ZEND_PARSE_PARAMETERS_END();
+
+    /* JSON_THROW_ON_ERROR contract: on error, throw a JsonException
+     * and leave the GLOBAL fastjson_last_error state unchanged. This
+     * is how ext/json behaves (json_exceptions_error_clearing.phpt).
+     * We snapshot global state at entry and restore it on the throw
+     * path. The success path clears as usual on entry; non-throw
+     * failure path persists the error normally. */
+    bool throw_mode = (flags & FASTJSON_DECODE_THROW_ON_ERROR) != 0;
+    zend_long saved_err_code = FASTJSON_G(last_err_code);
+    const char *saved_err_msg = FASTJSON_G(last_err_msg);
+
+    /* In non-throw mode, ext/json clears the error state up front so
+     * any argument-validation ValueError leaves last_error as NONE
+     * rather than whatever a previous call recorded. THROW_ON_ERROR
+     * mode preserves the prior state per its own contract. */
+    if (!throw_mode) {
+        fastjson_clear_error();
+    }
+
+    /* Match ext/json's argument validation contract verbatim:
+     *   depth <= 0          -> ValueError "must be greater than 0"
+     *   depth > INT_MAX     -> ValueError "must be less than %d"
+     * Both are arg #3 (after $json, $associative). */
+    if (depth <= 0) {
+        zend_argument_value_error(3, "must be greater than 0");
+        RETURN_THROWS();
+    }
+    if (depth > INT_MAX) {
+        zend_argument_value_error(3, "must be less than %d", INT_MAX);
+        RETURN_THROWS();
+    }
+
+    /* ext/json contract: explicit $associative wins; when null, the
+     * JSON_OBJECT_AS_ARRAY bit in $flags pivots. Defaults to stdClass
+     * when neither is set. */
+    bool use_assoc = assoc_is_null
+        ? ((flags & FASTJSON_DECODE_OBJECT_AS_ARRAY) != 0)
+        : (bool)assoc;
+
+    fastjson_decode_into(json, json_len, use_assoc, depth, flags,
+                         throw_mode, saved_err_code, saved_err_msg,
+                         return_value);
+}
+
+PHP_FUNCTION(fastjson_file_decode)
+{
+    char *path;
+    size_t path_len;
+    bool assoc = false;
+    bool assoc_is_null = true;
+    zend_long depth = 512;
+    zend_long flags = 0;
+
+    ZEND_PARSE_PARAMETERS_START(1, 4)
+        Z_PARAM_PATH(path, path_len)
+        Z_PARAM_OPTIONAL
+        Z_PARAM_BOOL_OR_NULL(assoc, assoc_is_null)
+        Z_PARAM_LONG(depth)
+        Z_PARAM_LONG(flags)
+    ZEND_PARSE_PARAMETERS_END();
+
+    bool throw_mode = (flags & FASTJSON_DECODE_THROW_ON_ERROR) != 0;
+    zend_long saved_err_code = FASTJSON_G(last_err_code);
+    const char *saved_err_msg = FASTJSON_G(last_err_msg);
+
+    if (!throw_mode) {
+        fastjson_clear_error();
+    }
+
+    /* $depth is arg #3 here too ($filename, $associative, $depth). */
+    if (depth <= 0) {
+        zend_argument_value_error(3, "must be greater than 0");
+        RETURN_THROWS();
+    }
+    if (depth > INT_MAX) {
+        zend_argument_value_error(3, "must be less than %d", INT_MAX);
+        RETURN_THROWS();
+    }
+
+    bool use_assoc = assoc_is_null
+        ? ((flags & FASTJSON_DECODE_OBJECT_AS_ARRAY) != 0)
+        : (bool)assoc;
+
+    /* Read through the streams layer (wrappers + open_basedir honored).
+     * Silent: no REPORT_ERRORS, so a missing/unreadable file emits no
+     * warning -- failure is surfaced via the null return + last_error,
+     * matching the documented contract. An I/O failure is NOT a JSON
+     * error, so it never throws even under JSON_THROW_ON_ERROR: there
+     * is no JSON_ERROR_* code for a filesystem fault, and a missing
+     * file should not masquerade as a JsonException. We surface it as
+     * FASTJSON_ERROR_SYNTAX (the closest bucket: "no valid JSON could
+     * be obtained from the source") with a descriptive message. */
+    /* php_stream_context_from_zval(NULL, 0) resolves the request's default
+     * stream context (allocating it lazily), exactly as file_get_contents
+     * does -- so options set via stream_context_set_default() and user
+     * wrappers relying on them are honored. */
+    php_stream_context *context = php_stream_context_from_zval(NULL, 0);
+    php_stream *stream = php_stream_open_wrapper_ex(path, "rb", 0, NULL,
+                                                    context);
+    if (stream == NULL) {
+        fastjson_set_encode_error(FASTJSON_ERROR_SYNTAX,
+                                  "Failed to open file for reading");
+        RETURN_NULL();
+    }
+    zend_string *contents = php_stream_copy_to_mem(stream,
+                                                   PHP_STREAM_COPY_ALL, 0);
+    /* php_stream_copy_to_mem returns NULL for a zero-byte stream, not an
+     * empty zend_string. An empty file is not an I/O failure -- it must
+     * decode exactly like fastjson_decode(""): yyjson rejects empty input
+     * as a syntax error and JSON_THROW_ON_ERROR throws. Distinguish it
+     * from a genuine read error by the stream's EOF state (checked before
+     * close). */
+    if (contents == NULL && php_stream_eof(stream)) {
+        contents = ZSTR_EMPTY_ALLOC();
+    }
+    php_stream_close(stream);
+    if (contents == NULL) {
+        fastjson_set_encode_error(FASTJSON_ERROR_SYNTAX,
+                                  "Failed to read file");
+        RETURN_NULL();
+    }
+
+    fastjson_decode_into(ZSTR_VAL(contents), ZSTR_LEN(contents), use_assoc,
+                         depth, flags, throw_mode, saved_err_code,
+                         saved_err_msg, return_value);
+    zend_string_release(contents);
 }

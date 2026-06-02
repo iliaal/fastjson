@@ -87,6 +87,22 @@ function fastjson_version(): string {}
 function fastjson_encode(mixed $value, int $flags = 0, int $depth = 512): string|false {}
 
 /**
+ * Encodes $value to JSON and writes it to $filename in one call.
+ *
+ * Convenience wrapper for file_put_contents($filename,
+ * fastjson_encode($value, ...)). The file is written through the PHP
+ * streams layer, so stream wrappers and open_basedir are honored. The
+ * write is NOT atomic. $flags and $depth carry the exact semantics of
+ * fastjson_encode().
+ *
+ * Returns true on success, false on failure (encode error or I/O
+ * error). On failure fastjson_last_error() is set; an I/O failure is
+ * silent (no warning). JSON_THROW_ON_ERROR throws on an encode error;
+ * an I/O failure still returns false.
+ */
+function fastjson_file_encode(string $filename, mixed $value, int $flags = 0, int $depth = 512): bool {}
+
+/**
  * Decodes a JSON string into a PHP value.
  *
  * Returns the decoded value (mixed: null, bool, int, float, string,
@@ -116,6 +132,26 @@ function fastjson_encode(mixed $value, int $flags = 0, int $depth = 512): string
  * raises a ValueError; the cap is enforced during the parse.
  */
 function fastjson_decode(string $json, ?bool $associative = null, int $depth = 512, int $flags = 0): mixed {}
+
+/**
+ * Reads $filename and decodes its contents as JSON in one call.
+ *
+ * Convenience wrapper for fastjson_decode(file_get_contents($filename),
+ * ...). The file is read through the PHP streams layer, so stream
+ * wrappers (php://, user-registered wrappers) and open_basedir are
+ * honored. $associative, $depth, and $flags carry the exact semantics
+ * of fastjson_decode().
+ *
+ * Returns the decoded value on success, or null on failure -- the same
+ * contract as fastjson_decode(): callers check fastjson_last_error() to
+ * distinguish a decoded-null from a failure. Failure covers both a
+ * file that cannot be read (silent: no warning, fastjson_last_error()
+ * set to a non-zero code with a descriptive message) and a JSON parse
+ * error (translated code as usual). JSON_THROW_ON_ERROR throws on a
+ * parse error; an I/O failure still returns null (a filesystem error
+ * is not a JSON error).
+ */
+function fastjson_file_decode(string $filename, ?bool $associative = null, int $depth = 512, int $flags = 0): mixed {}
 
 /**
  * Validates that the given string is well-formed JSON.
