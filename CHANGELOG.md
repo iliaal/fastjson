@@ -6,6 +6,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `fastjson_file_decode()` and `fastjson_file_encode()`: read or write a JSON file in one call, collapsing the `fastjson_decode(file_get_contents($f), ...)` and `file_put_contents($f, fastjson_encode(...))` patterns. Signatures mirror the in-memory functions, so `$flags` and `$depth` behave identically:
+  - `fastjson_file_decode(string $filename, ?bool $associative = null, int $depth = 512, int $flags = 0): mixed`
+  - `fastjson_file_encode(string $filename, mixed $value, int $flags = 0, int $depth = 512): bool`
+
+  Both read and write through the PHP streams layer with the request default stream context, so stream wrappers, `open_basedir`, and `stream_context_set_default()` apply, matching `file_get_contents()`/`file_put_contents()`. I/O failures are silent (no warning): `fastjson_file_decode()` returns null with `fastjson_last_error()` set, `fastjson_file_encode()` returns false. An empty file decodes like `fastjson_decode("")`. `JSON_THROW_ON_ERROR` throws on JSON parse/encode errors but not on filesystem errors. Implements [php-src#22137](https://github.com/php/php-src/issues/22137).
+
 ## [0.3.0] - 2026-05-19
 
 ### Fixed
