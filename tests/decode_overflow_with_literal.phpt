@@ -9,6 +9,15 @@ fastjson
 // literals appearing elsewhere in the same input. ext/json rejects
 // these mixed inputs entirely.
 
+// json_validate() is 8.3+; fall back to json_decode parity on 8.1/8.2.
+$ext_json_validate = function (string $json): bool {
+    if (function_exists('json_validate')) {
+        return json_validate($json);
+    }
+    json_decode($json);
+    return json_last_error() === JSON_ERROR_NONE;
+};
+
 foreach ([
     '[1e309, NaN]',
     '[1e309, Infinity]',
@@ -24,7 +33,7 @@ foreach ([
         $j,
         var_export($validate, true),
         var_export($decode === null, true),
-        var_export(json_validate($j), true));
+        var_export($ext_json_validate($j), true));
 }
 
 // Sanity: plain overflow still works.

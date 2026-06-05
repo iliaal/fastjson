@@ -8,6 +8,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- PHP 8.1 support (lowered the minimum from 8.3).
 - `fastjson_file_decode()` and `fastjson_file_encode()`: read or write a JSON file in one call, collapsing the `fastjson_decode(file_get_contents($f), ...)` and `file_put_contents($f, fastjson_encode(...))` patterns. Signatures mirror the in-memory functions, so `$flags` and `$depth` behave identically:
   - `fastjson_file_decode(string $filename, ?bool $associative = null, int $depth = 512, int $flags = 0): mixed`
   - `fastjson_file_encode(string $filename, mixed $value, int $flags = 0, int $depth = 512): bool`

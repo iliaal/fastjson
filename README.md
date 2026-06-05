@@ -8,7 +8,7 @@
 
 ![fastjson: 6x encode, 2.7x decode, 5x validate vs ext/json](images/fastjson-hero.jpg)
 
-Fast JSON encode, decode, and validate for PHP 8.3+. Drop-in alternative to `ext/json` with a namespaced `fastjson_*` API and `json_last_error`-compatible error reporting. Backed by [yyjson](https://github.com/ibireme/yyjson) 0.12.0, one of the fastest portable JSON libraries. Coexists with `ext/json`; adoption is opt-in per call site.
+Fast JSON encode, decode, and validate for PHP 8.1+. Drop-in alternative to `ext/json` with a namespaced `fastjson_*` API and `json_last_error`-compatible error reporting. Backed by [yyjson](https://github.com/ibireme/yyjson) 0.12.0, one of the fastest portable JSON libraries. Coexists with `ext/json`; adoption is opt-in per call site.
 
 > **Status:** pre-release. yyjson 0.12.0 is vendored and linked. The full `fastjson_encode` / `fastjson_decode` / `fastjson_validate` trio plus `fastjson_last_error` / `_msg` are available. The compat harness against `php-src/ext/json/tests/*.phpt` passes everything targeting features fastjson aims to mirror; the rest is categorized in `tests/upstream-json/.skiplist`.
 
@@ -43,7 +43,7 @@ echo 'extension=fastjson.so' | sudo tee /etc/php/conf.d/fastjson.ini
 
 ### Windows binaries
 
-Pre-built DLLs for PHP 8.3, 8.4, and 8.5 (TS/NTS, x86/x64) are attached to each [GitHub release](https://github.com/iliaal/fastjson/releases).
+Pre-built DLLs for PHP 8.1 through 8.5 (TS/NTS, x86/x64) are attached to each [GitHub release](https://github.com/iliaal/fastjson/releases).
 
 ## 🛠️ Usage
 
