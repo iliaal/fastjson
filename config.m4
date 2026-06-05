@@ -9,8 +9,8 @@ PHP_ARG_ENABLE(fastjson-dev, whether to enable developer build flags,
 if test "$PHP_FASTJSON" != "no"; then
 
   PHP_VERSION_ID=$($PHP_CONFIG --vernum)
-  if test "$PHP_VERSION_ID" -lt "80300"; then
-    AC_MSG_ERROR([fastjson requires PHP 8.3.0 or later (found $PHP_VERSION_ID)])
+  if test "$PHP_VERSION_ID" -lt "80100"; then
+    AC_MSG_ERROR([fastjson requires PHP 8.1.0 or later (found $PHP_VERSION_ID)])
   fi
 
   YYJSON_SRC_DIR=vendor/yyjson

@@ -21,7 +21,14 @@
 #include "php.h"
 #include "php_streams.h"
 #include "ext/standard/file.h"
+#if PHP_VERSION_ID >= 80300
 #include "Zend/zend_call_stack.h"
+#else
+/* zend_call_stack_overflowed() / EG(stack_limit) are 8.3+. On 8.1/8.2
+ * the remaining_depth counter (default 512) still bounds recursion, so
+ * the secondary C-stack check degrades to a no-op. */
+#define zend_call_stack_overflowed(limit) (0)
+#endif
 #include "Zend/zend_exceptions.h"
 #include "Zend/zend_smart_str.h"
 #include "php_fastjson.h"
