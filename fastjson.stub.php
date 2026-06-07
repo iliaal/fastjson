@@ -167,6 +167,44 @@ function fastjson_decode(string $json, ?bool $associative = null, int $depth = 5
 function fastjson_file_decode(string $filename, ?bool $associative = null, int $depth = 512, int $flags = 0): mixed {}
 
 /**
+ * Reads a single value from $json at the given RFC 6901 JSON Pointer.
+ *
+ * Resolves the pointer against the parsed document and decodes only the
+ * referenced subtree into a PHP value -- the rest of the document is
+ * never materialized into PHP. Standard pointer syntax: "/users/0/email";
+ * the empty pointer "" selects the whole document.
+ *
+ * Returns the value at the pointer, or null when the pointer does not
+ * resolve (a missing path or a malformed pointer is treated as "no
+ * value", not an error -- the error state is left clear). A pointer that
+ * resolves to a JSON null also returns null; like the rest of the decode
+ * family, callers cannot distinguish the two from PHP alone.
+ *
+ * On a JSON parse error, returns null with fastjson_last_error() set (or
+ * throws under JSON_THROW_ON_ERROR). $associative, $depth, and $flags --
+ * including FASTJSON_DECODE_RELAXED -- carry the same semantics as
+ * fastjson_decode() and apply to the decoded subtree.
+ */
+function fastjson_pointer_get(string $json, string $pointer, ?bool $associative = null, int $depth = 512, int $flags = 0): mixed {}
+
+/**
+ * Applies an RFC 7386 JSON Merge Patch ($patch) to $target and returns
+ * the merged document as a PHP value.
+ *
+ * Merge semantics (RFC 7386): objects merge recursively; a non-object
+ * patch replaces the target wholesale; a null member deletes the
+ * corresponding key from the target. Returns a PHP value rather than a
+ * JSON string so the result flows through the same single encoder -- pass
+ * it to fastjson_encode() for byte-consistent output.
+ *
+ * On a JSON parse error in either operand, returns null with
+ * fastjson_last_error() set (or throws under JSON_THROW_ON_ERROR).
+ * $associative, $depth, and $flags -- including FASTJSON_DECODE_RELAXED
+ * for the operand parse -- carry the same semantics as fastjson_decode().
+ */
+function fastjson_merge_patch(string $target, string $patch, ?bool $associative = null, int $depth = 512, int $flags = 0): mixed {}
+
+/**
  * Validates that the given string is well-formed JSON.
  * Returns true on success, false on any parse error.
  *

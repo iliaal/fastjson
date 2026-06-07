@@ -401,6 +401,61 @@ static bool fastjson_yyval_to_zval_sanitize(yyjson_val *val, bool assoc,
     }
 }
 
+/* Read a JSON buffer into an immutable yyjson doc, applying fastjson's
+ * decode-flag translation, the ext/json inf/nan exponent-overflow retry,
+ * and the parse-error UTF-8 reclassification. Returns the doc (caller
+ * frees with yyjson_doc_free) or NULL with *err populated; err->code is
+ * already mapped to the right yyjson_read_code bucket. Shared by
+ * fastjson_decode, fastjson_pointer_get, and fastjson_merge_patch. */
+static yyjson_doc *fastjson_read_doc(const char *json, size_t json_len,
+                                     zend_long flags, yyjson_read_err *err)
+{
+    /* BIGINT_AS_STRING -> BIGNUM_AS_RAW so numbers that overflow
+     * uint64/double surface as YYJSON_TYPE_RAW (raw digit string); the
+     * walker stringifies those. */
+    yyjson_read_flag yflags = 0;
+    if (flags & FASTJSON_DECODE_BIGINT_AS_STRING) {
+        yflags |= YYJSON_READ_BIGNUM_AS_RAW;
+    }
+    /* IGNORE or SUBSTITUTE: accept invalid UTF-8 in strings; the
+     * sanitizing walker strips/replaces those bytes afterwards. */
+    if (flags & (FASTJSON_DECODE_INVALID_UTF8_IGNORE
+                 | FASTJSON_DECODE_INVALID_UTF8_SUBSTITUTE)) {
+        yflags |= YYJSON_READ_ALLOW_INVALID_UNICODE;
+    }
+    /* RELAXED: tolerate the JSONC subset (comments, trailing commas, BOM). */
+    if (flags & FASTJSON_DECODE_RELAXED) {
+        yflags |= YYJSON_READ_ALLOW_COMMENTS
+                | YYJSON_READ_ALLOW_TRAILING_COMMAS
+                | YYJSON_READ_ALLOW_BOM;
+    }
+
+    yyjson_doc *doc = yyjson_read_opts((char *)json, json_len, yflags,
+                                       &fastjson_php_alc, err);
+    if (doc == NULL && err->msg
+            && strcmp(err->msg, "number is infinity when parsed as double") == 0
+            && !fastjson_input_has_inf_nan_literal(json, json_len)) {
+        /* yyjson rejects exponent-overflow numbers like "1e309"; ext/json
+         * decodes them to INF. Retry with ALLOW_INF_AND_NAN to match,
+         * unless the input also carries an unquoted Inf/NaN literal token
+         * (which ext/json rejects). */
+        doc = yyjson_read_opts((char *)json, json_len,
+                               yflags | YYJSON_READ_ALLOW_INF_AND_NAN,
+                               &fastjson_php_alc, err);
+    }
+    if (doc == NULL
+            && err->pos < json_len
+            && (unsigned char)json[err->pos] >= 0x80
+            && !fastjson_byte_is_valid_utf8_start(json, json_len, err->pos)) {
+        /* ext/json reports a malformed UTF-8 byte at the error position as
+         * JSON_ERROR_UTF8; a valid-UTF-8-but-not-JSON byte stays SYNTAX.
+         * yyjson lumps both as UNEXPECTED_CHARACTER, so reclassify only
+         * genuinely malformed UTF-8. */
+        err->code = YYJSON_READ_ERROR_INVALID_STRING;
+    }
+    return doc;
+}
+
 /* Shared decode core for fastjson_decode and fastjson_file_decode.
  * Runs the yyjson read (with the inf/nan-overflow retry and parse-error
  * UTF-8 reclassification), dispatches the appropriate walker into
@@ -416,61 +471,9 @@ static void fastjson_decode_into(const char *json, size_t json_len,
                                  const char *saved_err_msg,
                                  zval *return_value)
 {
-    /* Translate fastjson decode flags into yyjson_read_flag bits.
-     * BIGINT_AS_STRING -> BIGNUM_AS_RAW so numbers that overflow
-     * uint64/double are surfaced as YYJSON_TYPE_RAW (raw digit string).
-     * The walker handles both that and the uint > INT64_MAX inline
-     * stringification. */
-    yyjson_read_flag yflags = 0;
-    if (flags & FASTJSON_DECODE_BIGINT_AS_STRING) {
-        yflags |= YYJSON_READ_BIGNUM_AS_RAW;
-    }
-    /* IGNORE or SUBSTITUTE: tell yyjson to accept invalid UTF-8 inside
-     * JSON strings instead of failing the parse. The sanitize walker
-     * (selected below) then strips or replaces those bytes per
-     * ext/json's IGNORE/SUBSTITUTE semantics; yyjson itself never
-     * leaves raw invalid bytes in the final zval. */
-    if (flags & (FASTJSON_DECODE_INVALID_UTF8_IGNORE
-                 | FASTJSON_DECODE_INVALID_UTF8_SUBSTITUTE)) {
-        yflags |= YYJSON_READ_ALLOW_INVALID_UNICODE;
-    }
-    /* RELAXED: accept the JSONC subset ext/json rejects (line/block
-     * comments, trailing commas, a leading BOM). */
-    if (flags & FASTJSON_DECODE_RELAXED) {
-        yflags |= YYJSON_READ_ALLOW_COMMENTS
-                | YYJSON_READ_ALLOW_TRAILING_COMMAS
-                | YYJSON_READ_ALLOW_BOM;
-    }
-
     yyjson_read_err err;
-    yyjson_doc *doc = yyjson_read_opts((char *)json, json_len, yflags,
-                                       &fastjson_php_alc, &err);
-    if (doc == NULL && err.msg
-            && strcmp(err.msg, "number is infinity when parsed as double") == 0
-            && !fastjson_input_has_inf_nan_literal(json, json_len)) {
-        /* yyjson rejects exponent-overflow numbers like "1e309" by
-         * default; ext/json accepts and decodes to INF. Retry with
-         * ALLOW_INF_AND_NAN to match. The pre-scan keeps inputs that
-         * also contain an unquoted Inf/NaN literal token rejected
-         * (yyjson's flag would otherwise accept them, but ext/json
-         * doesn't). The far more common case (pure overflow, no
-         * literal tokens) lines up byte-for-byte. */
-        doc = yyjson_read_opts((char *)json, json_len,
-                               yflags | YYJSON_READ_ALLOW_INF_AND_NAN,
-                               &fastjson_php_alc, &err);
-    }
+    yyjson_doc *doc = fastjson_read_doc(json, json_len, flags, &err);
     if (doc == NULL) {
-        /* ext/json classifies a MALFORMED UTF-8 byte at a parse-error
-         * position as JSON_ERROR_UTF8; a valid-UTF-8-but-not-JSON byte
-         * (e.g. bare `é` at top level) stays JSON_ERROR_SYNTAX. yyjson
-         * reports both as UNEXPECTED_CHARACTER, so we re-categorize
-         * only when the byte sequence is genuinely malformed UTF-8.
-         * Matches json_exceptions_error_clearing.phpt. */
-        if (err.pos < json_len
-                && (unsigned char)json[err.pos] >= 0x80
-                && !fastjson_byte_is_valid_utf8_start(json, json_len, err.pos)) {
-            err.code = YYJSON_READ_ERROR_INVALID_STRING;
-        }
         if (throw_mode) {
             zend_long code = fastjson_translate_read_code(err.code);
             zend_class_entry *ce = fastjson_json_exception_ce
@@ -666,4 +669,243 @@ PHP_FUNCTION(fastjson_file_decode)
                          depth, flags, throw_mode, saved_err_code,
                          saved_err_msg, return_value);
     zend_string_release(contents);
+}
+
+/* Throw the JsonException matching a failed read and restore the prior
+ * global error state (THROW_ON_ERROR's "exception carries the error,
+ * globals untouched" contract). Caller must RETURN_THROWS() after. */
+static void fastjson_throw_read_err(const yyjson_read_err *err,
+                                    zend_long saved_err_code,
+                                    const char *saved_err_msg)
+{
+    zend_long code = fastjson_translate_read_code(err->code);
+    zend_class_entry *ce = fastjson_json_exception_ce
+        ? fastjson_json_exception_ce : zend_ce_exception;
+    zend_throw_exception(ce, err->msg, code);
+    FASTJSON_G(last_err_code) = saved_err_code;
+    FASTJSON_G(last_err_msg) = saved_err_msg;
+}
+
+/* Convert a resolved/merged immutable subtree into return_value, mirroring
+ * fastjson_decode_into's walker dispatch and depth-failure handling. Frees
+ * `doc`. Returns true on success (caller clears error on the non-throw
+ * path), false if the walk hit the depth cap (return_value left NULL,
+ * exception thrown under throw_mode). */
+static bool fastjson_walk_doc_into(yyjson_doc *doc, yyjson_val *root,
+                                   bool use_assoc, zend_long depth,
+                                   zend_long flags, bool throw_mode,
+                                   zend_long saved_err_code,
+                                   const char *saved_err_msg,
+                                   zval *return_value)
+{
+    bool walk_ok = FASTJSON_HAS_UTF8_HANDLING_FLAG(flags)
+        ? fastjson_yyval_to_zval_sanitize(root, use_assoc, depth, flags, return_value)
+        : fastjson_yyval_to_zval(root, use_assoc, depth, flags, return_value);
+    if (!walk_ok) {
+        /* The walker set FASTJSON_ERROR_DEPTH and return_value may hold a
+         * partial container; reset to a clean null. */
+        zval_ptr_dtor(return_value);
+        ZVAL_NULL(return_value);
+        yyjson_doc_free(doc);
+        if (throw_mode) {
+            zend_class_entry *ce = fastjson_json_exception_ce
+                ? fastjson_json_exception_ce : zend_ce_exception;
+            zend_throw_exception(ce,
+                FASTJSON_G(last_err_msg) ? FASTJSON_G(last_err_msg)
+                                         : "Maximum stack depth exceeded",
+                FASTJSON_G(last_err_code));
+            FASTJSON_G(last_err_code) = saved_err_code;
+            FASTJSON_G(last_err_msg) = saved_err_msg;
+        }
+        return false;
+    }
+    yyjson_doc_free(doc);
+    return true;
+}
+
+PHP_FUNCTION(fastjson_pointer_get)
+{
+    char *json, *pointer;
+    size_t json_len, pointer_len;
+    bool assoc = false;
+    bool assoc_is_null = true;
+    zend_long depth = 512;
+    zend_long flags = 0;
+
+    ZEND_PARSE_PARAMETERS_START(2, 5)
+        Z_PARAM_STRING(json, json_len)
+        Z_PARAM_STRING(pointer, pointer_len)
+        Z_PARAM_OPTIONAL
+        Z_PARAM_BOOL_OR_NULL(assoc, assoc_is_null)
+        Z_PARAM_LONG(depth)
+        Z_PARAM_LONG(flags)
+    ZEND_PARSE_PARAMETERS_END();
+
+    bool throw_mode = (flags & FASTJSON_DECODE_THROW_ON_ERROR) != 0;
+    zend_long saved_err_code = FASTJSON_G(last_err_code);
+    const char *saved_err_msg = FASTJSON_G(last_err_msg);
+    if (!throw_mode) {
+        fastjson_clear_error();
+    }
+
+    if (depth <= 0) {
+        zend_argument_value_error(4, "must be greater than 0");
+        RETURN_THROWS();
+    }
+    if (depth > INT_MAX) {
+        zend_argument_value_error(4, "must be less than %d", INT_MAX);
+        RETURN_THROWS();
+    }
+
+    bool use_assoc = assoc_is_null
+        ? ((flags & FASTJSON_DECODE_OBJECT_AS_ARRAY) != 0)
+        : (bool)assoc;
+
+    yyjson_read_err err;
+    yyjson_doc *doc = fastjson_read_doc(json, json_len, flags, &err);
+    if (doc == NULL) {
+        if (throw_mode) {
+            fastjson_throw_read_err(&err, saved_err_code, saved_err_msg);
+            RETURN_THROWS();
+        }
+        fastjson_set_error(err.code, err.msg);
+        RETURN_NULL();
+    }
+
+    /* RFC 6901 JSON Pointer. yyjson_ptr_getn returns NULL when the
+     * pointer does not resolve OR is malformed (e.g. missing leading
+     * '/'); both are treated as "no value" -- not a JSON error -- so we
+     * return null with the error state left clear. A pointer that
+     * resolves to a JSON null returns null too (target != NULL); the two
+     * are indistinguishable from PHP, consistent with the decode family's
+     * documented null-ambiguity. The empty pointer "" selects the whole
+     * document per RFC 6901. */
+    yyjson_val *target = yyjson_ptr_getn(yyjson_doc_get_root(doc),
+                                         pointer, pointer_len);
+    if (target == NULL) {
+        yyjson_doc_free(doc);
+        RETURN_NULL();
+    }
+
+    if (!fastjson_walk_doc_into(doc, target, use_assoc, depth, flags,
+                                throw_mode, saved_err_code, saved_err_msg,
+                                return_value)) {
+        if (throw_mode) {
+            RETURN_THROWS();
+        }
+        return;
+    }
+    if (!throw_mode) {
+        fastjson_clear_error();
+    }
+}
+
+PHP_FUNCTION(fastjson_merge_patch)
+{
+    char *target, *patch;
+    size_t target_len, patch_len;
+    bool assoc = false;
+    bool assoc_is_null = true;
+    zend_long depth = 512;
+    zend_long flags = 0;
+
+    ZEND_PARSE_PARAMETERS_START(2, 5)
+        Z_PARAM_STRING(target, target_len)
+        Z_PARAM_STRING(patch, patch_len)
+        Z_PARAM_OPTIONAL
+        Z_PARAM_BOOL_OR_NULL(assoc, assoc_is_null)
+        Z_PARAM_LONG(depth)
+        Z_PARAM_LONG(flags)
+    ZEND_PARSE_PARAMETERS_END();
+
+    bool throw_mode = (flags & FASTJSON_DECODE_THROW_ON_ERROR) != 0;
+    zend_long saved_err_code = FASTJSON_G(last_err_code);
+    const char *saved_err_msg = FASTJSON_G(last_err_msg);
+    if (!throw_mode) {
+        fastjson_clear_error();
+    }
+
+    if (depth <= 0) {
+        zend_argument_value_error(4, "must be greater than 0");
+        RETURN_THROWS();
+    }
+    if (depth > INT_MAX) {
+        zend_argument_value_error(4, "must be less than %d", INT_MAX);
+        RETURN_THROWS();
+    }
+
+    bool use_assoc = assoc_is_null
+        ? ((flags & FASTJSON_DECODE_OBJECT_AS_ARRAY) != 0)
+        : (bool)assoc;
+
+    /* Parse both operands as immutable docs first; either failing is a
+     * JSON error surfaced through the usual path. */
+    yyjson_read_err err;
+    yyjson_doc *tdoc = fastjson_read_doc(target, target_len, flags, &err);
+    if (tdoc == NULL) {
+        if (throw_mode) {
+            fastjson_throw_read_err(&err, saved_err_code, saved_err_msg);
+            RETURN_THROWS();
+        }
+        fastjson_set_error(err.code, err.msg);
+        RETURN_NULL();
+    }
+    yyjson_doc *pdoc = fastjson_read_doc(patch, patch_len, flags, &err);
+    if (pdoc == NULL) {
+        yyjson_doc_free(tdoc);
+        if (throw_mode) {
+            fastjson_throw_read_err(&err, saved_err_code, saved_err_msg);
+            RETURN_THROWS();
+        }
+        fastjson_set_error(err.code, err.msg);
+        RETURN_NULL();
+    }
+
+    /* RFC 7386 JSON Merge Patch: a non-object patch replaces the target
+     * wholesale; a null member deletes the corresponding key. The result
+     * is built in a mutable doc, then copied to an immutable doc so the
+     * shared yyjson_val -> zval walker can materialize it -- keeping a
+     * single serialization-free path to a PHP value (callers re-encode
+     * with fastjson_encode for byte-consistent output). */
+    yyjson_doc *idoc = NULL;
+    yyjson_mut_doc *mdoc = yyjson_mut_doc_new(&fastjson_php_alc);
+    if (mdoc != NULL) {
+        yyjson_mut_val *merged = yyjson_merge_patch(
+            mdoc, yyjson_doc_get_root(tdoc), yyjson_doc_get_root(pdoc));
+        if (merged != NULL) {
+            yyjson_mut_doc_set_root(mdoc, merged);
+            idoc = yyjson_mut_doc_imut_copy(mdoc, &fastjson_php_alc);
+        }
+        yyjson_mut_doc_free(mdoc);
+    }
+    yyjson_doc_free(tdoc);
+    yyjson_doc_free(pdoc);
+
+    if (idoc == NULL) {
+        /* Only reachable on allocator failure inside yyjson. */
+        if (throw_mode) {
+            zend_class_entry *ce = fastjson_json_exception_ce
+                ? fastjson_json_exception_ce : zend_ce_exception;
+            zend_throw_exception(ce, "fastjson_merge_patch failed",
+                                 FASTJSON_ERROR_SYNTAX);
+            FASTJSON_G(last_err_code) = saved_err_code;
+            FASTJSON_G(last_err_msg) = saved_err_msg;
+            RETURN_THROWS();
+        }
+        fastjson_set_encode_error(FASTJSON_ERROR_SYNTAX,
+                                  "fastjson_merge_patch failed");
+        RETURN_NULL();
+    }
+
+    if (!fastjson_walk_doc_into(idoc, yyjson_doc_get_root(idoc), use_assoc,
+                                depth, flags, throw_mode, saved_err_code,
+                                saved_err_msg, return_value)) {
+        if (throw_mode) {
+            RETURN_THROWS();
+        }
+        return;
+    }
+    if (!throw_mode) {
+        fastjson_clear_error();
+    }
 }
