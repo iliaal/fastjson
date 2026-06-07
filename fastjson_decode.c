@@ -434,6 +434,13 @@ static void fastjson_decode_into(const char *json, size_t json_len,
                  | FASTJSON_DECODE_INVALID_UTF8_SUBSTITUTE)) {
         yflags |= YYJSON_READ_ALLOW_INVALID_UNICODE;
     }
+    /* RELAXED: accept the JSONC subset ext/json rejects (line/block
+     * comments, trailing commas, a leading BOM). */
+    if (flags & FASTJSON_DECODE_RELAXED) {
+        yflags |= YYJSON_READ_ALLOW_COMMENTS
+                | YYJSON_READ_ALLOW_TRAILING_COMMAS
+                | YYJSON_READ_ALLOW_BOM;
+    }
 
     yyjson_read_err err;
     yyjson_doc *doc = yyjson_read_opts((char *)json, json_len, yflags,

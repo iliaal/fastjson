@@ -8,6 +8,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `FASTJSON_DECODE_RELAXED` decode flag: tolerate the JSONC subset that `ext/json` rejects — line (`//`) and block (`/* */`) comments, trailing commas, and a leading UTF-8 BOM. fastjson-only; there is no `JSON_*` counterpart. Well-formed JSON decodes identically with or without the flag. Pass it in `$flags`, e.g. `fastjson_decode($jsonc, true, 512, FASTJSON_DECODE_RELAXED)`. Backed by yyjson's `ALLOW_COMMENTS | ALLOW_TRAILING_COMMAS | ALLOW_BOM` read flags, so parsing stays robust rather than relying on a pre-pass scrubber.
 - PHP 8.1 support (lowered the minimum from 8.3).
 - `fastjson_file_decode()` and `fastjson_file_encode()`: read or write a JSON file in one call, collapsing the `fastjson_decode(file_get_contents($f), ...)` and `file_put_contents($f, fastjson_encode(...))` patterns. Signatures mirror the in-memory functions, so `$flags` and `$depth` behave identically:
   - `fastjson_file_decode(string $filename, ?bool $associative = null, int $depth = 512, int $flags = 0): mixed`

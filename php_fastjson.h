@@ -65,6 +65,11 @@ extern zend_module_entry fastjson_module_entry;
 #define FASTJSON_DECODE_INVALID_UTF8_IGNORE   (1 << 20)
 #define FASTJSON_DECODE_INVALID_UTF8_SUBSTITUTE (1 << 21)
 #define FASTJSON_DECODE_THROW_ON_ERROR        (1 << 22)
+/* fastjson-only: no ext/json counterpart. Tolerate the JSONC subset
+ * (line and block comments, trailing commas, a leading UTF-8 BOM) that
+ * ext/json rejects. Bit 23 sits just past ext/json's flag range so it
+ * never collides with a JSON_* value a caller might OR in. */
+#define FASTJSON_DECODE_RELAXED               (1 << 23)
 
 /* Cached class entries resolved at MINIT. Both come from ext/json
  * (which is always loaded in standard PHP builds); we do not register

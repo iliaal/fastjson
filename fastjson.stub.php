@@ -45,6 +45,14 @@ const FASTJSON_ERROR_INF_OR_NAN = UNKNOWN;
 const FASTJSON_ERROR_UNSUPPORTED_TYPE = UNKNOWN;
 
 /**
+ * Decode flag (fastjson-only, no ext/json equivalent): tolerate the
+ * JSONC subset -- line/block comments, trailing commas, leading BOM.
+ * @var int
+ * @cvalue FASTJSON_DECODE_RELAXED
+ */
+const FASTJSON_DECODE_RELAXED = UNKNOWN;
+
+/**
  * Returns the fastjson extension version string (matches
  * PHP_FASTJSON_VERSION in php_fastjson.h).
  */
@@ -127,6 +135,11 @@ function fastjson_file_encode(string $filename, mixed $value, int $flags = 0, in
  *   JSON_THROW_ON_ERROR           - throw JsonException on parse
  *                                   failure; global error state is
  *                                   preserved per ext/json's contract
+ *   FASTJSON_DECODE_RELAXED       - tolerate the JSONC subset
+ *                                   (line/block comments, trailing
+ *                                   commas, leading BOM) that ext/json
+ *                                   rejects; fastjson-only, no JSON_*
+ *                                   equivalent
  *
  * The $depth parameter caps recursion. $depth <= 0 or > INT_MAX
  * raises a ValueError; the cap is enforced during the parse.
