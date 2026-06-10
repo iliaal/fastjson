@@ -261,14 +261,23 @@ bool fastjson_utf8_well_formed(const char *s, size_t len)
     return true;
 }
 
-bool fastjson_input_has_inf_nan_literal(const char *s, size_t len)
+bool fastjson_input_has_inf_nan_literal(const char *s, size_t len,
+                                        bool allow_comments)
 {
     /* Walk outside string literals. Inside "..." backslash escapes
      * the next char. Anywhere unquoted, an ASCII run starting with
      * I/i + N/n + F/f (Inf or Infinity) or N/n + A/a + N/n (NaN) is
      * the literal yyjson's ALLOW_INF_AND_NAN accepts and ext/json
      * doesn't. yyjson also accepts a leading '-'; we still match
-     * either form via the I/N start. */
+     * either form via the I/N start.
+     *
+     * When the caller decodes with FASTJSON_DECODE_RELAXED, yyjson also
+     * accepts JSONC line/block comments. Their bytes are grammar, not
+     * tokens, so skip them: a comment containing "info" must not read
+     * as an Inf literal (false positive that blocks the legitimate
+     * exponent-overflow retry), and an unbalanced quote inside a comment
+     * must not flip the string state and hide a real bare Inf token
+     * outside it (false negative). */
     bool in_str = false;
     bool escape = false;
     for (size_t i = 0; i < len; i++) {
@@ -278,6 +287,19 @@ bool fastjson_input_has_inf_nan_literal(const char *s, size_t len)
             if (c == '\\') { escape = true; continue; }
             if (c == '"') { in_str = false; }
             continue;
+        }
+        if (allow_comments && c == '/' && i + 1 < len) {
+            if (s[i + 1] == '/') {
+                i += 2;
+                while (i < len && s[i] != '\n') i++;
+                continue;
+            }
+            if (s[i + 1] == '*') {
+                i += 2;
+                while (i + 1 < len && !(s[i] == '*' && s[i + 1] == '/')) i++;
+                i++; /* land on '/'; loop's i++ steps past it */
+                continue;
+            }
         }
         if (c == '"') { in_str = true; continue; }
         unsigned char lc = c | 0x20;
@@ -372,7 +394,7 @@ PHP_FUNCTION(fastjson_validate)
                                        &fastjson_php_alc, &err);
     if (doc == NULL && err.msg
             && strcmp(err.msg, "number is infinity when parsed as double") == 0
-            && !fastjson_input_has_inf_nan_literal(json, json_len)) {
+            && !fastjson_input_has_inf_nan_literal(json, json_len, false)) {
         /* Match ext/json: exponent-overflow numbers like "1e309" are
          * valid JSON values (decoded to INF). The pre-scan rejects
          * inputs that also contain an unquoted Inf/NaN literal, which

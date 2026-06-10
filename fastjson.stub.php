@@ -45,6 +45,12 @@ const FASTJSON_ERROR_INF_OR_NAN = UNKNOWN;
 const FASTJSON_ERROR_UNSUPPORTED_TYPE = UNKNOWN;
 
 /**
+ * @var int
+ * @cvalue FASTJSON_ERROR_NON_BACKED_ENUM
+ */
+const FASTJSON_ERROR_NON_BACKED_ENUM = UNKNOWN;
+
+/**
  * Decode flag (fastjson-only, no ext/json equivalent): tolerate the
  * JSONC subset -- line/block comments, trailing commas, leading BOM.
  * @var int

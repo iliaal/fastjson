@@ -21,12 +21,15 @@
 #include "php.h"
 #include "php_streams.h"
 #include "ext/standard/file.h"
-#if PHP_VERSION_ID >= 80300
+#if PHP_VERSION_ID >= 80300 && defined(ZEND_CHECK_STACK_LIMIT)
 #include "Zend/zend_call_stack.h"
 #else
-/* zend_call_stack_overflowed() / EG(stack_limit) are 8.3+. On 8.1/8.2
- * the remaining_depth counter (default 512) still bounds recursion, so
- * the secondary C-stack check degrades to a no-op. */
+/* zend_call_stack_overflowed() / EG(stack_limit) are 8.3+, and even on
+ * 8.3+ the function is only declared when ZEND_CHECK_STACK_LIMIT is
+ * configured (php-src cannot detect stack bounds on every platform).
+ * Where either is absent, the remaining_depth counter (default 512)
+ * still bounds recursion, so the secondary C-stack check degrades to a
+ * no-op. */
 #define zend_call_stack_overflowed(limit) (0)
 #endif
 #include "Zend/zend_exceptions.h"
@@ -59,7 +62,20 @@ static zend_always_inline void fj_num_to_zval(yyjson_val *val,
             ZVAL_DOUBLE(out, (double)u);
         }
     } else { /* SINT */
-        ZVAL_LONG(out, (zend_long)yyjson_get_sint(val));
+        int64_t s = yyjson_get_sint(val);
+        if (s >= ZEND_LONG_MIN) {
+            ZVAL_LONG(out, (zend_long)s);
+        } else if (flags & FASTJSON_DECODE_BIGINT_AS_STRING) {
+            /* On 32-bit zend_long builds a negative int64 below
+             * ZEND_LONG_MIN would truncate; mirror the uint branch and
+             * stringify (or widen to double). Constant-false and elided
+             * on 64-bit, where ZEND_LONG_MIN == INT64_MIN. */
+            char buf[24];
+            int len = snprintf(buf, sizeof(buf), "%" PRId64, s);
+            ZVAL_STRINGL(out, buf, (size_t)len);
+        } else {
+            ZVAL_DOUBLE(out, (double)s);
+        }
     }
 }
 
@@ -434,7 +450,8 @@ static yyjson_doc *fastjson_read_doc(const char *json, size_t json_len,
                                        &fastjson_php_alc, err);
     if (doc == NULL && err->msg
             && strcmp(err->msg, "number is infinity when parsed as double") == 0
-            && !fastjson_input_has_inf_nan_literal(json, json_len)) {
+            && !fastjson_input_has_inf_nan_literal(json, json_len,
+                    (flags & FASTJSON_DECODE_RELAXED) != 0)) {
         /* yyjson rejects exponent-overflow numbers like "1e309"; ext/json
          * decodes them to INF. Retry with ALLOW_INF_AND_NAN to match,
          * unless the input also carries an unquoted Inf/NaN literal token
@@ -800,6 +817,38 @@ PHP_FUNCTION(fastjson_pointer_get)
     }
 }
 
+/* Maximum structural nesting depth of a JSON text: the largest count of
+ * simultaneously-open '{'/'[' outside string literals. O(n), no
+ * recursion. fastjson_merge_patch needs this because its merge and
+ * copy steps (yyjson_merge_patch, yyjson_mut_doc_imut_copy) recurse once
+ * per nesting level on the C stack BEFORE the depth-capped zval walker
+ * runs; an adversarial deeply-nested operand would overflow the stack
+ * and crash. Bounding both operands' input depth against $depth caps all
+ * three recursions. Comment/trailing-comma tolerance under RELAXED does
+ * not affect brace nesting, so a plain structural scan is sufficient. */
+static size_t fastjson_json_max_nesting(const char *s, size_t len)
+{
+    size_t depth = 0, max = 0;
+    bool in_str = false, escape = false;
+    for (size_t i = 0; i < len; i++) {
+        char c = s[i];
+        if (in_str) {
+            if (escape) escape = false;
+            else if (c == '\\') escape = true;
+            else if (c == '"') in_str = false;
+            continue;
+        }
+        if (c == '"') {
+            in_str = true;
+        } else if (c == '{' || c == '[') {
+            if (++depth > max) max = depth;
+        } else if (c == '}' || c == ']') {
+            if (depth > 0) depth--;
+        }
+    }
+    return max;
+}
+
 PHP_FUNCTION(fastjson_merge_patch)
 {
     char *target, *patch;
@@ -858,6 +907,30 @@ PHP_FUNCTION(fastjson_merge_patch)
             RETURN_THROWS();
         }
         fastjson_set_error(err.code, err.msg);
+        RETURN_NULL();
+    }
+
+    /* The merge and imut-copy below recurse on the C stack per nesting
+     * level, ahead of the depth-capped walker. Reject operands whose
+     * nesting reaches $depth up front so a pathological input fails with
+     * the same FASTJSON_ERROR_DEPTH the walker would raise, rather than
+     * overflowing the stack. The merged result's depth never exceeds the
+     * deeper operand, so checking both inputs is sufficient. */
+    if (fastjson_json_max_nesting(target, target_len) >= (size_t)depth
+            || fastjson_json_max_nesting(patch, patch_len) >= (size_t)depth) {
+        yyjson_doc_free(tdoc);
+        yyjson_doc_free(pdoc);
+        if (throw_mode) {
+            zend_class_entry *ce = fastjson_json_exception_ce
+                ? fastjson_json_exception_ce : zend_ce_exception;
+            zend_throw_exception(ce, "Maximum stack depth exceeded",
+                                 FASTJSON_ERROR_DEPTH);
+            FASTJSON_G(last_err_code) = saved_err_code;
+            FASTJSON_G(last_err_msg) = saved_err_msg;
+            RETURN_THROWS();
+        }
+        fastjson_set_encode_error(FASTJSON_ERROR_DEPTH,
+                                  "Maximum stack depth exceeded");
         RETURN_NULL();
     }
 

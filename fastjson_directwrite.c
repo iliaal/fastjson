@@ -49,14 +49,18 @@
 #include <math.h>
 
 #include "php.h"
-#if PHP_VERSION_ID >= 80300
+#if PHP_VERSION_ID >= 80300 && defined(ZEND_CHECK_STACK_LIMIT)
 #include "Zend/zend_call_stack.h"
 #else
-/* zend_call_stack_overflowed() / EG(stack_limit) are 8.3+. On 8.1/8.2
- * the remaining_depth counter (default 512) still bounds recursion, so
- * the secondary C-stack check degrades to a no-op. */
+/* zend_call_stack_overflowed() / EG(stack_limit) are 8.3+, and even on
+ * 8.3+ the function is only declared when ZEND_CHECK_STACK_LIMIT is
+ * configured (php-src cannot detect stack bounds on every platform).
+ * Where either is absent, the remaining_depth counter (default 512)
+ * still bounds recursion, so the secondary C-stack check degrades to a
+ * no-op. */
 #define zend_call_stack_overflowed(limit) (0)
 #endif
+#include "Zend/zend_enum.h"
 #include "Zend/zend_exceptions.h"
 #include "Zend/zend_interfaces.h"
 #include "Zend/zend_smart_str.h"
@@ -521,19 +525,28 @@ static bool dw_emit_array(fastjson_dw_ctx *ctx, HashTable *ht,
 static bool dw_emit_jsonserializable(fastjson_dw_ctx *ctx, zval *zv,
                                      zend_long remaining_depth)
 {
-    if (Z_IS_RECURSIVE_P(zv)) {
+    /* zv may be an interior pointer into ctx->retval_stash: when a
+     * JsonSerializable's jsonSerialize() result is itself a
+     * JsonSerializable object, dw_emit_object forwards the stashed slot
+     * down to here. The insert below -- and any deeper insert during the
+     * recursion -- can rehash and relocate the stash's arData, dangling
+     * zv. The zend_object never moves, so capture it up front and drive
+     * the recursion guard through obj, never re-dereferencing zv after
+     * the insert. Mirrors the fix in dw_emit_object. */
+    zend_object *obj = Z_OBJ_P(zv);
+    if (GC_IS_RECURSIVE(obj)) {
         return dw_partial_or_fail(ctx, FASTJSON_ERROR_RECURSION,
             "Recursion detected", false);
     }
-    Z_PROTECT_RECURSION_P(zv);
+    GC_PROTECT_RECURSION(obj);
 
     zval retval;
     ZVAL_UNDEF(&retval);
-    zend_call_method_with_0_params(Z_OBJ_P(zv), Z_OBJCE_P(zv), NULL,
+    zend_call_method_with_0_params(obj, obj->ce, NULL,
                                    "jsonserialize", &retval);
     if (EG(exception)) {
         zval_ptr_dtor(&retval);
-        Z_UNPROTECT_RECURSION_P(zv);
+        GC_UNPROTECT_RECURSION(obj);
         return false;
     }
 
@@ -547,7 +560,7 @@ static bool dw_emit_jsonserializable(fastjson_dw_ctx *ctx, zval *zv,
     zval *stashed = zend_hash_next_index_insert(&ctx->retval_stash, &retval);
 
     bool ok = dw_encode_zval(ctx, stashed, remaining_depth - 1);
-    Z_UNPROTECT_RECURSION_P(zv);
+    GC_UNPROTECT_RECURSION(obj);
     return ok;
 }
 
@@ -567,6 +580,20 @@ static bool dw_emit_object(fastjson_dw_ctx *ctx, zval *zv,
             && instanceof_function(Z_OBJCE_P(zv),
                                    fastjson_json_serializable_ce)) {
         return dw_emit_jsonserializable(ctx, zv, remaining_depth);
+    }
+
+    /* Enums (after the JsonSerializable check, matching ext/json's
+     * dispatch order -- an enum may implement JsonSerializable). A
+     * backed enum serializes as its backing value; a non-backed enum is
+     * an error, exactly like ext/json's php_json_encode_serializable_enum
+     * (which substitutes 0 under PARTIAL_OUTPUT_ON_ERROR). */
+    if (Z_OBJCE_P(zv)->ce_flags & ZEND_ACC_ENUM) {
+        if (Z_OBJCE_P(zv)->enum_backing_type == IS_UNDEF) {
+            return dw_partial_or_fail(ctx, FASTJSON_ERROR_NON_BACKED_ENUM,
+                "Non-backed enums have no default serialization", true);
+        }
+        zval *backing = zend_enum_fetch_case_value(Z_OBJ_P(zv));
+        return dw_encode_zval(ctx, backing, remaining_depth);
     }
 
     /* Use the JSON-purpose property view so engine objects (DateTime,

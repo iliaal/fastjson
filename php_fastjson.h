@@ -40,6 +40,7 @@ extern zend_module_entry fastjson_module_entry;
 #define FASTJSON_ERROR_RECURSION         6
 #define FASTJSON_ERROR_INF_OR_NAN        7
 #define FASTJSON_ERROR_UNSUPPORTED_TYPE  8
+#define FASTJSON_ERROR_NON_BACKED_ENUM   11
 
 /* Encode-side flag bits. Values match ext/json's JSON_* constants so
  * a caller passing JSON_PRETTY_PRINT works whether or not ext/json is
@@ -122,7 +123,8 @@ void fastjson_set_encode_error(zend_long code, const char *msg);
  * literal token (case-insensitive). Used after the overflow-retry
  * parse to reject inputs that mix overflow with a literal that
  * ext/json rejects. */
-bool fastjson_input_has_inf_nan_literal(const char *s, size_t len);
+bool fastjson_input_has_inf_nan_literal(const char *s, size_t len,
+                                        bool allow_comments);
 
 /* Returns true if the bytes starting at s[pos] form a valid UTF-8
  * sequence: ASCII, or a complete and well-formed 2/3/4-byte
