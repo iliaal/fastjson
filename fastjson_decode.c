@@ -817,36 +817,91 @@ PHP_FUNCTION(fastjson_pointer_get)
     }
 }
 
-/* Maximum structural nesting depth of a JSON text: the largest count of
- * simultaneously-open '{'/'[' outside string literals. O(n), no
- * recursion. fastjson_merge_patch needs this because its merge and
- * copy steps (yyjson_merge_patch, yyjson_mut_doc_imut_copy) recurse once
- * per nesting level on the C stack BEFORE the depth-capped zval walker
- * runs; an adversarial deeply-nested operand would overflow the stack
- * and crash. Bounding both operands' input depth against $depth caps all
- * three recursions. Comment/trailing-comma tolerance under RELAXED does
- * not affect brace nesting, so a plain structural scan is sufficient. */
-static size_t fastjson_json_max_nesting(const char *s, size_t len)
+/* True if `root` nests at least `limit` containers deep. Walks the
+ * PARSED immutable tree iteratively (explicit stack, no C recursion),
+ * returning as soon as the limit is reached so the work stack never
+ * holds more than `limit` frames.
+ *
+ * fastjson_merge_patch needs this because yyjson_merge_patch and
+ * yyjson_mut_doc_imut_copy recurse once per nesting level on the C stack
+ * BEFORE the depth-capped zval walker runs; an adversarial deeply-nested
+ * operand would overflow the stack and crash. Measuring depth on the
+ * parsed tree (not the raw source bytes) is immune to comments, quotes,
+ * and escapes -- a textual brace-counting scan has to replicate yyjson's
+ * full lexer to stay correct, and under RELAXED a stray quote or brace
+ * inside a comment silently corrupts the count. Counting matches the
+ * walker's: the root container is depth 1, so reject when depth >= the
+ * caller's $depth (json_decode("[[[1]]]", true, 3) -> NULL: three nested
+ * containers need depth 4). */
+typedef struct {
+    bool is_obj;
+    union {
+        yyjson_arr_iter arr;
+        yyjson_obj_iter obj;
+    } it;
+} fj_depth_frame;
+
+static bool fastjson_val_depth_reaches(yyjson_val *root, size_t limit)
 {
-    size_t depth = 0, max = 0;
-    bool in_str = false, escape = false;
-    for (size_t i = 0; i < len; i++) {
-        char c = s[i];
-        if (in_str) {
-            if (escape) escape = false;
-            else if (c == '\\') escape = true;
-            else if (c == '"') in_str = false;
+    if (limit == 0) {
+        return true;
+    }
+    if (!yyjson_is_ctn(root)) {
+        return false; /* scalar root: zero containers deep */
+    }
+    if (limit == 1) {
+        return true; /* the root container alone is depth 1 */
+    }
+
+    size_t cap = 16, top = 0, depth = 1;
+    fj_depth_frame *stack = emalloc(cap * sizeof(*stack));
+    bool reached = false;
+
+    stack[0].is_obj = yyjson_is_obj(root);
+    if (stack[0].is_obj) {
+        yyjson_obj_iter_init(root, &stack[0].it.obj);
+    } else {
+        yyjson_arr_iter_init(root, &stack[0].it.arr);
+    }
+
+    while (true) {
+        fj_depth_frame *f = &stack[top];
+        yyjson_val *child;
+        if (f->is_obj) {
+            yyjson_val *key = yyjson_obj_iter_next(&f->it.obj);
+            child = key ? yyjson_obj_iter_get_val(key) : NULL;
+        } else {
+            child = yyjson_arr_iter_next(&f->it.arr);
+        }
+        if (child == NULL) {
+            if (top == 0) break;
+            top--;
+            depth--;
             continue;
         }
-        if (c == '"') {
-            in_str = true;
-        } else if (c == '{' || c == '[') {
-            if (++depth > max) max = depth;
-        } else if (c == '}' || c == ']') {
-            if (depth > 0) depth--;
+        if (!yyjson_is_ctn(child)) {
+            continue;
+        }
+        if (depth + 1 >= limit) {
+            reached = true;
+            break;
+        }
+        if (++top == cap) {
+            cap *= 2;
+            stack = erealloc(stack, cap * sizeof(*stack));
+            f = NULL; /* invalidated by realloc; not used past here */
+        }
+        depth++;
+        stack[top].is_obj = yyjson_is_obj(child);
+        if (stack[top].is_obj) {
+            yyjson_obj_iter_init(child, &stack[top].it.obj);
+        } else {
+            yyjson_arr_iter_init(child, &stack[top].it.arr);
         }
     }
-    return max;
+
+    efree(stack);
+    return reached;
 }
 
 PHP_FUNCTION(fastjson_merge_patch)
@@ -912,12 +967,13 @@ PHP_FUNCTION(fastjson_merge_patch)
 
     /* The merge and imut-copy below recurse on the C stack per nesting
      * level, ahead of the depth-capped walker. Reject operands whose
-     * nesting reaches $depth up front so a pathological input fails with
-     * the same FASTJSON_ERROR_DEPTH the walker would raise, rather than
-     * overflowing the stack. The merged result's depth never exceeds the
-     * deeper operand, so checking both inputs is sufficient. */
-    if (fastjson_json_max_nesting(target, target_len) >= (size_t)depth
-            || fastjson_json_max_nesting(patch, patch_len) >= (size_t)depth) {
+     * parsed nesting reaches $depth up front so a pathological input
+     * fails with the same FASTJSON_ERROR_DEPTH the walker would raise,
+     * rather than overflowing the stack. The merged result's depth never
+     * exceeds the deeper operand, so checking both inputs is sufficient. */
+    if (fastjson_val_depth_reaches(yyjson_doc_get_root(tdoc), (size_t)depth)
+            || fastjson_val_depth_reaches(yyjson_doc_get_root(pdoc),
+                                          (size_t)depth)) {
         yyjson_doc_free(tdoc);
         yyjson_doc_free(pdoc);
         if (throw_mode) {

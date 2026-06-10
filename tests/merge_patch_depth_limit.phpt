@@ -32,9 +32,22 @@ try {
     echo "threw: ", $e->getMessage(), "\n";
 }
 
+// A stray quote/brace inside a RELAXED comment must not let a deep
+// operand slip past the guard. The depth is measured on the parsed
+// tree, so source-level comments and quotes can't undercount it.
+$bypass = '/* " { [ */ ' . $patch;
+$r = fastjson_merge_patch('{}', $bypass, true, 512, FASTJSON_DECODE_RELAXED);
+var_dump($r);
+var_dump(fastjson_last_error() === FASTJSON_ERROR_DEPTH);
+$r = fastjson_merge_patch($bypass, '{}', true, 512, FASTJSON_DECODE_RELAXED);
+var_dump(fastjson_last_error() === FASTJSON_ERROR_DEPTH);
+
 // A nesting within the limit still merges normally.
 $ok = str_repeat('{"a":', 50) . '1' . str_repeat('}', 50);
 var_dump(fastjson_merge_patch('{}', $ok, true, 512) !== null);
+
+// RELAXED with a comment and an in-limit depth still merges.
+var_dump(fastjson_merge_patch('{}', '/* c */ ' . $ok, true, 512, FASTJSON_DECODE_RELAXED) !== null);
 
 // Plain RFC 7386 behaviour is unchanged.
 echo fastjson_encode(
@@ -47,5 +60,9 @@ bool(true)
 NULL
 bool(true)
 threw: Maximum stack depth exceeded
+NULL
+bool(true)
+bool(true)
+bool(true)
 bool(true)
 {"a":1,"c":3}

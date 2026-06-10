@@ -40,6 +40,17 @@ var_dump($r);
 // A real string value "Infinity" is untouched.
 $r = fastjson_decode('/* c */ {"x": "Infinity"}', true, 512, $R);
 var_dump($r);
+
+// (3) A CR-terminated line comment must end at the CR, like yyjson, so a
+// bare Inf after it is not swallowed as comment body and still fails.
+$r = fastjson_decode("[1e309,//c\rInfinity]", true, 512, $R);
+var_dump($r);
+var_dump(fastjson_last_error() === FASTJSON_ERROR_SYNTAX);
+
+// A legitimate CR-terminated comment ahead of an exponent-overflow
+// number still decodes to INF.
+$r = fastjson_decode("// hi\r[1e309]", true, 512, $R);
+var_dump($r);
 ?>
 --EXPECT--
 array(1) {
@@ -56,4 +67,10 @@ NULL
 array(1) {
   ["x"]=>
   string(8) "Infinity"
+}
+NULL
+bool(true)
+array(1) {
+  [0]=>
+  float(INF)
 }

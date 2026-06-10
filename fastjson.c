@@ -291,7 +291,10 @@ bool fastjson_input_has_inf_nan_literal(const char *s, size_t len,
         if (allow_comments && c == '/' && i + 1 < len) {
             if (s[i + 1] == '/') {
                 i += 2;
-                while (i < len && s[i] != '\n') i++;
+                /* yyjson terminates a line comment on CR or LF
+                 * (char_is_eol). Stop on either so a CR-terminated
+                 * comment doesn't swallow the rest of the input. */
+                while (i < len && s[i] != '\n' && s[i] != '\r') i++;
                 continue;
             }
             if (s[i + 1] == '*') {
