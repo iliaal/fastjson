@@ -237,9 +237,14 @@ static void dw_apply_hex_escapes(fastjson_dw_ctx *ctx,
  *     ESCAPE_UNICODE), plus the surrounding quotes. */
 #define DW_STR_WORST(len) ((size_t)(len) * 6 + 2)
 
-/* Number output: yyjson_write_number caps at ~32 chars for f64 worst-
- * case. 64 is generous. */
-#define DW_NUM_WORST 64
+/* Number output reservation. yyjson_write_number's documented buffer
+ * contract (yyjson.h) is the floor: integers need >= 21 bytes, floats
+ * need >= 40. Reserve exactly those (rounded up for the int case) rather
+ * than a blanket 64 -- a tighter per-value reservation means smart_str
+ * carries less transient headroom between scalars. Do NOT shrink below
+ * these; yyjson writes directly into the buffer. */
+#define DW_NUM_INT_WORST  24
+#define DW_NUM_REAL_WORST 40
 
 /* Returns true on success, false if the caller should abort the encode.
  * On invalid UTF-8 with PARTIAL_OUTPUT, emits "null" (value site) and
@@ -304,7 +309,7 @@ static inline bool dw_emit_string(fastjson_dw_ctx *ctx, const char *s, size_t le
 
 static void dw_emit_long(fastjson_dw_ctx *ctx, zend_long n)
 {
-    smart_str_alloc(&ctx->buf, DW_NUM_WORST, 0);
+    smart_str_alloc(&ctx->buf, DW_NUM_INT_WORST, 0);
     yyjson_val v;
     v.tag = (uint64_t)(YYJSON_TYPE_NUM | YYJSON_SUBTYPE_SINT);
     v.uni.i64 = (int64_t)n;
@@ -380,7 +385,7 @@ static bool dw_emit_double(fastjson_dw_ctx *ctx, double d)
             return true;
         }
     }
-    smart_str_alloc(&ctx->buf, DW_NUM_WORST, 0);
+    smart_str_alloc(&ctx->buf, DW_NUM_REAL_WORST, 0);
     yyjson_val v;
     v.tag = (uint64_t)(YYJSON_TYPE_NUM | YYJSON_SUBTYPE_REAL);
     v.uni.f64 = d;
