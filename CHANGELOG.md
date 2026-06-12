@@ -6,6 +6,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Build
+
+- Linux glibc (x86_64 + arm64) and macOS (arm64) prebuilt `.so` binaries for PHP 8.4 and 8.5, published as release assets via `php/pie-ext-binary-builder`. PIE now installs a prebuilt on those platforms instead of source-building; PHP 8.1–8.3 and other platforms continue to source-build through the `composer-default` fallback. (`.github/workflows/release-linux.yml`)
+
 ## [0.4.0] - 2026-06-11
 
 ### Added

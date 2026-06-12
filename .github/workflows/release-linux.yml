@@ -1,0 +1,82 @@
+name: Release Linux & macOS binaries
+
+# Triggered when a GitHub Release is published. Builds .so binaries for
+# Linux glibc (x86_64 + arm64) and macOS (arm64) at the PHP versions in
+# the matrix (NTS only -- ZTS lives in the Windows lane), uploads each
+# as a release asset via php/pie-ext-binary-builder using PIE's
+# pre-packaged-binary naming convention.
+#
+# PHP 8.1-8.3 are intentionally absent: PIE's composer-default fallback
+# source-builds for any PHP version not covered by a prebuilt, so those
+# users still get an install path; it just needs a build toolchain. The
+# Windows lane ships all of 8.1-8.5 because php-windows-builder makes the
+# extra versions nearly free; the glibc/macOS lanes follow the
+# established sibling convention (phpser, fastchart) of shipping only the
+# current PHP versions. Drop the 8.4 lane when 8.4 hits EOL.
+#
+# macOS Intel (macos-13) is intentionally absent -- GitHub's Intel
+# runner pool is too contended to ship reliably, and macOS 26 drops
+# Intel support anyway. Intel-Mac users source-build via the fallback.
+#
+# Linux musl (Alpine) is intentionally absent -- shivammathur/setup-php
+# in Alpine containers needs more setup, and Alpine users get install via
+# PIE's composer-default source-build fallback in the meantime.
+#
+# yyjson is vendored (C99, no external deps), so there is no static-codec
+# step here -- the produced .so links only libc/libm/libz, portable
+# across glibc distros without extra work.
+#
+# workflow_dispatch (release_tag input) lets a maintainer build + upload
+# prebuilts for an already-published release -- e.g. to backfill a tag
+# cut before this workflow existed, without re-publishing the release
+# (which would needlessly re-run the Windows lane). The upload target is
+# the dispatch input on manual runs and the event tag on release runs.
+#
+# composer.json declares:
+#   "download-url-method": ["pre-packaged-binary", "composer-default"]
+# so PIE prefers the prebuilt asset and falls back to source-build when
+# no asset matches.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Existing release tag to build and upload prebuilt binaries for (e.g. 0.4.0)'
+        required: true
+
+jobs:
+  build:
+    name: ${{ matrix.os }} php ${{ matrix.php }}
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        # ubuntu-24.04 (x86_64), ubuntu-24.04-arm (arm64),
+        # macos-14 (Apple Silicon arm64). Pinned over `*-latest` to
+        # avoid silent runner shifts that would change the toolchain /
+        # glibc baseline on published release assets without a repo
+        # diff.
+        os:
+          - ubuntu-24.04
+          - ubuntu-24.04-arm
+          - macos-14
+        php: ['8.4', '8.5']
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+
+      - name: Build and upload prebuilt binary
+        uses: php/pie-ext-binary-builder@0.0.3
+        with:
+          release-tag: ${{ github.event.release.tag_name || inputs.release_tag }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          configure-flags: '--enable-fastjson'
