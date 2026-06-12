@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-06-11
+
 ### Added
 
 - `fastjson_pointer_get(string $json, string $pointer, ?bool $associative = null, int $depth = 512, int $flags = 0): mixed`: read a single value from a JSON document by [RFC 6901](https://www.rfc-editor.org/rfc/rfc6901) JSON Pointer (`/users/0/email`; the empty pointer `""` selects the whole document). Only the referenced subtree is materialized into PHP. A missing path or malformed pointer returns null with the error state left clear (not a JSON error); a parse error returns null with `fastjson_last_error()` set, or throws under `JSON_THROW_ON_ERROR`. `$associative`, `$depth`, and `$flags` (including `FASTJSON_DECODE_RELAXED`) match `fastjson_decode()`.
@@ -190,7 +192,8 @@ backed by yyjson 0.12.0.
 - U+2028 / U+2029 line separators emitted as ordinary code points
   (yyjson default). ext/json always escapes for JSONP safety.
 
-[Unreleased]: https://github.com/iliaal/fastjson/compare/0.3.0...HEAD
+[Unreleased]: https://github.com/iliaal/fastjson/compare/0.4.0...HEAD
+[0.4.0]: https://github.com/iliaal/fastjson/releases/tag/0.4.0
 [0.3.0]: https://github.com/iliaal/fastjson/releases/tag/0.3.0
 [0.2.1]: https://github.com/iliaal/fastjson/releases/tag/0.2.1
 [0.2.0]: https://github.com/iliaal/fastjson/releases/tag/0.2.0

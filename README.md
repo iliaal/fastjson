@@ -10,7 +10,7 @@
 
 Fast JSON encode, decode, and validate for PHP 8.1+. Drop-in alternative to `ext/json` with a namespaced `fastjson_*` API and `json_last_error`-compatible error reporting. Backed by [yyjson](https://github.com/ibireme/yyjson) 0.12.0, one of the fastest portable JSON libraries. Coexists with `ext/json`; adoption is opt-in per call site.
 
-> **Status:** pre-release. yyjson 0.12.0 is vendored and linked. The full `fastjson_encode` / `fastjson_decode` / `fastjson_validate` trio plus `fastjson_last_error` / `_msg` are available. The compat harness against `php-src/ext/json/tests/*.phpt` passes everything targeting features fastjson aims to mirror; the rest is categorized in `tests/upstream-json/.skiplist`.
+> **Status:** pre-release. yyjson 0.12.0 is vendored and linked. The `fastjson_encode` / `fastjson_decode` / `fastjson_validate` trio plus `fastjson_last_error` / `_msg`, the file helpers `fastjson_file_decode` / `fastjson_file_encode`, and the `fastjson_pointer_get` (RFC 6901) / `fastjson_merge_patch` (RFC 7386) accessors are available. The compat harness against `php-src/ext/json/tests/*.phpt` passes everything targeting features fastjson aims to mirror; the rest is categorized in `tests/upstream-json/.skiplist`.
 
 ## 📦 Install
 
@@ -61,9 +61,11 @@ Function signatures track `ext/json` so call sites migrate by search-and-replace
 
 **Encode flags:** `JSON_PRETTY_PRINT`, `JSON_UNESCAPED_SLASHES`, `JSON_UNESCAPED_UNICODE`, `JSON_FORCE_OBJECT`, `JSON_HEX_TAG`, `JSON_HEX_AMP`, `JSON_HEX_APOS`, `JSON_HEX_QUOT`, `JSON_NUMERIC_CHECK`, `JSON_PRESERVE_ZERO_FRACTION`, `JSON_PARTIAL_OUTPUT_ON_ERROR`, `JSON_INVALID_UTF8_IGNORE`, `JSON_INVALID_UTF8_SUBSTITUTE`, `JSON_THROW_ON_ERROR`.
 
-**Decode flags:** `JSON_OBJECT_AS_ARRAY`, `JSON_BIGINT_AS_STRING`, `JSON_INVALID_UTF8_IGNORE`, `JSON_INVALID_UTF8_SUBSTITUTE`, `JSON_THROW_ON_ERROR`.
+**Decode flags:** `JSON_OBJECT_AS_ARRAY`, `JSON_BIGINT_AS_STRING`, `JSON_INVALID_UTF8_IGNORE`, `JSON_INVALID_UTF8_SUBSTITUTE`, `JSON_THROW_ON_ERROR`, and the fastjson-only `FASTJSON_DECODE_RELAXED` (tolerates the JSONC subset `ext/json` rejects: `//` and `/* */` comments, trailing commas, and a leading UTF-8 BOM).
 
 **Validate flags:** `JSON_INVALID_UTF8_IGNORE` (other bits raise `ValueError` per ext/json's contract).
+
+**Beyond the core trio:** `fastjson_file_decode()` / `fastjson_file_encode()` read and write a JSON file in one call through the PHP streams layer (`open_basedir` and stream wrappers apply); `fastjson_pointer_get()` extracts a single value by [RFC 6901](https://www.rfc-editor.org/rfc/rfc6901) JSON Pointer without materializing the rest of the document; `fastjson_merge_patch()` applies an [RFC 7386](https://www.rfc-editor.org/rfc/rfc7386) merge patch.
 
 See [`CHANGELOG.md`](CHANGELOG.md) for the full feature list and the divergences from `ext/json` that fastjson does not aim to mirror byte-for-byte.
 
