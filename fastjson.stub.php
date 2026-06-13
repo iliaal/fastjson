@@ -194,6 +194,45 @@ function fastjson_file_decode(string $filename, ?bool $associative = null, int $
 function fastjson_pointer_get(string $json, string $pointer, ?bool $associative = null, int $depth = 512, int $flags = 0): mixed {}
 
 /**
+ * Reports whether the RFC 6901 JSON Pointer $pointer resolves to a value
+ * in $json.
+ *
+ * Returns true when the pointer resolves (including when it resolves to a
+ * JSON null -- unlike fastjson_pointer_get, the bool result disambiguates
+ * "present but null" from "absent"), false when the path is missing or the
+ * pointer is malformed. Nothing is materialized into PHP.
+ *
+ * A false return with fastjson_last_error() == FASTJSON_ERROR_NONE means
+ * the path is absent; on a JSON parse error the function returns false with
+ * fastjson_last_error() set (or throws under JSON_THROW_ON_ERROR). $flags
+ * carries the parse-affecting bits of fastjson_decode() (e.g.
+ * FASTJSON_DECODE_RELAXED, JSON_THROW_ON_ERROR).
+ */
+function fastjson_pointer_exists(string $json, string $pointer, int $flags = 0): bool {}
+
+/**
+ * Sets the value at the RFC 6901 JSON Pointer $pointer in $json to $value
+ * and returns the re-serialized JSON document.
+ *
+ * The document is edited in place in a yyjson mutable doc -- only $value is
+ * materialized from PHP, not the whole input -- so this avoids a full
+ * decode/re-encode round-trip for a single edit on a large document. Missing
+ * parent objects are created; the empty pointer "" replaces the whole
+ * document. Returns false (or throws under JSON_THROW_ON_ERROR) when $json
+ * fails to parse, when $value cannot be encoded, or when the pointer cannot
+ * resolve to a settable location (e.g. an array index gap or a scalar
+ * mid-path).
+ *
+ * Output formatting follows the encode bits of $flags -- JSON_PRETTY_PRINT,
+ * JSON_UNESCAPED_SLASHES, JSON_UNESCAPED_UNICODE -- while the parse bits
+ * (FASTJSON_DECODE_RELAXED, JSON_THROW_ON_ERROR) apply to $json. Note: the
+ * untouched portion of the document is re-emitted by yyjson's writer, so the
+ * documented fastjson_encode divergences (large/scientific doubles,
+ * U+2028/U+2029) apply to the whole output, not only the edited node.
+ */
+function fastjson_pointer_set(string $json, string $pointer, mixed $value, int $flags = 0, int $depth = 512): string|false {}
+
+/**
  * Applies an RFC 7386 JSON Merge Patch ($patch) to $target and returns
  * the merged document as a PHP value.
  *
@@ -243,3 +282,32 @@ function fastjson_last_error(): int {}
  * descriptive than ext/json's static error strings.
  */
 function fastjson_last_error_msg(): string {}
+
+/**
+ * Returns the byte offset into the input at which the most recent
+ * fastjson_* parse error occurred, or -1 when the last call succeeded or
+ * the error has no source position (encode, file I/O, or depth errors).
+ *
+ * The offset indexes the raw input bytes; pair it with
+ * fastjson_last_error_info() for the 1-based line and column.
+ */
+function fastjson_last_error_pos(): int {}
+
+/**
+ * Returns the most recent fastjson_* error as a structured array, folding
+ * fastjson_last_error(), fastjson_last_error_msg(), and
+ * fastjson_last_error_pos() into one call:
+ *
+ *   [
+ *     'code' => int,    // FASTJSON_ERROR_* / JSON_ERROR_* code
+ *     'msg'  => string, // "No error" when none
+ *     'pos'  => int,    // byte offset, -1 when none/not-applicable
+ *     'line' => int,    // 1-based line, 0 when unknown
+ *     'col'  => int,    // 1-based column, 0 when unknown
+ *   ]
+ *
+ * Line and column are populated for parse errors that carry a source
+ * position; encode, file I/O, and depth errors report pos -1 / line 0 /
+ * col 0.
+ */
+function fastjson_last_error_info(): array {}

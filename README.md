@@ -65,7 +65,9 @@ Function signatures track `ext/json` so call sites migrate by search-and-replace
 
 **Validate flags:** `JSON_INVALID_UTF8_IGNORE` (other bits raise `ValueError` per ext/json's contract).
 
-**Beyond the core trio:** `fastjson_file_decode()` / `fastjson_file_encode()` read and write a JSON file in one call through the PHP streams layer (`open_basedir` and stream wrappers apply); `fastjson_pointer_get()` extracts a single value by [RFC 6901](https://www.rfc-editor.org/rfc/rfc6901) JSON Pointer without materializing the rest of the document; `fastjson_merge_patch()` applies an [RFC 7386](https://www.rfc-editor.org/rfc/rfc7386) merge patch.
+**Beyond the core trio:** `fastjson_file_decode()` / `fastjson_file_encode()` read and write a JSON file in one call through the PHP streams layer (`open_basedir` and stream wrappers apply); `fastjson_pointer_get()` extracts a single value by [RFC 6901](https://www.rfc-editor.org/rfc/rfc6901) JSON Pointer without materializing the rest of the document; `fastjson_pointer_exists()` reports whether a pointer resolves (distinguishing "present but null" from "absent"); `fastjson_pointer_set()` sets a single value by pointer and returns the re-serialized document, editing in a mutable doc so a single edit on a large document skips a full decode/re-encode; `fastjson_merge_patch()` applies an [RFC 7386](https://www.rfc-editor.org/rfc/rfc7386) merge patch.
+
+**Error location:** beyond `fastjson_last_error()` / `_msg()`, `fastjson_last_error_pos()` returns the byte offset of the most recent parse error (`-1` when none), and `fastjson_last_error_info()` bundles `['code', 'msg', 'pos', 'line', 'col']` (1-based line/column) in one call — useful when a caller, or an agent, needs to point at exactly where malformed JSON broke.
 
 See [`CHANGELOG.md`](CHANGELOG.md) for the full feature list and the divergences from `ext/json` that fastjson does not aim to mirror byte-for-byte.
 

@@ -93,6 +93,14 @@ ZEND_BEGIN_MODULE_GLOBALS(fastjson)
      * recorded yet this request" -- last_error_msg() returns "No error"
      * for both NULL and the success state. */
     const char *last_err_msg;
+    /* Source location of the most recent read error. last_err_pos is a
+     * byte offset into the parsed input (-1 = none/not-applicable, e.g.
+     * encode/IO/depth errors that have no source offset); last_err_line
+     * and last_err_col are 1-based (0 = unknown). Populated by
+     * fastjson_set_read_error via yyjson_locate_pos. */
+    zend_long last_err_pos;
+    zend_long last_err_line;
+    zend_long last_err_col;
 ZEND_END_MODULE_GLOBALS(fastjson)
 
 ZEND_EXTERN_MODULE_GLOBALS(fastjson)
@@ -116,8 +124,18 @@ void fastjson_set_error(yyjson_read_code code, const char *msg);
 void fastjson_clear_error(void);
 
 /* Encode-side: set a FASTJSON_ERROR_* code directly (no read-code
- * translation). msg may be NULL or a string literal -- not freed. */
+ * translation). msg may be NULL or a string literal -- not freed.
+ * Clears the source-location fields (no offset for encode/IO errors). */
 void fastjson_set_encode_error(zend_long code, const char *msg);
+
+/* Record a yyjson read error together with its source location. Stores
+ * the translated code and (verbatim) message like fastjson_set_error,
+ * and additionally captures err->pos plus the 1-based line/column it
+ * maps to via yyjson_locate_pos over [json, json_len). Use at any read-
+ * error site that still has the source buffer in scope so callers can
+ * recover where a parse failed through fastjson_last_error_pos/info. */
+void fastjson_set_read_error(const char *json, size_t json_len,
+                             const yyjson_read_err *err);
 
 /* Returns true if `s` contains an unquoted Inf, Infinity, or NaN
  * literal token (case-insensitive). Used after the overflow-retry

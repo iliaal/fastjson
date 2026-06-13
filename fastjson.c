@@ -46,18 +46,47 @@ void fastjson_set_error(yyjson_read_code code, const char *msg)
 {
     FASTJSON_G(last_err_code) = fastjson_translate_read_code(code);
     FASTJSON_G(last_err_msg) = msg;
+    /* No source buffer at this call site; report "location unknown". */
+    FASTJSON_G(last_err_pos) = -1;
+    FASTJSON_G(last_err_line) = 0;
+    FASTJSON_G(last_err_col) = 0;
+}
+
+void fastjson_set_read_error(const char *json, size_t json_len,
+                             const yyjson_read_err *err)
+{
+    FASTJSON_G(last_err_code) = fastjson_translate_read_code(err->code);
+    FASTJSON_G(last_err_msg) = err->msg;
+    FASTJSON_G(last_err_pos) = -1;
+    FASTJSON_G(last_err_line) = 0;
+    FASTJSON_G(last_err_col) = 0;
+    if (err->code != YYJSON_READ_SUCCESS && err->pos <= json_len) {
+        size_t line = 0, col = 0;
+        FASTJSON_G(last_err_pos) = (zend_long)err->pos;
+        if (yyjson_locate_pos(json, json_len, err->pos, &line, &col, NULL)) {
+            FASTJSON_G(last_err_line) = (zend_long)line;
+            FASTJSON_G(last_err_col) = (zend_long)col;
+        }
+    }
 }
 
 void fastjson_clear_error(void)
 {
     FASTJSON_G(last_err_code) = FASTJSON_ERROR_NONE;
     FASTJSON_G(last_err_msg) = NULL;
+    FASTJSON_G(last_err_pos) = -1;
+    FASTJSON_G(last_err_line) = 0;
+    FASTJSON_G(last_err_col) = 0;
 }
 
 void fastjson_set_encode_error(zend_long code, const char *msg)
 {
     FASTJSON_G(last_err_code) = code;
     FASTJSON_G(last_err_msg) = msg;
+    /* Encode/IO/depth errors carry no source-byte offset. */
+    FASTJSON_G(last_err_pos) = -1;
+    FASTJSON_G(last_err_line) = 0;
+    FASTJSON_G(last_err_col) = 0;
 }
 
 bool fastjson_byte_is_valid_utf8_start(const char *s, size_t len, size_t pos)
@@ -418,7 +447,7 @@ PHP_FUNCTION(fastjson_validate)
                 && !fastjson_byte_is_valid_utf8_start(json, json_len, err.pos)) {
             err.code = YYJSON_READ_ERROR_INVALID_STRING;
         }
-        fastjson_set_error(err.code, err.msg);
+        fastjson_set_read_error(json, json_len, &err);
         RETURN_FALSE;
     }
 
@@ -445,6 +474,29 @@ PHP_FUNCTION(fastjson_last_error_msg)
     RETURN_STRING(FASTJSON_G(last_err_msg));
 }
 
+PHP_FUNCTION(fastjson_last_error_pos)
+{
+    ZEND_PARSE_PARAMETERS_NONE();
+    RETURN_LONG(FASTJSON_G(last_err_pos));
+}
+
+PHP_FUNCTION(fastjson_last_error_info)
+{
+    ZEND_PARSE_PARAMETERS_NONE();
+
+    array_init_size(return_value, 5);
+    add_assoc_long(return_value, "code", FASTJSON_G(last_err_code));
+    if (FASTJSON_G(last_err_code) == FASTJSON_ERROR_NONE
+            || FASTJSON_G(last_err_msg) == NULL) {
+        add_assoc_string(return_value, "msg", "No error");
+    } else {
+        add_assoc_string(return_value, "msg", FASTJSON_G(last_err_msg));
+    }
+    add_assoc_long(return_value, "pos", FASTJSON_G(last_err_pos));
+    add_assoc_long(return_value, "line", FASTJSON_G(last_err_line));
+    add_assoc_long(return_value, "col", FASTJSON_G(last_err_col));
+}
+
 PHP_GINIT_FUNCTION(fastjson)
 {
 #if defined(COMPILE_DL_FASTJSON) && defined(ZTS)
@@ -452,6 +504,9 @@ PHP_GINIT_FUNCTION(fastjson)
 #endif
     fastjson_globals->last_err_code = FASTJSON_ERROR_NONE;
     fastjson_globals->last_err_msg = NULL;
+    fastjson_globals->last_err_pos = -1;
+    fastjson_globals->last_err_line = 0;
+    fastjson_globals->last_err_col = 0;
 }
 
 PHP_RINIT_FUNCTION(fastjson)
@@ -461,6 +516,9 @@ PHP_RINIT_FUNCTION(fastjson)
      * otherwise bleed into the next. */
     FASTJSON_G(last_err_code) = FASTJSON_ERROR_NONE;
     FASTJSON_G(last_err_msg) = NULL;
+    FASTJSON_G(last_err_pos) = -1;
+    FASTJSON_G(last_err_line) = 0;
+    FASTJSON_G(last_err_col) = 0;
     return SUCCESS;
 }
 

@@ -502,7 +502,7 @@ static void fastjson_decode_into(const char *json, size_t json_len,
             FASTJSON_G(last_err_msg) = saved_err_msg;
             RETURN_THROWS();
         }
-        fastjson_set_error(err.code, err.msg);
+        fastjson_set_read_error(json, json_len, &err);
         RETURN_NULL();
     }
 
@@ -785,7 +785,7 @@ PHP_FUNCTION(fastjson_pointer_get)
             fastjson_throw_read_err(&err, saved_err_code, saved_err_msg);
             RETURN_THROWS();
         }
-        fastjson_set_error(err.code, err.msg);
+        fastjson_set_read_error(json, json_len, &err);
         RETURN_NULL();
     }
 
@@ -951,7 +951,7 @@ PHP_FUNCTION(fastjson_merge_patch)
             fastjson_throw_read_err(&err, saved_err_code, saved_err_msg);
             RETURN_THROWS();
         }
-        fastjson_set_error(err.code, err.msg);
+        fastjson_set_read_error(target, target_len, &err);
         RETURN_NULL();
     }
     yyjson_doc *pdoc = fastjson_read_doc(patch, patch_len, flags, &err);
@@ -961,7 +961,7 @@ PHP_FUNCTION(fastjson_merge_patch)
             fastjson_throw_read_err(&err, saved_err_code, saved_err_msg);
             RETURN_THROWS();
         }
-        fastjson_set_error(err.code, err.msg);
+        fastjson_set_read_error(patch, patch_len, &err);
         RETURN_NULL();
     }
 
@@ -1034,6 +1034,243 @@ PHP_FUNCTION(fastjson_merge_patch)
         }
         return;
     }
+    if (!throw_mode) {
+        fastjson_clear_error();
+    }
+}
+
+PHP_FUNCTION(fastjson_pointer_exists)
+{
+    char *json, *pointer;
+    size_t json_len, pointer_len;
+    zend_long flags = 0;
+
+    ZEND_PARSE_PARAMETERS_START(2, 3)
+        Z_PARAM_STRING(json, json_len)
+        Z_PARAM_STRING(pointer, pointer_len)
+        Z_PARAM_OPTIONAL
+        Z_PARAM_LONG(flags)
+    ZEND_PARSE_PARAMETERS_END();
+
+    bool throw_mode = (flags & FASTJSON_DECODE_THROW_ON_ERROR) != 0;
+    zend_long saved_err_code = FASTJSON_G(last_err_code);
+    const char *saved_err_msg = FASTJSON_G(last_err_msg);
+    if (!throw_mode) {
+        fastjson_clear_error();
+    }
+
+    yyjson_read_err err;
+    yyjson_doc *doc = fastjson_read_doc(json, json_len, flags, &err);
+    if (doc == NULL) {
+        if (throw_mode) {
+            fastjson_throw_read_err(&err, saved_err_code, saved_err_msg);
+            RETURN_THROWS();
+        }
+        fastjson_set_read_error(json, json_len, &err);
+        RETURN_FALSE;
+    }
+
+    /* yyjson_ptr_getn returns the resolved value or NULL (missing path or
+     * malformed pointer). Unlike fastjson_pointer_get, the bool result is
+     * unambiguous: a path resolving to JSON null still returns true. The
+     * error state stays clear on a successful parse, so a false return with
+     * last_error() == NONE means "absent", while a false return with an
+     * error set means the JSON itself was malformed. */
+    yyjson_val *target = yyjson_ptr_getn(yyjson_doc_get_root(doc),
+                                         pointer, pointer_len);
+    yyjson_doc_free(doc);
+    RETURN_BOOL(target != NULL);
+}
+
+PHP_FUNCTION(fastjson_pointer_set)
+{
+    char *json, *pointer;
+    size_t json_len, pointer_len;
+    zval *value;
+    zend_long flags = 0;
+    zend_long depth = 512;
+
+    ZEND_PARSE_PARAMETERS_START(3, 5)
+        Z_PARAM_STRING(json, json_len)
+        Z_PARAM_STRING(pointer, pointer_len)
+        Z_PARAM_ZVAL(value)
+        Z_PARAM_OPTIONAL
+        Z_PARAM_LONG(flags)
+        Z_PARAM_LONG(depth)
+    ZEND_PARSE_PARAMETERS_END();
+
+    bool throw_mode = (flags & FASTJSON_DECODE_THROW_ON_ERROR) != 0;
+    zend_long saved_err_code = FASTJSON_G(last_err_code);
+    const char *saved_err_msg = FASTJSON_G(last_err_msg);
+    if (!throw_mode) {
+        fastjson_clear_error();
+    }
+
+    if (depth <= 0) {
+        zend_argument_value_error(5, "must be greater than 0");
+        RETURN_THROWS();
+    }
+    if (depth > INT_MAX) {
+        zend_argument_value_error(5, "must be less than %d", INT_MAX);
+        RETURN_THROWS();
+    }
+
+    zend_class_entry *ce = fastjson_json_exception_ce
+        ? fastjson_json_exception_ce : zend_ce_exception;
+
+    /* Parse the target document. */
+    yyjson_read_err err;
+    yyjson_doc *idoc = fastjson_read_doc(json, json_len, flags, &err);
+    if (idoc == NULL) {
+        if (throw_mode) {
+            fastjson_throw_read_err(&err, saved_err_code, saved_err_msg);
+            RETURN_THROWS();
+        }
+        fastjson_set_read_error(json, json_len, &err);
+        RETURN_FALSE;
+    }
+
+    /* yyjson_doc_mut_copy and yyjson_mut_write below recurse on the C stack
+     * per nesting level, ahead of any depth cap. Reject a target whose
+     * parsed nesting reaches $depth up front (same guard as
+     * fastjson_merge_patch) so an adversarial deep input fails cleanly
+     * rather than overflowing the stack. */
+    if (fastjson_val_depth_reaches(yyjson_doc_get_root(idoc), (size_t)depth)) {
+        yyjson_doc_free(idoc);
+        if (throw_mode) {
+            zend_throw_exception(ce, "Maximum stack depth exceeded",
+                                 FASTJSON_ERROR_DEPTH);
+            FASTJSON_G(last_err_code) = saved_err_code;
+            FASTJSON_G(last_err_msg) = saved_err_msg;
+            RETURN_THROWS();
+        }
+        fastjson_set_encode_error(FASTJSON_ERROR_DEPTH,
+                                  "Maximum stack depth exceeded");
+        RETURN_FALSE;
+    }
+
+    /* Convert $value through the single direct-write encoder, then re-parse
+     * it into a node we can splice. Reusing fastjson_directwrite_encode
+     * keeps one serialization path for PHP values (matching
+     * fastjson_merge_patch's single-encoder rationale) and inherits its
+     * recursion and unsupported-type handling. The intermediate encode uses
+     * flags=0; output formatting is applied by the final write below. */
+    zend_string *vstr = fastjson_directwrite_encode(value, 0, depth);
+    if (vstr == NULL) {
+        yyjson_doc_free(idoc);
+        if (EG(exception)) {
+            /* jsonSerialize()/property-hook threw inside the encoder. */
+            RETURN_THROWS();
+        }
+        if (throw_mode) {
+            zend_throw_exception(ce,
+                FASTJSON_G(last_err_msg) ? FASTJSON_G(last_err_msg)
+                                         : "fastjson_pointer_set encode failed",
+                FASTJSON_G(last_err_code));
+            FASTJSON_G(last_err_code) = saved_err_code;
+            FASTJSON_G(last_err_msg) = saved_err_msg;
+            RETURN_THROWS();
+        }
+        /* Encoder already recorded the encode-side error. */
+        RETURN_FALSE;
+    }
+
+    yyjson_read_err verr;
+    yyjson_doc *vdoc = yyjson_read_opts(ZSTR_VAL(vstr), ZSTR_LEN(vstr), 0,
+                                        &fastjson_php_alc, &verr);
+    zend_string_release(vstr);
+
+    yyjson_mut_doc *mdoc = NULL;
+    yyjson_mut_val *mv = NULL;
+    if (vdoc != NULL) {
+        mdoc = yyjson_doc_mut_copy(idoc, &fastjson_php_alc);
+        if (mdoc != NULL) {
+            mv = yyjson_val_mut_copy(mdoc, yyjson_doc_get_root(vdoc));
+        }
+        yyjson_doc_free(vdoc);
+    }
+    yyjson_doc_free(idoc);
+
+    if (mv == NULL) {
+        /* Allocator failure inside yyjson, or the encoder's output failed to
+         * re-parse (should not happen -- it emits well-formed JSON). */
+        if (mdoc != NULL) {
+            yyjson_mut_doc_free(mdoc);
+        }
+        if (throw_mode) {
+            zend_throw_exception(ce, "fastjson_pointer_set failed",
+                                 FASTJSON_ERROR_SYNTAX);
+            FASTJSON_G(last_err_code) = saved_err_code;
+            FASTJSON_G(last_err_msg) = saved_err_msg;
+            RETURN_THROWS();
+        }
+        fastjson_set_encode_error(FASTJSON_ERROR_SYNTAX,
+                                  "fastjson_pointer_set failed");
+        RETURN_FALSE;
+    }
+
+    /* The empty pointer "" selects the whole document (RFC 6901); setn
+     * cannot replace the root, so swap it directly. Otherwise splice mv in,
+     * creating any missing parent objects (yyjson_mut_ptr_setn fails on an
+     * array index gap or a scalar mid-path). */
+    bool set_ok;
+    if (pointer_len == 0) {
+        yyjson_mut_doc_set_root(mdoc, mv);
+        set_ok = true;
+    } else {
+        set_ok = yyjson_mut_ptr_setn(yyjson_mut_doc_get_root(mdoc),
+                                     pointer, pointer_len, mv, mdoc);
+    }
+    if (!set_ok) {
+        yyjson_mut_doc_free(mdoc);
+        if (throw_mode) {
+            zend_throw_exception(ce,
+                "JSON pointer does not resolve to a settable location",
+                FASTJSON_ERROR_SYNTAX);
+            FASTJSON_G(last_err_code) = saved_err_code;
+            FASTJSON_G(last_err_msg) = saved_err_msg;
+            RETURN_THROWS();
+        }
+        fastjson_set_encode_error(FASTJSON_ERROR_SYNTAX,
+            "JSON pointer does not resolve to a settable location");
+        RETURN_FALSE;
+    }
+
+    /* Output formatting from $flags, mirroring dw_translate_yyjson_flags:
+     * escape slashes/unicode by default unless the UNESCAPED_* bits are set,
+     * and honor PRETTY_PRINT (4-space, matching the direct-write encoder). */
+    yyjson_write_flag wflags = 0;
+    if (!(flags & FASTJSON_ENCODE_UNESCAPED_SLASHES)) {
+        wflags |= YYJSON_WRITE_ESCAPE_SLASHES;
+    }
+    if (!(flags & FASTJSON_ENCODE_UNESCAPED_UNICODE)) {
+        wflags |= YYJSON_WRITE_ESCAPE_UNICODE;
+    }
+    if (flags & FASTJSON_ENCODE_PRETTY_PRINT) {
+        wflags |= YYJSON_WRITE_PRETTY;
+    }
+
+    size_t out_len = 0;
+    yyjson_write_err werr;
+    char *out = yyjson_mut_write_opts(mdoc, wflags, &fastjson_php_alc,
+                                      &out_len, &werr);
+    yyjson_mut_doc_free(mdoc);
+
+    if (out == NULL) {
+        if (throw_mode) {
+            zend_throw_exception(ce, "fastjson_pointer_set write failed",
+                                 FASTJSON_ERROR_SYNTAX);
+            FASTJSON_G(last_err_code) = saved_err_code;
+            FASTJSON_G(last_err_msg) = saved_err_msg;
+            RETURN_THROWS();
+        }
+        fastjson_set_encode_error(FASTJSON_ERROR_SYNTAX,
+                                  "fastjson_pointer_set write failed");
+        RETURN_FALSE;
+    }
+
+    RETVAL_STRINGL(out, out_len);
+    fastjson_php_alc.free(fastjson_php_alc.ctx, out);
     if (!throw_mode) {
         fastjson_clear_error();
     }

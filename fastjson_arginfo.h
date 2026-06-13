@@ -1,5 +1,5 @@
 /* This is a generated file, edit fastjson.stub.php instead.
- * Stub hash: 21090368790c5e51abaf4582e906ddb62482ee78 */
+ * Stub hash: 83e6b0a288edf54813699a12872d15853637a3a4 */
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_fastjson_version, 0, 0, IS_STRING, 0)
 ZEND_END_ARG_INFO()
@@ -39,6 +39,20 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_fastjson_pointer_get, 0, 2, IS_M
 	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, flags, IS_LONG, 0, "0")
 ZEND_END_ARG_INFO()
 
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_fastjson_pointer_exists, 0, 2, _IS_BOOL, 0)
+	ZEND_ARG_TYPE_INFO(0, json, IS_STRING, 0)
+	ZEND_ARG_TYPE_INFO(0, pointer, IS_STRING, 0)
+	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, flags, IS_LONG, 0, "0")
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_MASK_EX(arginfo_fastjson_pointer_set, 0, 3, MAY_BE_STRING|MAY_BE_FALSE)
+	ZEND_ARG_TYPE_INFO(0, json, IS_STRING, 0)
+	ZEND_ARG_TYPE_INFO(0, pointer, IS_STRING, 0)
+	ZEND_ARG_TYPE_INFO(0, value, IS_MIXED, 0)
+	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, flags, IS_LONG, 0, "0")
+	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, depth, IS_LONG, 0, "512")
+ZEND_END_ARG_INFO()
+
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_fastjson_merge_patch, 0, 2, IS_MIXED, 0)
 	ZEND_ARG_TYPE_INFO(0, target, IS_STRING, 0)
 	ZEND_ARG_TYPE_INFO(0, patch, IS_STRING, 0)
@@ -58,16 +72,25 @@ ZEND_END_ARG_INFO()
 
 #define arginfo_fastjson_last_error_msg arginfo_fastjson_version
 
+#define arginfo_fastjson_last_error_pos arginfo_fastjson_last_error
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_fastjson_last_error_info, 0, 0, IS_ARRAY, 0)
+ZEND_END_ARG_INFO()
+
 ZEND_FUNCTION(fastjson_version);
 ZEND_FUNCTION(fastjson_encode);
 ZEND_FUNCTION(fastjson_file_encode);
 ZEND_FUNCTION(fastjson_decode);
 ZEND_FUNCTION(fastjson_file_decode);
 ZEND_FUNCTION(fastjson_pointer_get);
+ZEND_FUNCTION(fastjson_pointer_exists);
+ZEND_FUNCTION(fastjson_pointer_set);
 ZEND_FUNCTION(fastjson_merge_patch);
 ZEND_FUNCTION(fastjson_validate);
 ZEND_FUNCTION(fastjson_last_error);
 ZEND_FUNCTION(fastjson_last_error_msg);
+ZEND_FUNCTION(fastjson_last_error_pos);
+ZEND_FUNCTION(fastjson_last_error_info);
 
 static const zend_function_entry ext_functions[] = {
 	ZEND_FE(fastjson_version, arginfo_fastjson_version)
@@ -76,10 +99,14 @@ static const zend_function_entry ext_functions[] = {
 	ZEND_FE(fastjson_decode, arginfo_fastjson_decode)
 	ZEND_FE(fastjson_file_decode, arginfo_fastjson_file_decode)
 	ZEND_FE(fastjson_pointer_get, arginfo_fastjson_pointer_get)
+	ZEND_FE(fastjson_pointer_exists, arginfo_fastjson_pointer_exists)
+	ZEND_FE(fastjson_pointer_set, arginfo_fastjson_pointer_set)
 	ZEND_FE(fastjson_merge_patch, arginfo_fastjson_merge_patch)
 	ZEND_FE(fastjson_validate, arginfo_fastjson_validate)
 	ZEND_FE(fastjson_last_error, arginfo_fastjson_last_error)
 	ZEND_FE(fastjson_last_error_msg, arginfo_fastjson_last_error_msg)
+	ZEND_FE(fastjson_last_error_pos, arginfo_fastjson_last_error_pos)
+	ZEND_FE(fastjson_last_error_info, arginfo_fastjson_last_error_info)
 	ZEND_FE_END
 };
 
