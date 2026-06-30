@@ -101,14 +101,19 @@ fastjson trades memory for speed on decode (yyjson's two-stage parser holds the 
 - [ ] `fastjson_validate` success-path depth enforcement (currently argument-validated but the cap is not walked, since yyjson's validate-only mode has no parse-time depth flag and a post-parse walk halves the success-path throughput)
 - [ ] Streaming / incremental decode and encode
 
-## 🔗 PHP Performance Toolkit
+## 🔗 Native PHP extensions
 
-Companion native PHP extensions for high-throughput PHP workloads:
+Companion native PHP extensions:
 
-- **[php_excel](https://github.com/iliaal/php_excel)**: native Excel I/O. 7-10x faster than PhpSpreadsheet, full XLS/XLSX with formulas, formatting, and styling. Powered by LibXL.
-- **[mdparser](https://github.com/iliaal/mdparser)**: native CommonMark + GFM parser. 15-30x faster than pure-PHP alternatives, 652/652 spec examples pass.
+- **[php_excel](https://github.com/iliaal/php_excel)**: native Excel I/O via LibXL. 7-10× faster than PhpSpreadsheet, full XLS/XLSX with formulas, formatting, and styling.
+- **[mdparser](https://github.com/iliaal/mdparser)**: native CommonMark + GFM markdown parser via md4c. 15-30× faster than pure-PHP libraries.
 - **[php_clickhouse](https://github.com/iliaal/php_clickhouse)**: native ClickHouse client speaking the wire protocol directly. Picks up where SeasClick left off.
-- **[fastchart](https://github.com/iliaal/fastchart)**: native chart-rendering extension. 26 chart types behind one fluent OO API, SVG-canonical with PNG/JPG/WebP output (no libgd dependency).
+- **[pdo_duckdb](https://github.com/iliaal/pdo_duckdb)**: PDO driver for DuckDB, analytical SQL in your PHP stack.
+- **[phpser](https://github.com/iliaal/phpser)**: decoder-optimized binary serializer for cache workloads. Faster than igbinary on packed numerics and DTO batches.
+- **[fast_uuid](https://github.com/iliaal/fast_uuid)**: high-throughput UUID generation (v1/v4/v7), batched CSPRNG and SIMD hex formatter, ramsey-compatible API.
+- **[fastchart](https://github.com/iliaal/fastchart)**: native chart-rendering extension. 38 chart types behind one fluent OO API, SVG-canonical with PNG/JPG/WebP and optional PDF output.
+- **[statgrab](https://github.com/iliaal/statgrab)**: system statistics (CPU, memory, disk, network) via libstatgrab, no parsing /proc by hand.
+- **[phonetic](https://github.com/iliaal/phonetic)**: native phonetic name matching (Double Metaphone, Beider-Morse, Daitch-Mokotoff, NYSIIS, Match Rating), the encoders PHP core lacks.
 
 ## License
 
