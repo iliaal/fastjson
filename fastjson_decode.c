@@ -523,6 +523,11 @@ PHP_FUNCTION(fastjson_pointer_get)
                                          pointer, pointer_len);
     if (target == NULL) {
         yyjson_doc_free(doc);
+        /* Absent/malformed pointer is not a JSON error. The stub documents
+         * this as null + FASTJSON_ERROR_NONE, so clear here even under
+         * THROW_ON_ERROR (which skipped the entry clear to preserve prior
+         * state for a parse-error throw) rather than leak a stale error. */
+        fastjson_clear_error();
         RETURN_NULL();
     }
 
@@ -791,6 +796,12 @@ PHP_FUNCTION(fastjson_pointer_exists)
     yyjson_val *target = yyjson_ptr_getn(yyjson_doc_get_root(doc),
                                          pointer, pointer_len);
     yyjson_doc_free(doc);
+    if (target == NULL) {
+        /* Absent/malformed pointer is the documented false + NONE signal
+         * (fastjson.stub.php); clear even under THROW_ON_ERROR so a prior
+         * error doesn't masquerade as "the JSON was malformed". */
+        fastjson_clear_error();
+    }
     RETURN_BOOL(target != NULL);
 }
 
@@ -823,9 +834,18 @@ PHP_FUNCTION(fastjson_pointer_set)
     zend_class_entry *ce = fastjson_json_exception_ce
         ? fastjson_json_exception_ce : zend_ce_exception;
 
-    /* Parse the target document. */
+    /* Parse the target document. The IGNORE/SUBSTITUTE UTF-8 bits are
+     * masked off here: unlike decode/pointer_get, pointer_set writes the
+     * document back out through yyjson's writer, which cannot emit the
+     * invalid bytes those flags let the reader accept. Rather than
+     * half-accept and then fail opaquely at write time ("write failed"),
+     * reject an invalid base document at parse with a clean UTF-8 error.
+     * The flags still sanitize the replacement value below and still drive
+     * output formatting on the write. */
     yyjson_read_err err;
-    yyjson_doc *idoc = fastjson_read_doc(json, json_len, flags, &err);
+    yyjson_doc *idoc = fastjson_read_doc(json, json_len,
+        flags & ~(FASTJSON_INVALID_UTF8_IGNORE | FASTJSON_INVALID_UTF8_SUBSTITUTE),
+        &err);
     if (idoc == NULL) {
         if (throw_mode) {
             fastjson_throw_read_err(&err, &saved_err);
@@ -857,9 +877,13 @@ PHP_FUNCTION(fastjson_pointer_set)
      * it into a node we can splice. Reusing fastjson_directwrite_encode
      * keeps one serialization path for PHP values (matching
      * fastjson_merge_patch's single-encoder rationale) and inherits its
-     * recursion and unsupported-type handling. The intermediate encode uses
-     * flags=0; output formatting is applied by the final write below. */
-    zend_string *vstr = fastjson_directwrite_encode(value, 0, depth);
+     * recursion and unsupported-type handling. Only the UTF-8-handling
+     * bits are forwarded so an invalid string in $value is sanitized the
+     * same way fastjson_encode would; output formatting is applied by the
+     * final write below, not here. */
+    zend_string *vstr = fastjson_directwrite_encode(value,
+        flags & (FASTJSON_INVALID_UTF8_IGNORE | FASTJSON_INVALID_UTF8_SUBSTITUTE),
+        depth);
     if (vstr == NULL) {
         yyjson_doc_free(idoc);
         if (EG(exception)) {

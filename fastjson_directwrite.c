@@ -511,7 +511,13 @@ static bool dw_emit_array(fastjson_dw_ctx *ctx, HashTable *ht,
         return dw_partial_or_fail(ctx, FASTJSON_ERROR_DEPTH,
             "Maximum stack depth exceeded", false);
     }
-    if (remaining_depth <= 0) {
+    /* remaining_depth > INT_MAX means the caller passed a $depth above
+     * INT_MAX. ext/json stores max_depth in an int, so such a depth wraps
+     * non-positive and every container trips JSON_ERROR_DEPTH; match that
+     * (and keep the C-stack cap meaningful where zend_call_stack_overflowed
+     * is unavailable). Scalars never reach here, so a huge $depth on a
+     * scalar still encodes cleanly, as in ext/json. */
+    if (remaining_depth <= 0 || remaining_depth > INT_MAX) {
         return dw_partial_or_fail(ctx, FASTJSON_ERROR_DEPTH,
             "Maximum stack depth exceeded", false);
     }
@@ -634,7 +640,9 @@ static bool dw_emit_object(fastjson_dw_ctx *ctx, zval *zv,
         return dw_partial_or_fail(ctx, FASTJSON_ERROR_DEPTH,
             "Maximum stack depth exceeded", false);
     }
-    if (remaining_depth <= 0) {
+    /* See dw_emit_array: a $depth above INT_MAX wraps non-positive in
+     * ext/json and trips JSON_ERROR_DEPTH on every container; match it. */
+    if (remaining_depth <= 0 || remaining_depth > INT_MAX) {
         return dw_partial_or_fail(ctx, FASTJSON_ERROR_DEPTH,
             "Maximum stack depth exceeded", false);
     }
@@ -681,20 +689,16 @@ static bool dw_emit_object(fastjson_dw_ctx *ctx, zval *zv,
     }
 
     bool pretty = ctx->pretty_print;
-    /* Object emptiness: zend_array_count is shallow; for objects the
-     * declared-property IS_INDIRECT slots that are IS_UNDEF (typed
-     * uninit) don't contribute to JSON output but DO contribute to
-     * zend_array_count. Detect emptiness conservatively: assume not
-     * empty unless props has 0 entries. The pretty-print contract
-     * just needs us to not add inner whitespace for truly empty
-     * objects; for "looks-non-empty but actually no JSON output"
-     * we emit "{ \n }" which is a minor cosmetic difference. */
-    bool empty = zend_array_count(props) == 0;
-
+    /* zend_array_count is not a reliable emptiness signal for objects:
+     * mangled (private/protected) keys, IS_UNDEF typed-uninit slots, and
+     * hookless virtual properties all count but emit nothing. Open the
+     * indented pretty body lazily on the first property actually emitted
+     * (body_open) and keep it compact ({}) when none are, matching
+     * json_encode, which renders a private-only object as "{}". */
     smart_str_appendc(&ctx->buf, '{');
-    if (pretty && !empty) ctx->indent_level++;
 
     bool first = true;
+    bool body_open = false;
     zend_string *key;
     zend_ulong index;
     zval *item;
@@ -750,7 +754,7 @@ static bool dw_emit_object(fastjson_dw_ctx *ctx, zval *zv,
                  * IS_UNDEF). */
                 zval_ptr_dtor(&hook_rv);
                 if (need_recursion_guard) GC_UNPROTECT_RECURSION(props);
-                if (pretty && !empty) ctx->indent_level--;
+                if (body_open) ctx->indent_level--;
                 zend_release_properties(props);
                 return false;
             }
@@ -775,18 +779,19 @@ static bool dw_emit_object(fastjson_dw_ctx *ctx, zval *zv,
         }
         if (Z_ISUNDEF_P(item)) continue;
         ZVAL_DEREF(item);
+        if (pretty && !body_open) { ctx->indent_level++; body_open = true; }
         if (!first) smart_str_appendc(&ctx->buf, ',');
         if (pretty) dw_emit_newline_indent(ctx, ctx->indent_level);
         if (!dw_emit_object_key(ctx, key, index)
                 || !dw_encode_zval(ctx, item, remaining_depth - 1)) {
             if (need_recursion_guard) GC_UNPROTECT_RECURSION(props);
-            if (pretty && !empty) ctx->indent_level--;
+            if (body_open) ctx->indent_level--;
             zend_release_properties(props);
             return false;
         }
         first = false;
     } ZEND_HASH_FOREACH_END();
-    if (pretty && !empty) {
+    if (body_open) {
         ctx->indent_level--;
         dw_emit_newline_indent(ctx, ctx->indent_level);
     }

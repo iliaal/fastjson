@@ -47,10 +47,21 @@ var_dump($fj === $ej, $fj);
 $deep = [[[[1]]]];
 $fj = fastjson_encode($deep, JSON_PARTIAL_OUTPUT_ON_ERROR, 2);
 var_dump($fj, fastjson_last_error() === JSON_ERROR_DEPTH);
+
+/* $depth above INT_MAX: ext/json wraps its int max_depth non-positive, so
+ * every container trips JSON_ERROR_DEPTH. fastjson matches (containers
+ * fail), while a huge depth on a bare scalar still encodes cleanly. */
+$huge = 2147483648; // INT_MAX + 1
+var_dump(fastjson_encode([1], 0, $huge) === json_encode([1], 0, $huge));
+var_dump(fastjson_last_error() === JSON_ERROR_DEPTH);
+var_dump(fastjson_encode(1, 0, $huge) === json_encode(1, 0, $huge));
 ?>
 --EXPECT--
 depth-parity ok
 bool(true)
 string(6) "[null]"
 string(8) "[[null]]"
+bool(true)
+bool(true)
+bool(true)
 bool(true)
