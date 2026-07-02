@@ -89,6 +89,34 @@ typedef struct fastjson_dw_ctx {
 static bool dw_encode_zval(fastjson_dw_ctx *ctx, zval *zv,
                            zend_long remaining_depth);
 
+static bool dw_fail_too_large(void)
+{
+    fastjson_set_encode_error(FASTJSON_ERROR_UNSUPPORTED_TYPE,
+                              "Encoded JSON string is too large");
+    return false;
+}
+
+static bool dw_reserve(fastjson_dw_ctx *ctx, size_t add_len)
+{
+    size_t cur_len = ctx->buf.s ? ZSTR_LEN(ctx->buf.s) : 0;
+    if (UNEXPECTED(add_len > ZSTR_MAX_LEN - cur_len)) {
+        return dw_fail_too_large();
+    }
+    smart_str_alloc(&ctx->buf, add_len, 0);
+    return true;
+}
+
+/* Worst-case yyjson string output size for `len` source bytes:
+ * \uXXXX expansion = 6 bytes per source byte (non-ASCII chars with
+ * ESCAPE_UNICODE), plus the surrounding quotes. */
+static bool dw_reserve_string(fastjson_dw_ctx *ctx, size_t len)
+{
+    if (UNEXPECTED(len > (ZSTR_MAX_LEN - 2) / 6)) {
+        return dw_fail_too_large();
+    }
+    return dw_reserve(ctx, len * 6 + 2);
+}
+
 static yyjson_write_flag dw_translate_yyjson_flags(zend_long php_flags)
 {
     yyjson_write_flag yf = 0;
@@ -141,7 +169,7 @@ static inline void dw_emit_newline_indent(fastjson_dw_ctx *ctx, int level)
  * for HEX_QUOT substitution. Bare '<', '>', '&', '\'' only ever appear
  * as string content (yyjson never escapes them), so HEX_TAG/AMP/APOS
  * substitute every occurrence outside an escape body. */
-static void dw_apply_hex_escapes(fastjson_dw_ctx *ctx,
+static bool dw_apply_hex_escapes(fastjson_dw_ctx *ctx,
                                  size_t start_pos)
 {
     zend_long flags = ctx->flags;
@@ -149,10 +177,10 @@ static void dw_apply_hex_escapes(fastjson_dw_ctx *ctx,
     bool amp  = flags & FASTJSON_ENCODE_HEX_AMP;
     bool apos = flags & FASTJSON_ENCODE_HEX_APOS;
     bool quot = flags & FASTJSON_ENCODE_HEX_QUOT;
-    if (!(tag || amp || apos || quot)) return;
+    if (!(tag || amp || apos || quot)) return true;
 
     size_t orig_len = ZSTR_LEN(ctx->buf.s) - start_pos;
-    if (orig_len == 0) return;
+    if (orig_len == 0) return true;
 
     /* Pass 1: scan in place for replacement candidates and count them.
      * Skips the alloc / copy / rewrite work entirely when the string
@@ -184,7 +212,11 @@ static void dw_apply_hex_escapes(fastjson_dw_ctx *ctx,
         if (amp  && c == '&')               { hits++; continue; }
         if (apos && c == '\'')              { hits++; continue; }
     }
-    if (hits == 0) return;
+    if (hits == 0) return true;
+
+    if (UNEXPECTED(hits > (ZSTR_MAX_LEN - orig_len) / 5)) {
+        return dw_fail_too_large();
+    }
 
     /* Pass 2: rewrite over a temp copy of the region. Reserve exact
      * growth (5 extra bytes per hit) rather than the worst-case 6x. */
@@ -192,7 +224,10 @@ static void dw_apply_hex_escapes(fastjson_dw_ctx *ctx,
     memcpy(orig, ZSTR_VAL(ctx->buf.s) + start_pos, orig_len);
 
     ZSTR_LEN(ctx->buf.s) = start_pos;
-    smart_str_alloc(&ctx->buf, orig_len + hits * 5, 0);
+    if (!dw_reserve(ctx, orig_len + hits * 5)) {
+        efree(orig);
+        return false;
+    }
     for (size_t i = 0; i < orig_len; i++) {
         unsigned char c = (unsigned char)orig[i];
         if (c == '\\' && i + 1 < orig_len) {
@@ -230,12 +265,8 @@ static void dw_apply_hex_escapes(fastjson_dw_ctx *ctx,
         smart_str_appendc(&ctx->buf, (char)c);
     }
     efree(orig);
+    return true;
 }
-
-/* Worst-case yyjson string output size for `len` source bytes:
- *     \uXXXX expansion = 6 bytes per source byte (non-ASCII chars with
- *     ESCAPE_UNICODE), plus the surrounding quotes. */
-#define DW_STR_WORST(len) ((size_t)(len) * 6 + 2)
 
 /* Number output reservation. yyjson_write_number's documented buffer
  * contract (yyjson.h) is the floor: integers need >= 21 bytes, floats
@@ -256,7 +287,9 @@ static bool dw_emit_string_ex(fastjson_dw_ctx *ctx, const char *s, size_t len,
                               bool is_key)
 {
     size_t start_pos = ctx->buf.s ? ZSTR_LEN(ctx->buf.s) : 0;
-    smart_str_alloc(&ctx->buf, DW_STR_WORST(len), 0);
+    if (!dw_reserve_string(ctx, len)) {
+        return false;
+    }
     char *cur = ZSTR_VAL(ctx->buf.s) + ZSTR_LEN(ctx->buf.s);
     char *end = yyjson_write_string_to_buf(cur, s, len, ctx->yflags);
     if (UNEXPECTED(end == NULL)) {
@@ -271,14 +304,16 @@ static bool dw_emit_string_ex(fastjson_dw_ctx *ctx, const char *s, size_t len,
              * SUBSTITUTE follows the maximal-subpart advance rule. */
             char *sane = fastjson_sanitize_utf8(s, len, ctx->flags,
                                                 FJ_SAN_ENCODE, &sane_len);
-            smart_str_alloc(&ctx->buf, DW_STR_WORST(sane_len), 0);
+            if (!dw_reserve_string(ctx, sane_len)) {
+                efree(sane);
+                return false;
+            }
             cur = ZSTR_VAL(ctx->buf.s) + ZSTR_LEN(ctx->buf.s);
             end = yyjson_write_string_to_buf(cur, sane, sane_len, ctx->yflags);
             efree(sane);
             if (EXPECTED(end != NULL)) {
                 ZSTR_LEN(ctx->buf.s) = (size_t)(end - ZSTR_VAL(ctx->buf.s));
-                dw_apply_hex_escapes(ctx, start_pos);
-                return true;
+                return dw_apply_hex_escapes(ctx, start_pos);
             }
             /* Fall through to the error path; sanitization shouldn't
              * fail, but if yyjson rejects our output we still need a
@@ -298,8 +333,7 @@ static bool dw_emit_string_ex(fastjson_dw_ctx *ctx, const char *s, size_t len,
         return false;
     }
     ZSTR_LEN(ctx->buf.s) = (size_t)(end - ZSTR_VAL(ctx->buf.s));
-    dw_apply_hex_escapes(ctx, start_pos);
-    return true;
+    return dw_apply_hex_escapes(ctx, start_pos);
 }
 
 static inline bool dw_emit_string(fastjson_dw_ctx *ctx, const char *s, size_t len)

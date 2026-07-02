@@ -109,6 +109,14 @@ ZEND_EXTERN_MODULE_GLOBALS(fastjson)
 
 #include "yyjson.h"
 
+typedef struct {
+    zend_long code;
+    const char *msg;
+    zend_long pos;
+    zend_long line;
+    zend_long col;
+} fastjson_error_state;
+
 /* Translate a yyjson read code into the matching ext/json JSON_ERROR_*
  * int. SUCCESS -> NONE; INVALID_STRING -> UTF8 (yyjson's signal for bad
  * UTF-8 inside a JSON string); everything else -> SYNTAX. */
@@ -127,6 +135,9 @@ void fastjson_clear_error(void);
  * translation). msg may be NULL or a string literal -- not freed.
  * Clears the source-location fields (no offset for encode/IO errors). */
 void fastjson_set_encode_error(zend_long code, const char *msg);
+
+void fastjson_save_error_state(fastjson_error_state *state);
+void fastjson_restore_error_state(const fastjson_error_state *state);
 
 /* Record a yyjson read error together with its source location. Stores
  * the translated code and (verbatim) message like fastjson_set_error,

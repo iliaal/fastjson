@@ -65,8 +65,8 @@ PHP_FUNCTION(fastjson_encode)
      * clear at entry, errors during encode (including PARTIAL_OUTPUT
      * substitutions) persist for fastjson_last_error() to surface. */
     bool throw_mode = (flags & FASTJSON_ENCODE_THROW_ON_ERROR) != 0;
-    zend_long saved_err_code = FASTJSON_G(last_err_code);
-    const char *saved_err_msg = FASTJSON_G(last_err_msg);
+    fastjson_error_state saved_err;
+    fastjson_save_error_state(&saved_err);
     if (!throw_mode) {
         fastjson_clear_error();
     }
@@ -94,8 +94,7 @@ fail:
             ? FASTJSON_G(last_err_msg) : "fastjson_encode failed";
         /* Restore prior global state: THROW_ON_ERROR's contract is
          * "exception carries the error, global state untouched". */
-        FASTJSON_G(last_err_code) = saved_err_code;
-        FASTJSON_G(last_err_msg) = saved_err_msg;
+        fastjson_restore_error_state(&saved_err);
         zend_throw_exception(ce, throw_msg, throw_code);
         RETURN_THROWS();
     }
@@ -121,8 +120,8 @@ PHP_FUNCTION(fastjson_file_encode)
     /* Same THROW_ON_ERROR state-preservation contract as
      * fastjson_encode: snapshot at entry, restore on the throw path. */
     bool throw_mode = (flags & FASTJSON_ENCODE_THROW_ON_ERROR) != 0;
-    zend_long saved_err_code = FASTJSON_G(last_err_code);
-    const char *saved_err_msg = FASTJSON_G(last_err_msg);
+    fastjson_error_state saved_err;
+    fastjson_save_error_state(&saved_err);
     if (!throw_mode) {
         fastjson_clear_error();
     }
@@ -171,8 +170,7 @@ encode_fail:
         zend_long throw_code = FASTJSON_G(last_err_code);
         const char *throw_msg = FASTJSON_G(last_err_msg)
             ? FASTJSON_G(last_err_msg) : "fastjson_file_encode failed";
-        FASTJSON_G(last_err_code) = saved_err_code;
-        FASTJSON_G(last_err_msg) = saved_err_msg;
+        fastjson_restore_error_state(&saved_err);
         zend_throw_exception(ce, throw_msg, throw_code);
         RETURN_THROWS();
     }

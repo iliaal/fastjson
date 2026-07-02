@@ -89,6 +89,24 @@ void fastjson_set_encode_error(zend_long code, const char *msg)
     FASTJSON_G(last_err_col) = 0;
 }
 
+void fastjson_save_error_state(fastjson_error_state *state)
+{
+    state->code = FASTJSON_G(last_err_code);
+    state->msg = FASTJSON_G(last_err_msg);
+    state->pos = FASTJSON_G(last_err_pos);
+    state->line = FASTJSON_G(last_err_line);
+    state->col = FASTJSON_G(last_err_col);
+}
+
+void fastjson_restore_error_state(const fastjson_error_state *state)
+{
+    FASTJSON_G(last_err_code) = state->code;
+    FASTJSON_G(last_err_msg) = state->msg;
+    FASTJSON_G(last_err_pos) = state->pos;
+    FASTJSON_G(last_err_line) = state->line;
+    FASTJSON_G(last_err_col) = state->col;
+}
+
 bool fastjson_byte_is_valid_utf8_start(const char *s, size_t len, size_t pos)
 {
     if (pos >= len) return false;
