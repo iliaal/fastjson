@@ -67,3 +67,4 @@ tests/**/*.php.out
 /AGENTS.md
 /CLAUDE.md
 /.review/
+.plan/

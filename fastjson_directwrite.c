@@ -161,6 +161,18 @@ yyjson_write_flag fastjson_translate_write_flags(zend_long php_flags,
  * ({} and []) -- no inner whitespace. */
 static inline void dw_emit_newline_indent(fastjson_dw_ctx *ctx, int level)
 {
+    if (UNEXPECTED(level > 8
+            && (size_t)level <= (ZSTR_MAX_LEN - 1) / 4)) {
+        size_t spaces = (size_t)level * 4;
+        smart_str_alloc(&ctx->buf, spaces + 1, 0);
+        smart_str_appendc(&ctx->buf, '\n');
+        if (spaces != 0) {
+            memset(ZSTR_VAL(ctx->buf.s) + ZSTR_LEN(ctx->buf.s), ' ', spaces);
+            ZSTR_LEN(ctx->buf.s) += spaces;
+        }
+        return;
+    }
+
     smart_str_appendc(&ctx->buf, '\n');
     for (int i = 0; i < level; i++) {
         smart_str_appendl(&ctx->buf, "    ", 4);

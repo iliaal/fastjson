@@ -176,6 +176,7 @@ phpize --clean
 /path/to/release-php/bin/phpize
 ./configure --enable-fastjson \
     --with-php-config=/path/to/release-php/bin/php-config
+make clean    # important when switching PHP builds; rebuilds vendored yyjson too
 make -j$(nproc)
 # Now CFLAGS = -g -O2 (default for non-debug PHP)
 ```
