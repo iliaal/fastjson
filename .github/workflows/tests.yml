@@ -127,7 +127,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        php: ['8.4']
+        # 8.3 covers the pre-8.4 hooked-property path and the
+        # zend_call_stack_overflowed fallback boundary; 8.5 covers the
+        # newest property-hook / read_property code path. Memory-safety
+        # bugs there (recursion guards, retval_stash UAF) are version-
+        # sensitive, so sanitize more than just 8.4.
+        php: ['8.3', '8.4', '8.5']
 
     env:
       # detect_leaks=1 is pinned explicitly. LSan's default is on under

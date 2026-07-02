@@ -146,8 +146,8 @@ char *fastjson_sanitize_utf8(const char *s, size_t len, zend_long flags,
 {
     /* Precedence asymmetry: encode prefers IGNORE on BOTH-bits, decode
      * prefers SUBSTITUTE. */
-    bool has_ignore = (flags & (1L << 20)) != 0;
-    bool has_subst  = (flags & (1L << 21)) != 0;
+    bool has_ignore = (flags & FASTJSON_INVALID_UTF8_IGNORE) != 0;
+    bool has_subst  = (flags & FASTJSON_INVALID_UTF8_SUBSTITUTE) != 0;
     bool substitute = (mode == FJ_SAN_DECODE)
         ? has_subst                   /* decode: any SUBSTITUTE wins */
         : (has_subst && !has_ignore); /* encode: BOTH -> IGNORE strips */

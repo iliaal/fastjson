@@ -1,7 +1,7 @@
 # Patches applied to vendored yyjson sources
 
 The bundled yyjson sources at `vendor/yyjson/yyjson.{c,h}` are
-upstream's tag 0.12.0 with one local modification documented below.
+upstream's tag 0.12.0 with three local modifications documented below.
 The upstream `vendor/yyjson/LICENSE` and `vendor/yyjson/CHANGELOG.md`
 are unchanged.
 

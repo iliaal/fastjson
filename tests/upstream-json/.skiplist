@@ -96,14 +96,17 @@ json_encode_recursion_02.phpt # ext-json-internals # jsonSerialize returning $th
 #  - ext/json's specific "Malformed UTF-8 characters" wording,
 #  - JSON_ERROR_CTRL_CHAR (code 3) which yyjson doesn't surface,
 #  - NUL-byte filtering in stdClass property names,
-#  - and one pending memory-leak in encode + jsonSerialize +
-#    PARTIAL_OUTPUT (bug77843, fastjson-side bug to investigate).
+#  - and bug77843's output ordering when jsonSerialize() mutates the
+#    `&`-reference array mid-encode. The use-after-free bug77843 targets
+#    is fixed (covered by the native regression test
+#    tests/encode_jsonserializable_unset_self.phpt under ASAN); only the
+#    byte-for-byte output divergence keeps the upstream test skiplisted.
 bug54484.phpt # ext-json-internals # error code numbering for UTF-8 within JSON
 bug61537.phpt # ext-json-internals # ext/json UTF-8 message text
 bug62010.phpt # ext-json-internals # ext/json UTF-8 message text
 bug68546.phpt # ext-json-internals # NUL bytes in property names
 bug69187.phpt # ext-json-internals # JSON_ERROR_CTRL_CHAR code numbering
-bug77843.phpt # bug-report # memory leak in encode + JsonSerializable + PARTIAL_OUTPUT
+bug77843.phpt # doc-divergence # output ordering when jsonSerialize() mutates the &-ref array mid-encode; UAF fixed + covered by encode_jsonserializable_unset_self.phpt
 
 # === Object property keys with embedded NUL (ext/json strips them) ===
 bug66021.phpt # ext-json-internals # NUL bytes in property names

@@ -18,12 +18,6 @@
 extern zend_module_entry fastjson_module_entry;
 #define phpext_fastjson_ptr &fastjson_module_entry
 
-#ifdef PHP_WIN32
-#define PHP_FASTJSON_API __declspec(dllexport)
-#else
-#define PHP_FASTJSON_API
-#endif
-
 #include "php.h"
 
 /* ext/json compatibility: JSON_ERROR_* values are stable ints. fastjson
@@ -42,6 +36,15 @@ extern zend_module_entry fastjson_module_entry;
 #define FASTJSON_ERROR_UNSUPPORTED_TYPE  8
 #define FASTJSON_ERROR_NON_BACKED_ENUM   11
 
+/* JSON_INVALID_UTF8_IGNORE / _SUBSTITUTE occupy the same two bit
+ * positions on the encode and decode sides (they mirror ext/json's
+ * shared JSON_* values). The low-level sanitizer and the hot-path check
+ * below key off these side-neutral names; the ENCODE_/DECODE_ aliases
+ * further down exist for call-site readability and are defined in terms
+ * of these so the bit positions live in exactly one place. */
+#define FASTJSON_INVALID_UTF8_IGNORE          (1 << 20)
+#define FASTJSON_INVALID_UTF8_SUBSTITUTE      (1 << 21)
+
 /* Encode-side flag bits. Values match ext/json's JSON_* constants so
  * a caller passing JSON_PRETTY_PRINT works whether or not ext/json is
  * loaded; we reuse the bit positions on purpose. */
@@ -56,15 +59,15 @@ extern zend_module_entry fastjson_module_entry;
 #define FASTJSON_ENCODE_UNESCAPED_UNICODE     (1 << 8)
 #define FASTJSON_ENCODE_PARTIAL_OUTPUT_ON_ERROR (1 << 9)
 #define FASTJSON_ENCODE_PRESERVE_ZERO_FRACTION (1 << 10)
-#define FASTJSON_ENCODE_INVALID_UTF8_IGNORE   (1 << 20)
-#define FASTJSON_ENCODE_INVALID_UTF8_SUBSTITUTE (1 << 21)
+#define FASTJSON_ENCODE_INVALID_UTF8_IGNORE   FASTJSON_INVALID_UTF8_IGNORE
+#define FASTJSON_ENCODE_INVALID_UTF8_SUBSTITUTE FASTJSON_INVALID_UTF8_SUBSTITUTE
 #define FASTJSON_ENCODE_THROW_ON_ERROR        (1 << 22)
 
 /* Decode-side flag bits (subset of ext/json's decode flags). */
 #define FASTJSON_DECODE_OBJECT_AS_ARRAY       (1 << 0)
 #define FASTJSON_DECODE_BIGINT_AS_STRING      (1 << 1)
-#define FASTJSON_DECODE_INVALID_UTF8_IGNORE   (1 << 20)
-#define FASTJSON_DECODE_INVALID_UTF8_SUBSTITUTE (1 << 21)
+#define FASTJSON_DECODE_INVALID_UTF8_IGNORE   FASTJSON_INVALID_UTF8_IGNORE
+#define FASTJSON_DECODE_INVALID_UTF8_SUBSTITUTE FASTJSON_INVALID_UTF8_SUBSTITUTE
 #define FASTJSON_DECODE_THROW_ON_ERROR        (1 << 22)
 /* fastjson-only: no ext/json counterpart. Tolerate the JSONC subset
  * (line and block comments, trailing commas, a leading UTF-8 BOM) that
@@ -121,6 +124,15 @@ typedef struct {
  * int. SUCCESS -> NONE; INVALID_STRING -> UTF8 (yyjson's signal for bad
  * UTF-8 inside a JSON string); everything else -> SYNTAX. */
 zend_long fastjson_translate_read_code(yyjson_read_code yy);
+
+/* Translate fastjson encode $flags to yyjson write flags: escape
+ * slashes/unicode unless the UNESCAPED_* bits are set. When with_pretty
+ * is true, PRETTY_PRINT maps to YYJSON_WRITE_PRETTY (yyjson-writer
+ * callers); the direct-write encoder passes false and emits pretty
+ * output itself. Defined in fastjson_directwrite.c; shared so
+ * fastjson_pointer_set does not re-derive the mapping. */
+yyjson_write_flag fastjson_translate_write_flags(zend_long php_flags,
+                                                 bool with_pretty);
 
 /* Record the most recent fastjson_* call's failure in module globals.
  * msg may be NULL; pointers are stored verbatim because yyjson's
@@ -207,6 +219,7 @@ bool fastjson_utf8_well_formed(const char *s, size_t len);
  * times into one named test so the IS_STRING hot path stays a
  * single comparison. */
 #define FASTJSON_HAS_UTF8_HANDLING_FLAG(flags) \
-    (((flags) & ((1L << 20) | (1L << 21))) != 0)
+    (((flags) & (FASTJSON_INVALID_UTF8_IGNORE \
+                 | FASTJSON_INVALID_UTF8_SUBSTITUTE)) != 0)
 
 #endif /* PHP_FASTJSON_H */

@@ -8,6 +8,11 @@ PHP_ARG_ENABLE(fastjson-dev, whether to enable developer build flags,
 
 if test "$PHP_FASTJSON" != "no"; then
 
+  dnl 8.1 is the supported floor. On 8.1/8.2 the secondary C-stack
+  dnl overflow guard (zend_call_stack_overflowed, 8.3+) degrades to a
+  dnl no-op; the $depth counter (default 512) still bounds recursion, so
+  dnl deeply-nested input fails cleanly rather than smashing the stack.
+  dnl See the fallback in fastjson_decode.c / fastjson_directwrite.c.
   PHP_VERSION_ID=$($PHP_CONFIG --vernum)
   if test "$PHP_VERSION_ID" -lt "80100"; then
     AC_MSG_ERROR([fastjson requires PHP 8.1.0 or later (found $PHP_VERSION_ID)])

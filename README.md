@@ -90,7 +90,7 @@ fastjson trades memory for speed on decode (yyjson's two-stage parser holds the 
 
 ## ✨ What's in the box
 
-- Bundled yyjson 0.12.0 (MIT) with three local patches submitted upstream as ibireme/yyjson #263, #264, #265, #266. Full notes in [`vendor/yyjson/PATCHES.md`](vendor/yyjson/PATCHES.md).
+- Bundled yyjson 0.12.0 (MIT) with three local patches (P-001, P-002, P-003). Full notes in [`vendor/yyjson/PATCHES.md`](vendor/yyjson/PATCHES.md).
 - yyjson allocator routes every malloc/realloc/free through Zend's `emalloc`/`erealloc`/`efree`. JSON allocations participate in `memory_limit` accounting and request-scoped cleanup.
 - `FASTJSON_ERROR_*` constants intentionally match `JSON_ERROR_*` byte-for-byte, so callers can use either set.
 - 62-test compat harness rewritten from `php-src/ext/json/tests/*.phpt` runs alongside the native phpt suite. `tests/upstream-json/.skiplist` and `tests/upstream-json/STATE.md` track which upstream tests fastjson does not aim to pass byte-for-byte.

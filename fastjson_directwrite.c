@@ -117,7 +117,13 @@ static bool dw_reserve_string(fastjson_dw_ctx *ctx, size_t len)
     return dw_reserve(ctx, len * 6 + 2);
 }
 
-static yyjson_write_flag dw_translate_yyjson_flags(zend_long php_flags)
+/* Shared write-flag translation (declared in php_fastjson.h). The
+ * direct-write encoder passes with_pretty=false because it emits
+ * pretty-print indentation itself via smart_str; yyjson-writer callers
+ * such as fastjson_pointer_set pass true so PRETTY_PRINT maps to
+ * YYJSON_WRITE_PRETTY. */
+yyjson_write_flag fastjson_translate_write_flags(zend_long php_flags,
+                                                 bool with_pretty)
 {
     yyjson_write_flag yf = 0;
     if (!(php_flags & FASTJSON_ENCODE_UNESCAPED_SLASHES)) {
@@ -125,6 +131,9 @@ static yyjson_write_flag dw_translate_yyjson_flags(zend_long php_flags)
     }
     if (!(php_flags & FASTJSON_ENCODE_UNESCAPED_UNICODE)) {
         yf |= YYJSON_WRITE_ESCAPE_UNICODE;
+    }
+    if (with_pretty && (php_flags & FASTJSON_ENCODE_PRETTY_PRINT)) {
+        yf |= YYJSON_WRITE_PRETTY;
     }
     /* IGNORE / SUBSTITUTE: handled by fastjson-side sanitization in
      * dw_emit_string_ex before yyjson runs. We deliberately do NOT
@@ -473,13 +482,19 @@ static bool dw_emit_object_key(fastjson_dw_ctx *ctx, zend_string *key,
         }
     } else {
         /* Integer key: digits + optional minus. No escape needed;
-         * emit directly with surrounding quotes. */
-        char buf[24];
-        int len = snprintf(buf, sizeof(buf), ZEND_LONG_FMT,
-                           (zend_long)index);
-        smart_str_alloc(&ctx->buf, (size_t)len + 2, 0);
+         * reuse yyjson's digit writer (as dw_emit_long does) instead of
+         * snprintf, avoiding its locale/format-string overhead, and wrap
+         * the written digits in quotes. */
+        if (!dw_reserve(ctx, DW_NUM_INT_WORST + 2)) {
+            return false;
+        }
         smart_str_appendc(&ctx->buf, '"');
-        smart_str_appendl(&ctx->buf, buf, (size_t)len);
+        yyjson_val v;
+        v.tag = (uint64_t)(YYJSON_TYPE_NUM | YYJSON_SUBTYPE_SINT);
+        v.uni.i64 = (int64_t)(zend_long)index;
+        char *cur = ZSTR_VAL(ctx->buf.s) + ZSTR_LEN(ctx->buf.s);
+        char *end = yyjson_write_number(&v, cur);
+        ZSTR_LEN(ctx->buf.s) = (size_t)(end - ZSTR_VAL(ctx->buf.s));
         smart_str_appendc(&ctx->buf, '"');
     }
     smart_str_appendc(&ctx->buf, ':');
@@ -577,6 +592,13 @@ static bool dw_emit_jsonserializable(fastjson_dw_ctx *ctx, zval *zv,
         return dw_partial_or_fail(ctx, FASTJSON_ERROR_RECURSION,
             "Recursion detected", false);
     }
+    /* Hold a reference across the call: jsonSerialize() may drop every
+     * other reference to obj (e.g. unset()-ing the array element being
+     * encoded, bug77843), which would free it out from under the engine
+     * -- the VM's ZEND_FETCH_THIS then reads freed memory. Our own ref
+     * keeps obj alive until we release it below, after which the object
+     * is destroyed if we held the last reference. */
+    GC_ADDREF(obj);
     GC_PROTECT_RECURSION(obj);
 
     zval retval;
@@ -586,6 +608,7 @@ static bool dw_emit_jsonserializable(fastjson_dw_ctx *ctx, zval *zv,
     if (EG(exception)) {
         zval_ptr_dtor(&retval);
         GC_UNPROTECT_RECURSION(obj);
+        OBJ_RELEASE(obj);
         return false;
     }
 
@@ -600,6 +623,7 @@ static bool dw_emit_jsonserializable(fastjson_dw_ctx *ctx, zval *zv,
 
     bool ok = dw_encode_zval(ctx, stashed, remaining_depth - 1);
     GC_UNPROTECT_RECURSION(obj);
+    OBJ_RELEASE(obj);
     return ok;
 }
 
@@ -837,7 +861,7 @@ zend_string *fastjson_directwrite_encode(zval *value, zend_long flags,
     fastjson_dw_ctx ctx;
     memset(&ctx, 0, sizeof(ctx));
     ctx.flags = flags;
-    ctx.yflags = dw_translate_yyjson_flags(flags);
+    ctx.yflags = fastjson_translate_write_flags(flags, false);
     ctx.partial_output = (flags & FASTJSON_ENCODE_PARTIAL_OUTPUT_ON_ERROR) != 0;
     ctx.pretty_print = (flags & FASTJSON_ENCODE_PRETTY_PRINT) != 0;
     ctx.retval_stash_inited = false;

@@ -143,6 +143,13 @@ PHP_FUNCTION(fastjson_file_encode)
                                                     context);
     if (stream == NULL) {
         zend_string_release(zs);
+        /* A userspace stream wrapper's open() may have thrown; propagate
+         * that rather than masking it (and never RETURN_FALSE with an
+         * exception still pending). */
+        if (EG(exception)) {
+            fastjson_restore_error_state(&saved_err);
+            RETURN_THROWS();
+        }
         fastjson_set_encode_error(FASTJSON_ERROR_SYNTAX,
                                   "Failed to open file for writing");
         RETURN_FALSE;
@@ -152,6 +159,11 @@ PHP_FUNCTION(fastjson_file_encode)
     bool wrote_all = (written == ZSTR_LEN(zs));
     zend_string_release(zs);
     if (!wrote_all) {
+        /* A userspace wrapper's write() may have thrown mid-write. */
+        if (EG(exception)) {
+            fastjson_restore_error_state(&saved_err);
+            RETURN_THROWS();
+        }
         fastjson_set_encode_error(FASTJSON_ERROR_SYNTAX,
                                   "Failed to write file");
         RETURN_FALSE;
