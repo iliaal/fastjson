@@ -27,6 +27,10 @@ jobs:
         uses: php/php-windows-builder/extension-matrix@v1
         with:
           php-version-list: '8.1, 8.2, 8.3, 8.4, 8.5'
+          # 64-bit only. fastjson's integer-valued-double encoding diverges
+          # from ext/json on 32-bit (ILP32) for values above 2^31; 32-bit
+          # Windows is not a supported target.
+          arch-list: 'x64'
 
   build:
     name: Build ${{ matrix.php-version }} ${{ matrix.ts }} ${{ matrix.arch }}

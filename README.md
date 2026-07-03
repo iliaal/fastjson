@@ -43,7 +43,7 @@ echo 'extension=fastjson.so' | sudo tee /etc/php/conf.d/fastjson.ini
 
 ### Windows binaries
 
-Pre-built DLLs for PHP 8.1 through 8.5 (TS/NTS, x86/x64) are attached to each [GitHub release](https://github.com/iliaal/fastjson/releases).
+Pre-built 64-bit DLLs for PHP 8.1 through 8.5 (TS/NTS) are attached to each [GitHub release](https://github.com/iliaal/fastjson/releases).
 
 ## 🛠️ Usage
 
@@ -82,7 +82,7 @@ Throughput vs `ext/json` on the full 14.8 MB / 15-file canonical corpus from sim
 | Encode               | 1,092 MB/s | 180 MB/s | **6.06x** |
 | Validate             | 1,352 MB/s | 265 MB/s | **5.10x** |
 
-A visual side-by-side including `ext/json` + php-src#17734 (SIMD encode) and `simdjson_php` on the same PHP 8.6.0-dev build is published at [**iliaal.github.io/fastjson**](https://iliaal.github.io/fastjson/baseline.html). Methodology, per-file numbers, small-corpus + per-call latency breakdown, and how to reproduce: [`bench/README.md`](bench/README.md) and [`bench/baseline.md`](bench/baseline.md).
+A visual side-by-side against `ext/json` on PHP 8.4 is published at [**iliaal.github.io/fastjson**](https://iliaal.github.io/fastjson/baseline.html). Methodology, per-file numbers, small-corpus + per-call latency breakdown, and how to reproduce: [`bench/README.md`](bench/README.md) and [`bench/baseline.md`](bench/baseline.md).
 
 ### Memory tradeoff
 
