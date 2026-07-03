@@ -13,7 +13,7 @@
 #ifndef PHP_FASTJSON_H
 #define PHP_FASTJSON_H
 
-#define PHP_FASTJSON_VERSION "0.4.0"
+#define PHP_FASTJSON_VERSION "0.5.0"
 
 extern zend_module_entry fastjson_module_entry;
 #define phpext_fastjson_ptr &fastjson_module_entry

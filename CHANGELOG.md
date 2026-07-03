@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-03
+
 ### Added
 
 - `fastjson_last_error_pos()` and `fastjson_last_error_info()`: surface the byte offset and 1-based line/column of the most recent parse error (yyjson computed it, fastjson previously discarded it).
@@ -214,7 +216,8 @@ backed by yyjson 0.12.0.
 - U+2028 / U+2029 line separators emitted as ordinary code points
   (yyjson default). ext/json always escapes for JSONP safety.
 
-[Unreleased]: https://github.com/iliaal/fastjson/compare/0.4.0...HEAD
+[Unreleased]: https://github.com/iliaal/fastjson/compare/0.5.0...HEAD
+[0.5.0]: https://github.com/iliaal/fastjson/releases/tag/0.5.0
 [0.4.0]: https://github.com/iliaal/fastjson/releases/tag/0.4.0
 [0.3.0]: https://github.com/iliaal/fastjson/releases/tag/0.3.0
 [0.2.1]: https://github.com/iliaal/fastjson/releases/tag/0.2.1
