@@ -10,7 +10,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - `fastjson_last_error_pos()` and `fastjson_last_error_info()`: surface the byte offset and 1-based line/column of the most recent parse error (yyjson computed it, fastjson previously discarded it).
 - `fastjson_pointer_exists()`: report whether an RFC 6901 JSON Pointer resolves, distinguishing present-but-null from absent, without materializing into PHP.
-- `fastjson_pointer_set()`: set the value at an RFC 6901 JSON Pointer and return the re-serialized document, editing a yyjson mutable doc to avoid a full decode/re-encode round-trip.
+- `fastjson_pointer_set()`: set the value at an RFC 6901 JSON Pointer and return the re-serialized document.
+
+### Fixed
+
+- JsonSerializable use-after-free when `jsonSerialize()` drops the object's last live reference (bug77843).
+- `fastjson_encode()` rejects a `$depth` above `INT_MAX` instead of encoding containers `ext/json` refuses.
+- `JSON_PRETTY_PRINT` renders an object with only private/protected properties as `{}` rather than `{\n}`, matching `ext/json`.
+- `fastjson_pointer_get()` and `fastjson_pointer_exists()` clear a stale error on an absent pointer under `JSON_THROW_ON_ERROR`, per the documented absent signal.
+
+### Performance
+
+- Pretty-print encode fills deep indentation with a single `memcpy` instead of per-level appends.
+- Faster decode/encode on common inputs: ASCII UTF-8 bulk-skip validation, inline bigint formatting, and `JSON_NUMERIC_CHECK` fast-reject of non-numeric strings.
 
 ### Build
 
