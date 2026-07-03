@@ -84,10 +84,26 @@ typedef struct fastjson_dw_ctx {
                                     * top level, +1 per open container */
     HashTable       retval_stash;
     bool            retval_stash_inited;
+    zval            stash_stack[12];
+    uint32_t        stash_stack_top;
 } fastjson_dw_ctx;
 
 static bool dw_encode_zval(fastjson_dw_ctx *ctx, zval *zv,
                            zend_long remaining_depth);
+
+static zval *dw_stash_zval(fastjson_dw_ctx *ctx, zval *src)
+{
+    if (ctx->stash_stack_top < 12) {
+        zval *slot = &ctx->stash_stack[ctx->stash_stack_top++];
+        ZVAL_COPY(slot, src);
+        return slot;
+    }
+    if (!ctx->retval_stash_inited) {
+        zend_hash_init(&ctx->retval_stash, 0, NULL, ZVAL_PTR_DTOR, 0);
+        ctx->retval_stash_inited = true;
+    }
+    return zend_hash_next_index_insert(&ctx->retval_stash, src);
+}
 
 static bool dw_fail_too_large(void)
 {
@@ -633,11 +649,13 @@ static bool dw_emit_jsonserializable(fastjson_dw_ctx *ctx, zval *zv,
     /* Stash the retval so its zend_strings outlive any uses below.
      * Same lifetime mechanism as the legacy encoder. Lazy-init keeps
      * the no-JsonSerializable-anywhere path cheap. */
-    if (!ctx->retval_stash_inited) {
-        zend_hash_init(&ctx->retval_stash, 0, NULL, ZVAL_PTR_DTOR, 0);
-        ctx->retval_stash_inited = true;
+    zval *stashed = dw_stash_zval(ctx, &retval);
+    if (stashed == NULL) {
+        zval_ptr_dtor(&retval);
+        GC_UNPROTECT_RECURSION(obj);
+        OBJ_RELEASE(obj);
+        return false;
     }
-    zval *stashed = zend_hash_next_index_insert(&ctx->retval_stash, &retval);
 
     bool ok = dw_encode_zval(ctx, stashed, remaining_depth - 1);
     GC_UNPROTECT_RECURSION(obj);
@@ -770,24 +788,17 @@ static bool dw_emit_object(fastjson_dw_ctx *ctx, zval *zv,
                 zend_release_properties(props);
                 return false;
             }
-            if (!ctx->retval_stash_inited) {
-                zend_hash_init(&ctx->retval_stash, 0, NULL, ZVAL_PTR_DTOR, 0);
-                ctx->retval_stash_inited = true;
-            }
-            /* Copy into the stash regardless of which return shape the
-             * engine used. When `hooked != &hook_rv`, the engine took the
-             * trivial-read fast path and returned a borrowed pointer to
-             * OBJ_PROP(...) without an addref — inserting that pointer
-             * straight into a ZVAL_PTR_DTOR hash would later decrement
-             * the object's own property-table refcount and trigger a UAF
-             * on the next read. ZVAL_COPY uniformly addrefs; the stash's
-             * dtor balances it. When `hooked == &hook_rv` the engine
-             * already addref'd into hook_rv, so we release that extra
-             * reference here (the copy carries the one the stash owns). */
             zval stash_copy;
             ZVAL_COPY(&stash_copy, hooked);
             zval_ptr_dtor(&hook_rv);
-            item = zend_hash_next_index_insert(&ctx->retval_stash, &stash_copy);
+            item = dw_stash_zval(ctx, &stash_copy);
+            if (item == NULL) {
+                zval_ptr_dtor(&stash_copy);
+                if (need_recursion_guard) GC_UNPROTECT_RECURSION(props);
+                if (body_open) ctx->indent_level--;
+                zend_release_properties(props);
+                return false;
+            }
         }
         if (Z_ISUNDEF_P(item)) continue;
         ZVAL_DEREF(item);
@@ -837,10 +848,17 @@ static bool dw_encode_zval(fastjson_dw_ctx *ctx, zval *zv,
          * literal, emit it as a JSON number instead. Fall back to
          * string emission for overflow-to-INF (bug64695). */
         if (ctx->flags & FASTJSON_ENCODE_NUMERIC_CHECK) {
+            const char *s = Z_STRVAL_P(zv);
+            size_t slen = Z_STRLEN_P(zv);
+            if (slen > 0) {
+                unsigned char c0 = (unsigned char)s[0];
+                if (c0 != '-' && c0 != '+' && c0 != '.' && !isdigit(c0)) {
+                    goto emit_string;
+                }
+            }
             zend_long lval;
             double dval;
-            uint8_t t = is_numeric_string(Z_STRVAL_P(zv), Z_STRLEN_P(zv),
-                                          &lval, &dval, 0);
+            uint8_t t = is_numeric_string(s, slen, &lval, &dval, 0);
             if (t == IS_LONG) {
                 dw_emit_long(ctx, lval);
                 return true;
@@ -850,6 +868,7 @@ static bool dw_encode_zval(fastjson_dw_ctx *ctx, zval *zv,
             }
             /* fall through to string emission */
         }
+emit_string:
         return dw_emit_string(ctx, Z_STRVAL_P(zv), Z_STRLEN_P(zv));
     }
     case IS_ARRAY: {
@@ -890,6 +909,9 @@ zend_string *fastjson_directwrite_encode(zval *value, zend_long flags,
 
     bool ok = dw_encode_zval(&ctx, value, depth);
 
+    while (ctx.stash_stack_top > 0) {
+        zval_ptr_dtor(&ctx.stash_stack[--ctx.stash_stack_top]);
+    }
     if (ctx.retval_stash_inited) {
         zend_hash_destroy(&ctx.retval_stash);
     }

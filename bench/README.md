@@ -129,15 +129,12 @@ regressions; commit the new `baseline.md` alongside the change.
   builds a doc that lives until the walk completes alongside the
   zval tree.
 
-- **Encode** is dominated by the writer (yyjson has a custom dtoa and
-  a SIMD-friendly escape-table approach). The PHP side is just walking
-  HashTables. fastjson's much larger encode speedup reflects this:
-  yyjson's writer is significantly faster than ext/json's
-  smart_str-based one, and the cost dispersion narrows as input gets
-  weirder (canada.json, with thousands of floats, hits ext/json
-  extremely hard at 7.5 MB/s vs fastjson's 208 MB/s -- 28x). Memory:
-  ~5x ext/json because we build a `yyjson_mut_doc` from the zval
-  tree before writing it out.
+- **Encode** uses the direct-write encoder (`fastjson_directwrite.c`):
+  one-stage zval → `smart_str` via yyjson's `write_number` /
+  `write_string_to_buf` primitives (no intermediate `yyjson_mut_doc`).
+  Memory is essentially parity with ext/json (~1.06× aggregate in
+  `baseline.md`). Throughput wins come from yyjson's tight scalar
+  writer plus avoiding per-value mut-tree allocation.
 
 - **Validate** is the cleanest *speed* comparison: just the parser,
   no zval construction. yyjson hits ~1 GB/s on most inputs vs

@@ -222,4 +222,28 @@ bool fastjson_utf8_well_formed(const char *s, size_t len);
     (((flags) & (FASTJSON_INVALID_UTF8_IGNORE \
                  | FASTJSON_INVALID_UTF8_SUBSTITUTE)) != 0)
 
+typedef enum {
+    FJ_SPLICE_OK = 0,
+    FJ_SPLICE_SETTABLE_FAIL,
+    FJ_SPLICE_WRITE_FAIL,
+} fj_splice_status;
+
+typedef struct {
+    yyjson_doc *doc;
+    char *owned_str;
+    yyjson_val stack_val;
+    const yyjson_val *repl;
+} fastjson_pointer_repl;
+
+bool fastjson_pointer_build_replacement(zval *value, zend_long value_flags,
+                                        zend_long depth,
+                                        fastjson_pointer_repl *out);
+
+zend_string *fastjson_imut_pointer_set_write(yyjson_val *root,
+                                             const char *pointer,
+                                             size_t pointer_len,
+                                             const yyjson_val *replacement,
+                                             zend_long flags,
+                                             fj_splice_status *status);
+
 #endif /* PHP_FASTJSON_H */

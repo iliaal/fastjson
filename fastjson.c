@@ -264,6 +264,19 @@ bool fastjson_utf8_well_formed(const char *s, size_t len)
      * dropped or substituted returns false here; valid sequences return
      * true. Two functions, one ruleset -- keep them in lockstep. */
     size_t i = 0;
+    /* Bulk-skip ASCII runs: defensive IGNORE/SUBSTITUTE callers usually
+     * pass clean UTF-8; this avoids a per-byte loop on long strings. */
+    while (i + 8 <= len) {
+        uint64_t chunk;
+        memcpy(&chunk, s + i, sizeof(chunk));
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+        chunk = __builtin_bswap64(chunk);
+#endif
+        if ((chunk & 0x8080808080808080ULL) != 0) {
+            break;
+        }
+        i += 8;
+    }
     while (i < len) {
         unsigned char c = (unsigned char)s[i];
         if (c < 0x80) {

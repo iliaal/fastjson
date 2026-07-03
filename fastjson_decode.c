@@ -55,6 +55,30 @@
     } \
 } while (0)
 
+static size_t fj_write_uint64_dec(char *buf, uint64_t u)
+{
+    char tmp[24];
+    size_t n = 0;
+    do {
+        tmp[n++] = (char)('0' + (u % 10));
+        u /= 10;
+    } while (u != 0);
+    for (size_t i = 0; i < n; i++) {
+        buf[i] = tmp[n - 1 - i];
+    }
+    return n;
+}
+
+static size_t fj_write_sint64_dec(char *buf, int64_t s)
+{
+    if (s < 0) {
+        *buf++ = '-';
+        uint64_t u = (uint64_t)(-(s + 1)) + 1;
+        return 1 + fj_write_uint64_dec(buf, u);
+    }
+    return fj_write_uint64_dec(buf, (uint64_t)s);
+}
+
 /* yyjson NUM -> zval. Real -> double; uint <= INT64_MAX -> long; a
  * larger uint becomes a decimal string under JSON_BIGINT_AS_STRING and
  * otherwise widens to double (matching ext/json, which never wraps a
@@ -72,8 +96,8 @@ static zend_always_inline void fj_num_to_zval(yyjson_val *val,
             ZVAL_LONG(out, (zend_long)u);
         } else if (flags & FASTJSON_DECODE_BIGINT_AS_STRING) {
             char buf[24];
-            int len = snprintf(buf, sizeof(buf), "%" PRIu64, u);
-            ZVAL_STRINGL(out, buf, (size_t)len);
+            size_t len = fj_write_uint64_dec(buf, u);
+            ZVAL_STRINGL(out, buf, len);
         } else {
             ZVAL_DOUBLE(out, (double)u);
         }
@@ -87,8 +111,8 @@ static zend_always_inline void fj_num_to_zval(yyjson_val *val,
              * stringify (or widen to double). Constant-false and elided
              * on 64-bit, where ZEND_LONG_MIN == INT64_MIN. */
             char buf[24];
-            int len = snprintf(buf, sizeof(buf), "%" PRId64, s);
-            ZVAL_STRINGL(out, buf, (size_t)len);
+            size_t len = fj_write_sint64_dec(buf, s);
+            ZVAL_STRINGL(out, buf, len);
         } else {
             ZVAL_DOUBLE(out, (double)s);
         }
@@ -630,72 +654,6 @@ static bool fastjson_val_depth_reaches(yyjson_val *root, size_t limit)
     return reached;
 }
 
-static bool fastjson_pointer_value_is_direct_scalar(zval *value)
-{
-    ZVAL_DEREF(value);
-    switch (Z_TYPE_P(value)) {
-    case IS_NULL:
-    case IS_FALSE:
-    case IS_TRUE:
-    case IS_LONG:
-    case IS_STRING:
-        return true;
-    default:
-        return false;
-    }
-}
-
-static bool fastjson_pointer_build_direct_scalar(yyjson_mut_doc *doc,
-                                                 zval *value,
-                                                 zend_long flags,
-                                                 yyjson_mut_val **out,
-                                                 bool *encode_error)
-{
-    ZVAL_DEREF(value);
-    *encode_error = false;
-
-    switch (Z_TYPE_P(value)) {
-    case IS_NULL:
-        *out = yyjson_mut_null(doc);
-        return *out != NULL;
-    case IS_FALSE:
-        *out = yyjson_mut_false(doc);
-        return *out != NULL;
-    case IS_TRUE:
-        *out = yyjson_mut_true(doc);
-        return *out != NULL;
-    case IS_LONG:
-        *out = yyjson_mut_sint(doc, (int64_t)Z_LVAL_P(value));
-        return *out != NULL;
-    case IS_STRING: {
-        zend_string *str = Z_STR_P(value);
-        const char *bytes = ZSTR_VAL(str);
-        size_t len = ZSTR_LEN(str);
-
-        if (fastjson_utf8_well_formed(bytes, len)) {
-            *out = yyjson_mut_strncpy(doc, bytes, len);
-            return *out != NULL;
-        }
-
-        if (FASTJSON_HAS_UTF8_HANDLING_FLAG(flags)) {
-            size_t sane_len;
-            char *sane = fastjson_sanitize_utf8(bytes, len, flags,
-                                                FJ_SAN_ENCODE, &sane_len);
-            *out = yyjson_mut_strncpy(doc, sane, sane_len);
-            efree(sane);
-            return *out != NULL;
-        }
-
-        fastjson_set_encode_error(FASTJSON_ERROR_UTF8,
-            "Malformed UTF-8 characters, possibly incorrectly encoded");
-        *encode_error = true;
-        return false;
-    }
-    default:
-        return false;
-    }
-}
-
 PHP_FUNCTION(fastjson_merge_patch)
 {
     char *target, *patch;
@@ -939,132 +897,54 @@ PHP_FUNCTION(fastjson_pointer_set)
         RETURN_FALSE;
     }
 
-    yyjson_mut_doc *mdoc = NULL;
-    yyjson_mut_val *mv = NULL;
-
     zend_long value_flags =
         flags & (FASTJSON_INVALID_UTF8_IGNORE | FASTJSON_INVALID_UTF8_SUBSTITUTE);
 
-    if (fastjson_pointer_value_is_direct_scalar(value)) {
-        mdoc = pointer_len == 0
-            ? yyjson_mut_doc_new(&fastjson_php_alc)
-            : yyjson_doc_mut_copy(idoc, &fastjson_php_alc);
-        if (mdoc != NULL) {
-            bool encode_error = false;
-            if (!fastjson_pointer_build_direct_scalar(mdoc, value,
-                    value_flags, &mv, &encode_error) && encode_error) {
-                yyjson_doc_free(idoc);
-                yyjson_mut_doc_free(mdoc);
-                if (throw_mode) {
-                    zend_throw_exception(ce,
-                        FASTJSON_G(last_err_msg) ? FASTJSON_G(last_err_msg)
-                                                 : "fastjson_pointer_set encode failed",
-                        FASTJSON_G(last_err_code));
-                    fastjson_restore_error_state(&saved_err);
-                    RETURN_THROWS();
-                }
-                RETURN_FALSE;
-            }
+    fastjson_pointer_repl repl;
+    if (!fastjson_pointer_build_replacement(value, value_flags, depth, &repl)) {
+        yyjson_doc_free(idoc);
+        if (EG(exception)) {
+            RETURN_THROWS();
         }
-    } else {
-        /* Convert non-scalar $value through the single direct-write encoder,
-         * then re-parse it into a node we can splice. Reusing
-         * fastjson_directwrite_encode keeps one serialization path for PHP
-         * arrays/objects and inherits recursion, JsonSerializable, and
-         * unsupported-type handling. */
-        zend_string *vstr = fastjson_directwrite_encode(value, value_flags,
-                                                        depth);
-        if (vstr == NULL) {
-            yyjson_doc_free(idoc);
-            if (EG(exception)) {
-                /* jsonSerialize()/property-hook threw inside the encoder. */
-                RETURN_THROWS();
-            }
-            if (throw_mode) {
-                zend_throw_exception(ce,
-                    FASTJSON_G(last_err_msg) ? FASTJSON_G(last_err_msg)
-                                             : "fastjson_pointer_set encode failed",
-                    FASTJSON_G(last_err_code));
-                fastjson_restore_error_state(&saved_err);
-                RETURN_THROWS();
-            }
-            /* Encoder already recorded the encode-side error. */
-            RETURN_FALSE;
+        if (throw_mode) {
+            zend_throw_exception(ce,
+                FASTJSON_G(last_err_msg) ? FASTJSON_G(last_err_msg)
+                                         : "fastjson_pointer_set encode failed",
+                FASTJSON_G(last_err_code));
+            fastjson_restore_error_state(&saved_err);
+            RETURN_THROWS();
         }
+        RETURN_FALSE;
+    }
 
-        yyjson_read_err verr;
-        yyjson_doc *vdoc = yyjson_read_opts(ZSTR_VAL(vstr), ZSTR_LEN(vstr), 0,
-                                            &fastjson_php_alc, &verr);
-        zend_string_release(vstr);
+    fj_splice_status splice_status;
+    zend_string *out = fastjson_imut_pointer_set_write(
+        yyjson_doc_get_root(idoc), pointer, pointer_len, repl.repl, flags,
+        &splice_status);
 
-        if (vdoc != NULL) {
-            mdoc = pointer_len == 0
-                ? yyjson_mut_doc_new(&fastjson_php_alc)
-                : yyjson_doc_mut_copy(idoc, &fastjson_php_alc);
-            if (mdoc != NULL) {
-                mv = yyjson_val_mut_copy(mdoc, yyjson_doc_get_root(vdoc));
-            }
-            yyjson_doc_free(vdoc);
-        }
+    if (repl.owned_str != NULL) {
+        efree(repl.owned_str);
+        repl.owned_str = NULL;
+    }
+    if (repl.doc != NULL) {
+        yyjson_doc_free(repl.doc);
+        repl.doc = NULL;
     }
     yyjson_doc_free(idoc);
 
-    if (mv == NULL) {
-        /* Allocator failure inside yyjson, or the encoder's output failed to
-         * re-parse (should not happen -- it emits well-formed JSON). */
-        if (mdoc != NULL) {
-            yyjson_mut_doc_free(mdoc);
-        }
-        if (throw_mode) {
-            zend_throw_exception(ce, "fastjson_pointer_set failed",
-                                 FASTJSON_ERROR_SYNTAX);
-            fastjson_restore_error_state(&saved_err);
-            RETURN_THROWS();
-        }
-        fastjson_set_encode_error(FASTJSON_ERROR_SYNTAX,
-                                  "fastjson_pointer_set failed");
-        RETURN_FALSE;
-    }
-
-    /* The empty pointer "" selects the whole document (RFC 6901); setn
-     * cannot replace the root, so swap it directly. Otherwise splice mv in,
-     * creating any missing parent objects (yyjson_mut_ptr_setn fails on an
-     * array index gap or a scalar mid-path). */
-    bool set_ok;
-    if (pointer_len == 0) {
-        yyjson_mut_doc_set_root(mdoc, mv);
-        set_ok = true;
-    } else {
-        set_ok = yyjson_mut_ptr_setn(yyjson_mut_doc_get_root(mdoc),
-                                     pointer, pointer_len, mv, mdoc);
-    }
-    if (!set_ok) {
-        yyjson_mut_doc_free(mdoc);
-        if (throw_mode) {
-            zend_throw_exception(ce,
-                "JSON pointer does not resolve to a settable location",
-                FASTJSON_ERROR_SYNTAX);
-            fastjson_restore_error_state(&saved_err);
-            RETURN_THROWS();
-        }
-        fastjson_set_encode_error(FASTJSON_ERROR_SYNTAX,
-            "JSON pointer does not resolve to a settable location");
-        RETURN_FALSE;
-    }
-
-    /* Output formatting from $flags via the shared encoder translation
-     * (escape slashes/unicode unless UNESCAPED_*; PRETTY_PRINT honored
-     * here because this path uses yyjson's writer, not the direct-write
-     * smart_str indent). */
-    yyjson_write_flag wflags = fastjson_translate_write_flags(flags, true);
-
-    size_t out_len = 0;
-    yyjson_write_err werr;
-    char *out = yyjson_mut_write_opts(mdoc, wflags, &fastjson_php_alc,
-                                      &out_len, &werr);
-    yyjson_mut_doc_free(mdoc);
-
     if (out == NULL) {
+        if (splice_status == FJ_SPLICE_SETTABLE_FAIL) {
+            if (throw_mode) {
+                zend_throw_exception(ce,
+                    "JSON pointer does not resolve to a settable location",
+                    FASTJSON_ERROR_SYNTAX);
+                fastjson_restore_error_state(&saved_err);
+                RETURN_THROWS();
+            }
+            fastjson_set_encode_error(FASTJSON_ERROR_SYNTAX,
+                "JSON pointer does not resolve to a settable location");
+            RETURN_FALSE;
+        }
         if (throw_mode) {
             zend_throw_exception(ce, "fastjson_pointer_set write failed",
                                  FASTJSON_ERROR_SYNTAX);
@@ -1076,8 +956,7 @@ PHP_FUNCTION(fastjson_pointer_set)
         RETURN_FALSE;
     }
 
-    RETVAL_STRINGL(out, out_len);
-    fastjson_php_alc.free(fastjson_php_alc.ctx, out);
+    RETVAL_STR(out);
     if (!throw_mode) {
         fastjson_clear_error();
     }

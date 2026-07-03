@@ -21,7 +21,7 @@ if test "$PHP_FASTJSON" != "no"; then
   YYJSON_SRC_DIR=vendor/yyjson
 
   YYJSON_SOURCES="$YYJSON_SRC_DIR/yyjson.c"
-  WRAPPER_SOURCES="fastjson.c fastjson_alloc.c fastjson_decode.c fastjson_encode.c fastjson_directwrite.c"
+  WRAPPER_SOURCES="fastjson.c fastjson_alloc.c fastjson_decode.c fastjson_encode.c fastjson_directwrite.c fastjson_pointer_splice.c"
 
   dnl -Wall -Wextra are on by default so wrapper regressions get caught
   dnl in every local build; --enable-fastjson-dev upgrades to -Werror.
