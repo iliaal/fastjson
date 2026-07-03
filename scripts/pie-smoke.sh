@@ -17,7 +17,12 @@ apt-get update -qq >/dev/null
 # expects: git (PIE clones source via git clone, not a tarball), bison and
 # libtoolize (PIE's build-tools check insists on both even though phpize
 # itself doesn't), and ca-certificates (for the HTTPS clone from github).
-apt-get install -y -qq git ca-certificates bison libtool-bin >/dev/null
+# unzip: composer's archive extractor prefers /usr/bin/unzip and silently
+# falls back to PHP ZipArchive when it's missing, laying the prebuilt .so
+# out at a path PIE's prePackagedBinary check doesn't look -> spurious
+# ExtensionBinaryNotFound. php:8.x-cli ships no unzip. See
+# ~/ai/wiki/debugging/php-ext-release-traps.md.
+apt-get install -y -qq git ca-certificates bison libtool-bin unzip >/dev/null
 git --version
 bison --version | head -1
 libtoolize --version | head -1 || echo "libtoolize not found"
