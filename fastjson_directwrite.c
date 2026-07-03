@@ -91,11 +91,16 @@ typedef struct fastjson_dw_ctx {
 static bool dw_encode_zval(fastjson_dw_ctx *ctx, zval *zv,
                            zend_long remaining_depth);
 
+/* Takes ownership of *src (move, not copy): callers hand over an owned
+ * temporary and do not release it afterward, matching the hash path's
+ * zend_hash_next_index_insert. The stash's dtor (or the stack cleanup
+ * loop in fastjson_directwrite_encode) balances the reference. Using
+ * ZVAL_COPY here would addref and leak the caller's temporary. */
 static zval *dw_stash_zval(fastjson_dw_ctx *ctx, zval *src)
 {
     if (ctx->stash_stack_top < 12) {
         zval *slot = &ctx->stash_stack[ctx->stash_stack_top++];
-        ZVAL_COPY(slot, src);
+        ZVAL_COPY_VALUE(slot, src);
         return slot;
     }
     if (!ctx->retval_stash_inited) {
