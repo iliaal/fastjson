@@ -13,7 +13,7 @@ if (PHP_FASTJSON != "no") {
         "/I" + configure_module_dirname + "\\" + yyjson_src_dir);
 
     var wrapper_sources = "fastjson.c fastjson_alloc.c fastjson_decode.c " +
-        "fastjson_encode.c fastjson_directwrite.c";
+        "fastjson_encode.c fastjson_directwrite.c fastjson_pointer_splice.c";
 
     EXTENSION("fastjson", wrapper_sources, null);
     ADD_SOURCES(configure_module_dirname + "\\" + yyjson_src_dir,
