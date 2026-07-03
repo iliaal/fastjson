@@ -852,7 +852,13 @@ static bool dw_encode_zval(fastjson_dw_ctx *ctx, zval *zv,
             size_t slen = Z_STRLEN_P(zv);
             if (slen > 0) {
                 unsigned char c0 = (unsigned char)s[0];
-                if (c0 != '-' && c0 != '+' && c0 != '.' && !isdigit(c0)) {
+                /* is_numeric_string() skips leading whitespace, so a
+                 * space/tab/newline-prefixed numeric string ("  42") is
+                 * still numeric -- let those fall through to the real
+                 * parse. Only fast-reject a first byte that can never
+                 * begin a numeric literal. */
+                if (!isspace(c0) && c0 != '-' && c0 != '+'
+                        && c0 != '.' && !isdigit(c0)) {
                     goto emit_string;
                 }
             }

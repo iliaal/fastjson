@@ -97,7 +97,7 @@ static bool fj_splice_write_number(fj_splice_ctx *ctx, const yyjson_val *val)
         return false;
     }
     char *cur = ZSTR_VAL(ctx->buf.s) + ZSTR_LEN(ctx->buf.s);
-    char *end = yyjson_write_number(val, cur);
+    char *end = yyjson_write_number(FJ_IMUT_VAL(val), cur);
     if (UNEXPECTED(end == NULL)) {
         return false;
     }
@@ -107,8 +107,8 @@ static bool fj_splice_write_number(fj_splice_ctx *ctx, const yyjson_val *val)
 
 static bool fj_splice_write_raw(fj_splice_ctx *ctx, const yyjson_val *val)
 {
-    const char *raw = yyjson_get_raw(val);
-    size_t raw_len = yyjson_get_len(val);
+    const char *raw = yyjson_get_raw(FJ_IMUT_VAL(val));
+    size_t raw_len = yyjson_get_len(FJ_IMUT_VAL(val));
     if (!fj_splice_reserve(ctx, raw_len)) {
         return false;
     }
@@ -131,12 +131,12 @@ static bool fj_splice_build_suffix(fj_splice_ctx *ctx, size_t seg_idx);
 
 static bool fj_splice_write_full(fj_splice_ctx *ctx, const yyjson_val *val)
 {
-    switch (yyjson_get_type(val)) {
+    switch (yyjson_get_type(FJ_IMUT_VAL(val))) {
     case YYJSON_TYPE_NULL:
         smart_str_appendl(&ctx->buf, "null", 4);
         return true;
     case YYJSON_TYPE_BOOL:
-        if (yyjson_get_bool(val)) {
+        if (yyjson_get_bool(FJ_IMUT_VAL(val))) {
             smart_str_appendl(&ctx->buf, "true", 4);
         } else {
             smart_str_appendl(&ctx->buf, "false", 5);
@@ -145,8 +145,8 @@ static bool fj_splice_write_full(fj_splice_ctx *ctx, const yyjson_val *val)
     case YYJSON_TYPE_NUM:
         return fj_splice_write_number(ctx, val);
     case YYJSON_TYPE_STR:
-        return fj_splice_write_string(ctx, yyjson_get_str(val),
-                                      yyjson_get_len(val));
+        return fj_splice_write_string(ctx, yyjson_get_str(FJ_IMUT_VAL(val)),
+                                      yyjson_get_len(FJ_IMUT_VAL(val)));
     case YYJSON_TYPE_RAW:
         return fj_splice_write_raw(ctx, val);
     case YYJSON_TYPE_ARR:
@@ -158,10 +158,21 @@ static bool fj_splice_write_full(fj_splice_ctx *ctx, const yyjson_val *val)
     }
 }
 
+/* RFC 6901 array index: same rules yyjson's ptr_token_to_idx enforces
+ * for pointer_get -- a lone "0" or a non-zero run of at most 19 digits
+ * (no leading zeros, no overflow). Kept in lockstep so pointer_set and
+ * pointer_get/_exists agree on what is a valid array index. */
 static bool fj_seg_is_index(const fj_ptr_seg *seg, size_t *out_idx)
 {
-    if (seg->len == 0) {
+    if (seg->len == 0 || seg->len > 19) {
         return false;
+    }
+    if (seg->str[0] == '0') {
+        if (seg->len > 1) {
+            return false;
+        }
+        *out_idx = 0;
+        return true;
     }
     size_t idx = 0;
     for (size_t i = 0; i < seg->len; i++) {
@@ -280,7 +291,7 @@ static bool fj_splice_write_array(fj_splice_ctx *ctx, const yyjson_val *arr,
         return false;
     }
 
-    size_t n = yyjson_arr_size(arr);
+    size_t n = yyjson_arr_size(FJ_IMUT_VAL(arr));
     if (want_idx >= n) {
         ctx->settable = false;
         return false;
@@ -297,7 +308,7 @@ static bool fj_splice_write_array(fj_splice_ctx *ctx, const yyjson_val *arr,
     size_t cur_idx = 0;
     yyjson_val *item;
     yyjson_arr_iter iter;
-    yyjson_arr_iter_init(arr, &iter);
+    yyjson_arr_iter_init(FJ_IMUT_VAL(arr), &iter);
     while ((item = yyjson_arr_iter_next(&iter))) {
         if (!first) {
             smart_str_appendc(&ctx->buf, ',');
@@ -337,7 +348,7 @@ static bool fj_splice_write_object(fj_splice_ctx *ctx, const yyjson_val *obj,
 
     const fj_ptr_seg *target = &ctx->segs[seg_idx];
     bool pretty = ctx->pretty;
-    size_t n = yyjson_obj_size(obj);
+    size_t n = yyjson_obj_size(FJ_IMUT_VAL(obj));
     bool empty = n == 0;
     bool body_open = false;
     bool matched = false;
@@ -347,7 +358,7 @@ static bool fj_splice_write_object(fj_splice_ctx *ctx, const yyjson_val *obj,
     bool first = true;
     yyjson_val *key;
     yyjson_obj_iter iter;
-    yyjson_obj_iter_init(obj, &iter);
+    yyjson_obj_iter_init(FJ_IMUT_VAL(obj), &iter);
     while ((key = yyjson_obj_iter_next(&iter))) {
         yyjson_val *child = yyjson_obj_iter_get_val(key);
         bool is_target = fj_seg_key_eq(key, target);
