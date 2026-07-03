@@ -1,9 +1,9 @@
 # fastjson benchmark
 
 - PHP 8.4.22-dev
-- fastjson 0.1.0 (yyjson 0.12.0)
+- fastjson 0.4.0 (yyjson 0.12.0)
 - ext/json 8.4.22-dev
-- 200 iterations per case (slowest 10% dropped)
+- 300 iterations per case (slowest 10% dropped)
 - CPU: 13th Gen Intel(R) Core(TM) i9-13950HX
 
 ## Throughput, large corpus
@@ -12,81 +12,81 @@
 
 | File                   |     Size |     fastjson |     ext/json | speedup |
 |------------------------|----------|--------------|--------------|---------|
-| apache_builds.json     | 124.3 KB |   1,042.2 MB/s |     396.9 MB/s |   2.63x |
-| canada.json            | 2.15 MB |     467.6 MB/s |     102.4 MB/s |   4.57x |
-| citm_catalog.json      | 1.65 MB |   1,021.9 MB/s |     490.2 MB/s |   2.08x |
-| github_events.json     | 63.6 KB |   1,379.1 MB/s |     452.7 MB/s |   3.05x |
-| gsoc-2018.json         | 3.17 MB |   1,150.2 MB/s |     340.1 MB/s |   3.38x |
-| instruments.json       | 215.2 KB |     850.0 MB/s |     342.6 MB/s |   2.48x |
-| marine_ik.json         | 2.85 MB |     323.3 MB/s |     200.1 MB/s |   1.62x |
-| mesh.json              | 706.6 KB |     521.3 MB/s |     210.4 MB/s |   2.48x |
-| mesh.pretty.json       | 1.50 MB |     743.2 MB/s |     270.7 MB/s |   2.75x |
-| numbers.json           | 146.6 KB |   1,039.6 MB/s |     245.5 MB/s |   4.23x |
-| random.json            | 498.5 KB |     520.4 MB/s |     270.7 MB/s |   1.92x |
-| stringifiedphp.json    | 139.9 KB |   2,697.4 MB/s |     364.4 MB/s |   7.40x |
-| twitter.json           | 616.7 KB |   1,082.4 MB/s |     425.5 MB/s |   2.54x |
-| twitterescaped.json    | 549.2 KB |     880.5 MB/s |     325.0 MB/s |   2.71x |
-| update-center.json     | 520.7 KB |     644.7 MB/s |     291.3 MB/s |   2.21x |
+| apache_builds.json     | 124.3 KB |     980.1 MB/s |     367.1 MB/s |   2.67x |
+| canada.json            | 2.15 MB |     386.0 MB/s |      94.9 MB/s |   4.07x |
+| citm_catalog.json      | 1.65 MB |   1,065.0 MB/s |     445.5 MB/s |   2.39x |
+| github_events.json     | 63.6 KB |   1,259.6 MB/s |     413.4 MB/s |   3.05x |
+| gsoc-2018.json         | 3.17 MB |   1,043.7 MB/s |     335.4 MB/s |   3.11x |
+| instruments.json       | 215.2 KB |     917.6 MB/s |     345.3 MB/s |   2.66x |
+| marine_ik.json         | 2.85 MB |     297.3 MB/s |     179.9 MB/s |   1.65x |
+| mesh.json              | 706.6 KB |     482.7 MB/s |     187.8 MB/s |   2.57x |
+| mesh.pretty.json       | 1.50 MB |     653.5 MB/s |     241.7 MB/s |   2.70x |
+| numbers.json           | 146.6 KB |     919.0 MB/s |     224.6 MB/s |   4.09x |
+| random.json            | 498.5 KB |     465.1 MB/s |     246.4 MB/s |   1.89x |
+| stringifiedphp.json    | 139.9 KB |   2,487.4 MB/s |     338.0 MB/s |   7.36x |
+| twitter.json           | 616.7 KB |     941.6 MB/s |     392.8 MB/s |   2.40x |
+| twitterescaped.json    | 549.2 KB |     779.4 MB/s |     295.5 MB/s |   2.64x |
+| update-center.json     | 520.7 KB |     556.9 MB/s |     258.9 MB/s |   2.15x |
 
 ### Decode (assoc arrays)
 
 | File                   |     Size |     fastjson |     ext/json | speedup |
 |------------------------|----------|--------------|--------------|---------|
-| apache_builds.json     | 124.3 KB |   1,118.3 MB/s |     427.1 MB/s |   2.62x |
-| canada.json            | 2.15 MB |     449.8 MB/s |     105.0 MB/s |   4.28x |
-| citm_catalog.json      | 1.65 MB |   1,216.2 MB/s |     519.0 MB/s |   2.34x |
-| github_events.json     | 63.6 KB |   1,436.2 MB/s |     449.9 MB/s |   3.19x |
-| gsoc-2018.json         | 3.17 MB |   1,135.3 MB/s |     370.7 MB/s |   3.06x |
-| instruments.json       | 215.2 KB |     895.1 MB/s |     394.9 MB/s |   2.27x |
-| marine_ik.json         | 2.85 MB |     340.9 MB/s |     211.1 MB/s |   1.61x |
-| mesh.json              | 706.6 KB |     511.6 MB/s |     208.8 MB/s |   2.45x |
-| mesh.pretty.json       | 1.50 MB |     832.9 MB/s |     270.7 MB/s |   3.08x |
-| numbers.json           | 146.6 KB |   1,015.7 MB/s |     259.3 MB/s |   3.92x |
-| random.json            | 498.5 KB |     596.8 MB/s |     300.1 MB/s |   1.99x |
-| stringifiedphp.json    | 139.9 KB |   2,790.9 MB/s |     376.2 MB/s |   7.42x |
-| twitter.json           | 616.7 KB |   1,184.1 MB/s |     451.0 MB/s |   2.63x |
-| twitterescaped.json    | 549.2 KB |     978.3 MB/s |     350.7 MB/s |   2.79x |
-| update-center.json     | 520.7 KB |     719.4 MB/s |     305.9 MB/s |   2.35x |
+| apache_builds.json     | 124.3 KB |   1,115.3 MB/s |     395.7 MB/s |   2.82x |
+| canada.json            | 2.15 MB |     377.9 MB/s |      95.3 MB/s |   3.97x |
+| citm_catalog.json      | 1.65 MB |     728.4 MB/s |     470.2 MB/s |   1.55x |
+| github_events.json     | 63.6 KB |   1,365.5 MB/s |     410.3 MB/s |   3.33x |
+| gsoc-2018.json         | 3.17 MB |     985.6 MB/s |     315.8 MB/s |   3.12x |
+| instruments.json       | 215.2 KB |   1,024.0 MB/s |     377.2 MB/s |   2.72x |
+| marine_ik.json         | 2.85 MB |     294.4 MB/s |     187.4 MB/s |   1.57x |
+| mesh.json              | 706.6 KB |     466.1 MB/s |     188.8 MB/s |   2.47x |
+| mesh.pretty.json       | 1.50 MB |     678.7 MB/s |     250.2 MB/s |   2.71x |
+| numbers.json           | 146.6 KB |     927.6 MB/s |     235.1 MB/s |   3.95x |
+| random.json            | 498.5 KB |     527.4 MB/s |     255.1 MB/s |   2.07x |
+| stringifiedphp.json    | 139.9 KB |   2,643.4 MB/s |     337.8 MB/s |   7.82x |
+| twitter.json           | 616.7 KB |   1,092.6 MB/s |     409.5 MB/s |   2.67x |
+| twitterescaped.json    | 549.2 KB |     880.9 MB/s |     302.3 MB/s |   2.91x |
+| update-center.json     | 520.7 KB |     613.3 MB/s |     269.1 MB/s |   2.28x |
 
 ### Encode
 
 | File                   |     Size |     fastjson |     ext/json | speedup |
 |------------------------|----------|--------------|--------------|---------|
-| apache_builds.json     | 124.3 KB |   1,681.2 MB/s |   1,260.0 MB/s |   1.33x |
-| canada.json            | 2.15 MB |     801.2 MB/s |      60.3 MB/s |  13.28x |
-| citm_catalog.json      | 1.65 MB |   3,156.2 MB/s |   2,483.2 MB/s |   1.27x |
-| github_events.json     | 63.6 KB |   1,997.4 MB/s |   1,297.9 MB/s |   1.54x |
-| gsoc-2018.json         | 3.17 MB |   1,393.8 MB/s |     778.7 MB/s |   1.79x |
-| instruments.json       | 215.2 KB |   2,237.8 MB/s |   1,810.1 MB/s |   1.24x |
-| marine_ik.json         | 2.85 MB |     698.2 MB/s |     136.3 MB/s |   5.12x |
-| mesh.json              | 706.6 KB |     766.7 MB/s |      89.2 MB/s |   8.60x |
-| mesh.pretty.json       | 1.50 MB |   1,668.3 MB/s |     191.8 MB/s |   8.70x |
-| numbers.json           | 146.6 KB |     575.0 MB/s |      54.7 MB/s |  10.50x |
-| random.json            | 498.5 KB |     929.0 MB/s |     651.4 MB/s |   1.43x |
-| stringifiedphp.json    | 139.9 KB |   3,099.3 MB/s |     790.3 MB/s |   3.92x |
-| twitter.json           | 616.7 KB |   1,658.2 MB/s |   1,113.7 MB/s |   1.49x |
-| twitterescaped.json    | 549.2 KB |   1,502.5 MB/s |   1,011.6 MB/s |   1.49x |
-| update-center.json     | 520.7 KB |   1,071.0 MB/s |     843.8 MB/s |   1.27x |
+| apache_builds.json     | 124.3 KB |   1,458.5 MB/s |   1,093.4 MB/s |   1.33x |
+| canada.json            | 2.15 MB |     670.9 MB/s |      55.6 MB/s |  12.07x |
+| citm_catalog.json      | 1.65 MB |   2,708.7 MB/s |   2,349.4 MB/s |   1.15x |
+| github_events.json     | 63.6 KB |   1,951.6 MB/s |   1,243.1 MB/s |   1.57x |
+| gsoc-2018.json         | 3.17 MB |   1,248.6 MB/s |     714.4 MB/s |   1.75x |
+| instruments.json       | 215.2 KB |   1,901.9 MB/s |   1,751.8 MB/s |   1.09x |
+| marine_ik.json         | 2.85 MB |     636.3 MB/s |     124.7 MB/s |   5.10x |
+| mesh.json              | 706.6 KB |     735.7 MB/s |      82.2 MB/s |   8.95x |
+| mesh.pretty.json       | 1.50 MB |   1,586.5 MB/s |     178.6 MB/s |   8.88x |
+| numbers.json           | 146.6 KB |     649.2 MB/s |      50.8 MB/s |  12.77x |
+| random.json            | 498.5 KB |     803.8 MB/s |     588.5 MB/s |   1.37x |
+| stringifiedphp.json    | 139.9 KB |   2,870.4 MB/s |     722.5 MB/s |   3.97x |
+| twitter.json           | 616.7 KB |   1,608.3 MB/s |   1,089.6 MB/s |   1.48x |
+| twitterescaped.json    | 549.2 KB |   1,411.8 MB/s |     981.1 MB/s |   1.44x |
+| update-center.json     | 520.7 KB |     991.8 MB/s |     777.6 MB/s |   1.28x |
 
 ### Validate
 
 | File                   |     Size |     fastjson |     ext/json | speedup |
 |------------------------|----------|--------------|--------------|---------|
-| apache_builds.json     | 124.3 KB |   2,643.6 MB/s |     451.9 MB/s |   5.85x |
-| canada.json            | 2.15 MB |     917.7 MB/s |     115.2 MB/s |   7.97x |
-| citm_catalog.json      | 1.65 MB |   2,663.2 MB/s |     561.7 MB/s |   4.74x |
-| github_events.json     | 63.6 KB |   3,122.1 MB/s |     497.2 MB/s |   6.28x |
-| gsoc-2018.json         | 3.17 MB |   1,589.6 MB/s |     388.0 MB/s |   4.10x |
-| instruments.json       | 215.2 KB |   2,174.3 MB/s |     445.1 MB/s |   4.88x |
-| marine_ik.json         | 2.85 MB |     863.7 MB/s |     266.6 MB/s |   3.24x |
-| mesh.json              | 706.6 KB |   1,257.4 MB/s |     223.5 MB/s |   5.63x |
-| mesh.pretty.json       | 1.50 MB |   1,673.3 MB/s |     277.7 MB/s |   6.03x |
-| numbers.json           | 146.6 KB |   1,501.1 MB/s |     265.6 MB/s |   5.65x |
-| random.json            | 498.5 KB |   1,582.9 MB/s |     365.1 MB/s |   4.34x |
-| stringifiedphp.json    | 139.9 KB |   2,939.4 MB/s |     366.9 MB/s |   8.01x |
-| twitter.json           | 616.7 KB |   2,801.5 MB/s |     560.4 MB/s |   5.00x |
-| twitterescaped.json    | 549.2 KB |   2,539.9 MB/s |     403.7 MB/s |   6.29x |
-| update-center.json     | 520.7 KB |   2,288.8 MB/s |     358.5 MB/s |   6.38x |
+| apache_builds.json     | 124.3 KB |   2,470.2 MB/s |     414.0 MB/s |   5.97x |
+| canada.json            | 2.15 MB |     862.5 MB/s |     103.6 MB/s |   8.32x |
+| citm_catalog.json      | 1.65 MB |   2,456.9 MB/s |     551.4 MB/s |   4.46x |
+| github_events.json     | 63.6 KB |   2,876.6 MB/s |     476.2 MB/s |   6.04x |
+| gsoc-2018.json         | 3.17 MB |   1,468.7 MB/s |     352.9 MB/s |   4.16x |
+| instruments.json       | 215.2 KB |   2,141.7 MB/s |     436.7 MB/s |   4.90x |
+| marine_ik.json         | 2.85 MB |     820.8 MB/s |     238.1 MB/s |   3.45x |
+| mesh.json              | 706.6 KB |   1,155.2 MB/s |     212.0 MB/s |   5.45x |
+| mesh.pretty.json       | 1.50 MB |   1,575.4 MB/s |     258.7 MB/s |   6.09x |
+| numbers.json           | 146.6 KB |   1,347.0 MB/s |     237.3 MB/s |   5.68x |
+| random.json            | 498.5 KB |   1,408.5 MB/s |     333.2 MB/s |   4.23x |
+| stringifiedphp.json    | 139.9 KB |   2,699.1 MB/s |     334.3 MB/s |   8.07x |
+| twitter.json           | 616.7 KB |   2,430.8 MB/s |     502.3 MB/s |   4.84x |
+| twitterescaped.json    | 549.2 KB |   2,309.2 MB/s |     354.7 MB/s |   6.51x |
+| update-center.json     | 520.7 KB |   1,908.0 MB/s |     306.0 MB/s |   6.23x |
 
 ## Throughput, small corpus
 
@@ -94,45 +94,45 @@
 
 | File                   |    Size |     fastjson |     ext/json | fast/call |  ext/call | speedup |
 |------------------------|---------|--------------|--------------|-----------|-----------|---------|
-| adversarial.json       |   80 B |     345.2 MB/s |     187.0 MB/s |    221 ns |    408 ns |   1.85x |
-| demo.json              |  387 B |     820.2 MB/s |     335.5 MB/s |    450 ns |   1.1 µs |   2.44x |
-| flatadversarial.json   |   64 B |     285.2 MB/s |     144.3 MB/s |    214 ns |    423 ns |   1.98x |
-| repeat.json            | 11.1 KB |     979.3 MB/s |     472.8 MB/s |  11.1 µs |  22.9 µs |   2.07x |
-| truenull.json          | 11.7 KB |     903.2 MB/s |     213.7 MB/s |  12.7 µs |  53.6 µs |   4.23x |
-| twitter_timeline.json  | 41.2 KB |     955.6 MB/s |     341.0 MB/s |  42.1 µs | 118.1 µs |   2.80x |
+| adversarial.json       |   80 B |     315.3 MB/s |     168.4 MB/s |    242 ns |    453 ns |   1.87x |
+| demo.json              |  387 B |     728.0 MB/s |     307.8 MB/s |    507 ns |   1.2 µs |   2.36x |
+| flatadversarial.json   |   64 B |     246.1 MB/s |     131.0 MB/s |    248 ns |    466 ns |   1.88x |
+| repeat.json            | 11.1 KB |     883.7 MB/s |     433.9 MB/s |  12.3 µs |  25.0 µs |   2.04x |
+| truenull.json          | 11.7 KB |     845.1 MB/s |     207.8 MB/s |  13.5 µs |  55.1 µs |   4.07x |
+| twitter_timeline.json  | 41.2 KB |     868.9 MB/s |     306.4 MB/s |  46.4 µs | 131.5 µs |   2.84x |
 
 ### Decode (assoc arrays)
 
 | File                   |    Size |     fastjson |     ext/json | fast/call |  ext/call | speedup |
 |------------------------|---------|--------------|--------------|-----------|-----------|---------|
-| adversarial.json       |   80 B |     381.5 MB/s |     197.1 MB/s |    200 ns |    387 ns |   1.94x |
-| demo.json              |  387 B |     932.0 MB/s |     354.2 MB/s |    396 ns |   1.0 µs |   2.63x |
-| flatadversarial.json   |   64 B |     319.6 MB/s |     153.7 MB/s |    191 ns |    397 ns |   2.08x |
-| repeat.json            | 11.1 KB |   1,143.7 MB/s |     516.8 MB/s |   9.5 µs |  21.0 µs |   2.21x |
-| truenull.json          | 11.7 KB |     903.9 MB/s |     214.1 MB/s |  12.7 µs |  53.5 µs |   4.22x |
-| twitter_timeline.json  | 41.2 KB |   1,064.0 MB/s |     344.1 MB/s |  37.9 µs | 117.0 µs |   3.09x |
+| adversarial.json       |   80 B |     336.1 MB/s |     175.8 MB/s |    227 ns |    434 ns |   1.91x |
+| demo.json              |  387 B |     802.3 MB/s |     346.2 MB/s |    460 ns |   1.1 µs |   2.32x |
+| flatadversarial.json   |   64 B |     266.5 MB/s |     138.1 MB/s |    229 ns |    442 ns |   1.93x |
+| repeat.json            | 11.1 KB |   1,045.3 MB/s |     462.9 MB/s |  10.4 µs |  23.4 µs |   2.26x |
+| truenull.json          | 11.7 KB |     808.1 MB/s |     199.4 MB/s |  14.2 µs |  57.4 µs |   4.05x |
+| twitter_timeline.json  | 41.2 KB |     985.0 MB/s |     328.3 MB/s |  40.9 µs | 122.7 µs |   3.00x |
 
 ### Encode
 
 | File                   |    Size |     fastjson |     ext/json | fast/call |  ext/call | speedup |
 |------------------------|---------|--------------|--------------|-----------|-----------|---------|
-| adversarial.json       |   80 B |     641.1 MB/s |     641.1 MB/s |    119 ns |    119 ns |   1.00x |
-| demo.json              |  387 B |   1,647.6 MB/s |   1,351.9 MB/s |    224 ns |    273 ns |   1.22x |
-| flatadversarial.json   |   64 B |     473.1 MB/s |     321.2 MB/s |    129 ns |    190 ns |   1.47x |
-| repeat.json            | 11.1 KB |   1,762.7 MB/s |   1,030.1 MB/s |   6.1 µs |  10.5 µs |   1.71x |
-| truenull.json          | 11.7 KB |   2,323.7 MB/s |   1,561.9 MB/s |   4.9 µs |   7.3 µs |   1.49x |
-| twitter_timeline.json  | 41.2 KB |   1,665.8 MB/s |   1,183.4 MB/s |  24.2 µs |  34.0 µs |   1.41x |
+| adversarial.json       |   80 B |     596.0 MB/s |     610.4 MB/s |    128 ns |    125 ns |   0.98x |
+| demo.json              |  387 B |   1,464.6 MB/s |   1,259.6 MB/s |    252 ns |    293 ns |   1.16x |
+| flatadversarial.json   |   64 B |     436.0 MB/s |     297.7 MB/s |    140 ns |    205 ns |   1.46x |
+| repeat.json            | 11.1 KB |   1,707.1 MB/s |     959.5 MB/s |   6.3 µs |  11.3 µs |   1.78x |
+| truenull.json          | 11.7 KB |   2,169.5 MB/s |   1,457.1 MB/s |   5.3 µs |   7.9 µs |   1.49x |
+| twitter_timeline.json  | 41.2 KB |   1,427.3 MB/s |   1,062.4 MB/s |  28.2 µs |  37.9 µs |   1.34x |
 
 ### Validate
 
 | File                   |    Size |     fastjson |     ext/json | fast/call |  ext/call | speedup |
 |------------------------|---------|--------------|--------------|-----------|-----------|---------|
-| adversarial.json       |   80 B |     699.9 MB/s |     215.5 MB/s |    109 ns |    354 ns |   3.25x |
-| demo.json              |  387 B |   1,864.0 MB/s |     395.2 MB/s |    198 ns |    934 ns |   4.72x |
-| flatadversarial.json   |   64 B |     586.9 MB/s |     174.9 MB/s |    104 ns |    349 ns |   3.36x |
-| repeat.json            | 11.1 KB |   2,131.9 MB/s |     583.8 MB/s |   5.1 µs |  18.6 µs |   3.65x |
-| truenull.json          | 11.7 KB |   2,466.9 MB/s |     256.9 MB/s |   4.6 µs |  44.5 µs |   9.60x |
-| twitter_timeline.json  | 41.2 KB |   2,909.1 MB/s |     413.4 MB/s |  13.8 µs |  97.4 µs |   7.04x |
+| adversarial.json       |   80 B |     652.1 MB/s |     159.6 MB/s |    117 ns |    478 ns |   4.09x |
+| demo.json              |  387 B |   1,425.0 MB/s |     360.1 MB/s |    259 ns |   1.0 µs |   3.96x |
+| flatadversarial.json   |   64 B |     554.9 MB/s |     161.0 MB/s |    110 ns |    379 ns |   3.45x |
+| repeat.json            | 11.1 KB |   1,986.8 MB/s |     536.3 MB/s |   5.5 µs |  20.2 µs |   3.70x |
+| truenull.json          | 11.7 KB |   2,314.3 MB/s |     232.0 MB/s |   4.9 µs |  49.3 µs |   9.97x |
+| twitter_timeline.json  | 41.2 KB |   2,688.1 MB/s |     381.8 MB/s |  15.0 µs | 105.5 µs |   7.04x |
 
 ## Memory peak (single-call delta)
 
@@ -248,19 +248,19 @@ Lower is better. The ratio is `fastjson / ext-json` peak heap; values **above 1.
 
 | Operation              |    Bytes |     fastjson |     ext/json | speedup |
 |------------------------|----------|--------------|--------------|---------|
-| Decode (objects)       | 14.81 MB |     602.3 MB/s |     226.8 MB/s |   2.66x |
-| Decode (assoc arrays)  | 14.81 MB |     628.3 MB/s |     236.9 MB/s |   2.65x |
-| Encode                 | 14.81 MB |   1,092.2 MB/s |     180.1 MB/s |   6.06x |
-| Validate               | 14.81 MB |   1,352.1 MB/s |     265.2 MB/s |   5.10x |
+| Decode (objects)       | 14.81 MB |     541.7 MB/s |     208.9 MB/s |   2.59x |
+| Decode (assoc arrays)  | 14.81 MB |     529.1 MB/s |     211.6 MB/s |   2.50x |
+| Encode                 | 14.81 MB |     982.8 MB/s |     165.9 MB/s |   5.92x |
+| Validate               | 14.81 MB |   1,260.1 MB/s |     241.0 MB/s |   5.23x |
 
 ### Throughput, small corpus
 
 | Operation              |    Bytes |     fastjson |     ext/json | speedup |
 |------------------------|----------|--------------|--------------|---------|
-| Decode (objects)       | 64.6 KB |     944.5 MB/s |     320.9 MB/s |   2.94x |
-| Decode (assoc arrays)  | 64.6 KB |   1,037.6 MB/s |     326.3 MB/s |   3.18x |
-| Encode                 | 64.6 KB |   1,765.3 MB/s |   1,202.0 MB/s |   1.47x |
-| Validate               | 64.6 KB |   2,630.1 MB/s |     388.9 MB/s |   6.76x |
+| Decode (objects)       | 64.6 KB |     862.1 MB/s |     295.2 MB/s |   2.92x |
+| Decode (assoc arrays)  | 64.6 KB |     950.7 MB/s |     307.0 MB/s |   3.10x |
+| Encode                 | 64.6 KB |   1,562.5 MB/s |   1,093.3 MB/s |   1.43x |
+| Validate               | 64.6 KB |   2,437.9 MB/s |     356.5 MB/s |   6.84x |
 
 ### Memory peak (across all files)
 

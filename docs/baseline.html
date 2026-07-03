@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>fastjson 0.1.0 baseline</title>
+<title>fastjson 0.4.0 baseline</title>
 <style>
   :root {
     --bg: #fafaf7;
@@ -250,410 +250,508 @@
 <body>
 <div class="wrap">
 
-<h1>fastjson 0.1.0 <span class="pill">benchmark baseline</span></h1>
+<h1>fastjson 0.4.0 <span class="pill">benchmark baseline</span></h1>
 <p class="lede">
-A PHP extension that wraps <a href="https://github.com/ibireme/yyjson">yyjson</a> behind a <code>fastjson_*</code> API mirroring ext/json. Side-by-side numbers against stock <code>ext/json</code> and <code>simdjson_php</code> on a 21-file corpus. Baseline is vanilla PHP 8.6.0-dev built from current master. For encode we also include ext/json with <a href="https://github.com/php/php-src/pull/17734">php-src#17734</a> applied (the SIMD encode patch is currently open against PHP master, not yet merged) so the patch's effect is visible.
+A PHP extension that wraps <a href="https://github.com/ibireme/yyjson">yyjson 0.12.0</a> behind a <code>fastjson_*</code> API mirroring ext/json. Side-by-side throughput, memory, and per-call latency against stock <code>ext/json</code> on a 21-file corpus, both hosted by PHP 8.4.22-dev.
 </p>
 
 <p class="meta">
-<span><strong>Hardware:</strong> i9-13950HX</span>
-<span><strong>Build:</strong> release, both PHP and extensions <code>-O2</code></span>
-<span><strong>Iterations:</strong> 200 per case, slowest 10% dropped</span>
-<span><strong>Corpus:</strong> 21 files &mdash; 15 large (14.81 MB) + 6 small (64.6 KB), from simdjson_php's <code>jsonexamples</code></span>
+<span><strong>Hardware:</strong> 13th Gen Intel(R) Core(TM) i9-13950HX</span>
+<span><strong>Build:</strong> release, both PHP and extension <code>-O2</code></span>
+<span><strong>Iterations:</strong> 300 per case, slowest 10% dropped</span>
+<span><strong>Corpus:</strong> 21 files &mdash; 15 large (14.81&nbsp;MB) + 6 small (64.6&nbsp;KB), from simdjson_php's <code>jsonexamples</code></span>
 </p>
-
-<h2>Decode <span class="pill">vanilla PHP 8.6.0-dev</span></h2>
-
-<p>Three decoders, one PHP build. php-src#17734 doesn't affect decode (encode-only patch), so this section is the same regardless of whether the patch is applied.</p>
-
-<div class="hero">
-  <div class="label-row">
-    <div class="who">ext/json<span class="v">vanilla 8.6.0-dev</span></div>
-    <div class="bar-wrap"><div class="bar" style="width: 28.4%; background: var(--c-ext);"></div></div>
-    <div class="num">212 <span class="u">MB/s</span></div>
-  </div>
-  <div class="label-row">
-    <div class="who">fastjson 0.1.0<span class="v">vanilla 8.6.0-dev</span></div>
-    <div class="bar-wrap"><div class="bar" style="width: 77.6%; background: var(--c-fast);"></div></div>
-    <div class="num">578 <span class="u">MB/s</span></div>
-  </div>
-  <div class="label-row">
-    <div class="who">simdjson_php 4.0.1dev<span class="v">vanilla 8.6.0-dev</span></div>
-    <div class="bar-wrap"><div class="bar" style="width: 100%; background: var(--c-simd);"></div></div>
-    <div class="num">745 <span class="u">MB/s</span></div>
-  </div>
-  <div class="axis">
-    <div></div>
-    <div class="ticks"><span>0</span><span>250</span><span>500</span><span>745 MB/s</span></div>
-    <div></div>
-  </div>
-  <div class="caption">
-    Aggregate decode &rarr; <code>stdClass</code> on the 14.81 MB large corpus. fastjson is <strong class="up" style="color:var(--c-up)">2.73&times;</strong> ext/json; simdjson is another <strong>1.29&times;</strong> ahead of fastjson on the large corpus. On the small corpus the order flips: fastjson <strong>907 MB/s</strong> vs simdjson <strong>837 MB/s</strong> &mdash; see the small-corpus table below.
-  </div>
-</div>
-
-<h3>Per-file decode, large corpus</h3>
-
-<table class="matrix">
-  <thead>
-    <tr>
-      <th>File</th><th>Size</th>
-      <th>ext/json<span class="sub">MB/s</span></th>
-      <th>fastjson<span class="sub">MB/s</span></th>
-      <th>simdjson<span class="sub">MB/s</span></th>
-      <th>fastjson vs<span class="sub">ext/json</span></th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr><td>apache_builds.json</td>     <td class="size">124 KB</td>  <td>364</td>   <td>1,047</td> <td class="simd-win">897</td>   <td class="up">2.88&times;</td></tr>
-    <tr><td>canada.json</td>            <td class="size">2.15 MB</td> <td>98</td>    <td>434</td>   <td class="simd-win">609</td>   <td class="up">4.43&times;</td></tr>
-    <tr><td>citm_catalog.json</td>      <td class="size">1.65 MB</td> <td>428</td>   <td class="win">1,153</td> <td>1,112</td>     <td class="up">2.70&times;</td></tr>
-    <tr><td>github_events.json</td>     <td class="size">64 KB</td>   <td>382</td>   <td>1,260</td> <td class="simd-win">1,262</td> <td class="up">3.30&times;</td></tr>
-    <tr><td>gsoc-2018.json</td>         <td class="size">3.17 MB</td> <td>345</td>   <td>1,066</td> <td class="simd-win">1,847</td> <td class="up">3.09&times;</td></tr>
-    <tr><td>instruments.json</td>       <td class="size">215 KB</td>  <td>353</td>   <td class="win">909</td>   <td>862</td>           <td class="up">2.58&times;</td></tr>
-    <tr><td>marine_ik.json</td>         <td class="size">2.85 MB</td> <td>178</td>   <td>302</td>   <td class="simd-win">400</td>   <td class="up">1.70&times;</td></tr>
-    <tr><td>mesh.json</td>              <td class="size">707 KB</td>  <td>187</td>   <td>478</td>   <td class="simd-win">675</td>   <td class="up">2.56&times;</td></tr>
-    <tr><td>mesh.pretty.json</td>       <td class="size">1.50 MB</td> <td>254</td>   <td>842</td>   <td class="simd-win">1,217</td> <td class="up">3.32&times;</td></tr>
-    <tr><td>numbers.json</td>           <td class="size">147 KB</td>  <td>240</td>   <td>1,001</td> <td class="simd-win">959</td>   <td class="up">4.18&times;</td></tr>
-    <tr><td>random.json</td>            <td class="size">498 KB</td>  <td>242</td>   <td>500</td>   <td class="simd-win">504</td>   <td class="up">2.07&times;</td></tr>
-    <tr><td>stringifiedphp.json</td>    <td class="size">140 KB</td>  <td>350</td>   <td>2,669</td> <td class="simd-win">3,213</td> <td class="up">7.62&times;</td></tr>
-    <tr><td>twitter.json</td>           <td class="size">617 KB</td>  <td>394</td>   <td>981</td>   <td class="simd-win">1,020</td> <td class="up">2.49&times;</td></tr>
-    <tr><td>twitterescaped.json</td>    <td class="size">549 KB</td>  <td>305</td>   <td class="win">841</td>   <td>683</td>           <td class="up">2.75&times;</td></tr>
-    <tr><td>update-center.json</td>     <td class="size">521 KB</td>  <td>260</td>   <td>617</td>   <td class="simd-win">620</td>   <td class="up">2.37&times;</td></tr>
-  </tbody>
-  <tfoot>
-    <tr><td>aggregate</td><td class="size">14.81 MB</td><td>212</td><td>578</td><td>745</td><td class="up">2.73&times;</td></tr>
-  </tfoot>
-</table>
-
-<div class="legend">
-  <span><span class="sw" style="background: var(--c-fast);"></span>fastjson best</span>
-  <span><span class="sw" style="background: var(--c-simd);"></span>simdjson best</span>
-  <span><span class="sw" style="background: var(--c-up);"></span>fastjson faster than ext/json</span>
-</div>
-
-<h3>Per-file decode, small corpus</h3>
-
-<p>fastjson takes the small-corpus aggregate ahead of simdjson (907 vs 837 MB/s). Per-call setup cost dominates at this scale; fastjson's startup is lighter than simdjson's tape-format parser.</p>
-
-<table class="matrix">
-  <thead>
-    <tr>
-      <th>File</th><th>Size</th>
-      <th>ext/json<span class="sub">MB/s</span></th>
-      <th>fastjson<span class="sub">MB/s</span></th>
-      <th>simdjson<span class="sub">MB/s</span></th>
-      <th>fast/call<span class="sub">ns</span></th>
-      <th>fastjson vs<span class="sub">ext/json</span></th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr><td>flatadversarial.json</td>   <td class="size">64 B</td>    <td>126</td>   <td class="win">246</td>   <td>228</td>   <td>248</td>     <td class="up">1.95&times;</td></tr>
-    <tr><td>adversarial.json</td>       <td class="size">80 B</td>    <td>165</td>   <td class="win">330</td>   <td>317</td>   <td>231</td>     <td class="up">2.00&times;</td></tr>
-    <tr><td>demo.json</td>              <td class="size">387 B</td>   <td>322</td>   <td class="win">782</td>   <td>686</td>   <td>472</td>     <td class="up">2.43&times;</td></tr>
-    <tr><td>repeat.json</td>            <td class="size">11.1 KB</td> <td>432</td>   <td>947</td>   <td class="simd-win">1,009</td> <td>11,400</td>  <td class="up">2.19&times;</td></tr>
-    <tr><td>truenull.json</td>          <td class="size">11.7 KB</td> <td>200</td>   <td class="win">889</td>   <td>805</td>   <td>12,900</td>  <td class="up">4.45&times;</td></tr>
-    <tr><td>twitter_timeline.json</td>  <td class="size">41.2 KB</td> <td>304</td>   <td class="win">910</td>   <td>816</td>   <td>44,200</td>  <td class="up">2.99&times;</td></tr>
-  </tbody>
-  <tfoot>
-    <tr><td>aggregate</td><td class="size">64.6 KB</td><td>291</td><td>907</td><td>837</td><td>&mdash;</td><td class="up">3.12&times;</td></tr>
-  </tfoot>
-</table>
-
-<div class="legend">
-  <span><span class="sw" style="background: var(--c-fast);"></span>fastjson best</span>
-  <span><span class="sw" style="background: var(--c-simd);"></span>simdjson best</span>
-  <span style="color: var(--muted)">fastjson wins 5 of 6 small files; simdjson catches it on the 11 KB repeat case.</span>
-</div>
-
-<h2>Encode <span class="pill">php-src#17734 effect visible</span></h2>
-
-<p>This section adds a third column: ext/json on PHP 8.6.0-dev with php-src#17734 applied. The patch SIMD-accelerates long-string encoding; on a JSON-shaped corpus the SIMD setup cost amortizes only on inputs with large string payloads.</p>
-
-<div class="hero">
-  <div class="label-row">
-    <div class="who">ext/json<span class="v">vanilla 8.6.0-dev</span></div>
-    <div class="bar-wrap"><div class="bar" style="width: 16.3%; background: var(--c-ext);"></div></div>
-    <div class="num">178 <span class="u">MB/s</span></div>
-  </div>
-  <div class="label-row">
-    <div class="who">ext/json + php-src#17734<span class="v">8.6.0-dev with SIMD encode patch</span></div>
-    <div class="bar-wrap"><div class="bar" style="width: 14.6%; background: var(--c-pr120);"></div></div>
-    <div class="num">159 <span class="u">MB/s</span></div>
-  </div>
-  <div class="label-row">
-    <div class="who">fastjson 0.1.0<span class="v">vanilla 8.6.0-dev</span></div>
-    <div class="bar-wrap"><div class="bar" style="width: 95.0%; background: var(--c-fast);"></div></div>
-    <div class="num">1,034 <span class="u">MB/s</span></div>
-  </div>
-  <div class="axis">
-    <div></div>
-    <div class="ticks"><span>0</span><span>500</span><span>1,000</span><span>1,088 MB/s</span></div>
-    <div></div>
-  </div>
-  <div class="caption">
-    Aggregate encode on the 14.81 MB corpus. fastjson is <strong class="up" style="color:var(--c-up)">5.80&times;</strong> vanilla ext/json, <strong class="up" style="color:var(--c-up)">6.51&times;</strong> ext/json with php-src#17734. php-src#17734 lands at <strong>0.89&times;</strong> vanilla on this corpus shape (mostly small fields).
-  </div>
-</div>
-
-<div class="callout">
-  <strong>php-src#17734's effect is workload-shape dependent.</strong> The SIMD encoder shines on inputs with long string payloads. The microbenchmark <code>json_encode(str_repeat('a', 1048576))</code> reports <strong class="up" style="color:var(--c-up)">10,032 MB/s</strong> with php-src#17734 vs <strong>1,597 MB/s</strong> on vanilla 8.6 &mdash; a <strong class="up" style="color:var(--c-up)">6.28&times;</strong> SIMD win. On JSON-shaped corpora with many small string fields, per-call SIMD setup dominates and the aggregate lands below vanilla. The per-file table makes the workload split visible.
-</div>
-
-<h3>Per-file encode, large corpus</h3>
-
-<table class="matrix">
-  <thead>
-    <tr>
-      <th>File</th><th>Size</th>
-      <th>ext/json<span class="sub">vanilla 8.6</span></th>
-      <th>ext/json+php-src#17734<span class="sub">8.6 + patch</span></th>
-      <th>fastjson<span class="sub">vanilla 8.6</span></th>
-      <th>php-src#17734 vs<span class="sub">vanilla</span></th>
-      <th>fastjson vs<span class="sub">vanilla ext/json</span></th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr><td>apache_builds.json</td>     <td class="size">124 KB</td>  <td>1,098</td> <td>1,051</td> <td class="win">1,643</td> <td class="down">0.96&times;</td> <td class="up">1.50&times;</td></tr>
-    <tr><td>canada.json</td>            <td class="size">2.15 MB</td> <td>60</td>    <td>54</td>    <td class="win">717</td>   <td class="down">0.89&times;</td> <td class="up">11.84&times;</td></tr>
-    <tr><td>citm_catalog.json</td>      <td class="size">1.65 MB</td> <td>2,280</td> <td>2,153</td> <td class="win">3,139</td> <td class="down">0.94&times;</td> <td class="up">1.38&times;</td></tr>
-    <tr><td>github_events.json</td>     <td class="size">64 KB</td>   <td>1,187</td> <td>1,093</td> <td class="win">2,141</td> <td class="down">0.92&times;</td> <td class="up">1.80&times;</td></tr>
-    <tr><td>gsoc-2018.json</td>         <td class="size">3.17 MB</td> <td>716</td>   <td class="up">903</td>   <td class="win">1,310</td> <td class="up">1.26&times;</td>   <td class="up">1.83&times;</td></tr>
-    <tr><td>instruments.json</td>       <td class="size">215 KB</td>  <td>1,760</td> <td>1,678</td> <td class="win">2,183</td> <td class="down">0.95&times;</td> <td class="up">1.24&times;</td></tr>
-    <tr><td>marine_ik.json</td>         <td class="size">2.85 MB</td> <td>131</td>   <td>113</td>   <td class="win">657</td>   <td class="down">0.86&times;</td> <td class="up">5.00&times;</td></tr>
-    <tr><td>mesh.json</td>              <td class="size">707 KB</td>  <td>90</td>    <td>78</td>    <td class="win">745</td>   <td class="down">0.87&times;</td> <td class="up">8.30&times;</td></tr>
-    <tr><td>mesh.pretty.json</td>       <td class="size">1.50 MB</td> <td>199</td>   <td>173</td>   <td class="win">1,690</td> <td class="down">0.87&times;</td> <td class="up">8.49&times;</td></tr>
-    <tr><td>numbers.json</td>           <td class="size">147 KB</td>  <td>57</td>    <td>46</td>    <td class="win">667</td>   <td class="down">0.81&times;</td> <td class="up">11.65&times;</td></tr>
-    <tr><td>random.json</td>            <td class="size">498 KB</td>  <td>591</td>   <td>484</td>   <td class="win">831</td>   <td class="down">0.82&times;</td> <td class="up">1.41&times;</td></tr>
-    <tr><td>stringifiedphp.json</td>    <td class="size">140 KB</td>  <td>725</td>   <td class="up">1,527</td> <td class="win">2,921</td> <td class="up">2.11&times;</td>   <td class="up">4.03&times;</td></tr>
-    <tr><td>twitter.json</td>           <td class="size">617 KB</td>  <td>1,066</td> <td>893</td>   <td class="win">1,692</td> <td class="down">0.84&times;</td> <td class="up">1.59&times;</td></tr>
-    <tr><td>twitterescaped.json</td>    <td class="size">549 KB</td>  <td>949</td>   <td>922</td>   <td class="win">1,469</td> <td class="down">0.97&times;</td> <td class="up">1.55&times;</td></tr>
-    <tr><td>update-center.json</td>     <td class="size">521 KB</td>  <td>804</td>   <td class="up">887</td>   <td class="win">1,076</td> <td class="up">1.10&times;</td>   <td class="up">1.34&times;</td></tr>
-  </tbody>
-  <tfoot>
-    <tr><td>aggregate</td><td class="size">14.81 MB</td><td>178</td><td>159</td><td>1,034</td><td class="down">0.89&times;</td><td class="up">5.80&times;</td></tr>
-  </tfoot>
-</table>
-
-<div class="legend">
-  <span><span class="sw" style="background: var(--c-fast);"></span>fastjson best (every file)</span>
-  <span><span class="sw" style="background: var(--c-up);"></span>php-src#17734 wins (3 files)</span>
-  <span><span class="sw" style="background: var(--c-down);"></span>php-src#17734 loses (12 files)</span>
-  <span style="color: var(--muted)">php-src#17734 visibly wins on <code>stringifiedphp</code> (long stringified PHP source, 2.11&times;) and <code>gsoc-2018</code> (date-heavy strings, 1.26&times;).</span>
-</div>
-
-<h3>Per-file encode, small corpus</h3>
-
-<table class="matrix">
-  <thead>
-    <tr>
-      <th>File</th><th>Size</th>
-      <th>ext/json<span class="sub">vanilla 8.6</span></th>
-      <th>fastjson<span class="sub">vanilla 8.6</span></th>
-      <th>fast/call<span class="sub">ns</span></th>
-      <th>ext/call<span class="sub">ns</span></th>
-      <th>fastjson vs<span class="sub">ext/json</span></th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr><td>flatadversarial.json</td>   <td class="size">64 B</td>    <td>343</td>   <td class="win">459</td>   <td>133</td>   <td>178</td>     <td class="up">1.34&times;</td></tr>
-    <tr><td>adversarial.json</td>       <td class="size">80 B</td>    <td>687</td>   <td>631</td>               <td>121</td>   <td>111</td>     <td class="down">0.92&times;</td></tr>
-    <tr><td>demo.json</td>              <td class="size">387 B</td>   <td>1,318</td> <td class="win">1,557</td> <td>237</td>   <td>280</td>     <td class="up">1.18&times;</td></tr>
-    <tr><td>repeat.json</td>            <td class="size">11.1 KB</td> <td>990</td>   <td class="win">1,745</td> <td>6,200</td> <td>10,900</td>  <td class="up">1.76&times;</td></tr>
-    <tr><td>truenull.json</td>          <td class="size">11.7 KB</td> <td>2,071</td> <td class="win">2,356</td> <td>4,900</td> <td>5,500</td>   <td class="up">1.14&times;</td></tr>
-    <tr><td>twitter_timeline.json</td>  <td class="size">41.2 KB</td> <td>1,091</td> <td class="win">1,707</td> <td>23,600</td><td>36,900</td>  <td class="up">1.56&times;</td></tr>
-  </tbody>
-  <tfoot>
-    <tr><td>aggregate</td><td class="size">64.6 KB</td><td>1,169</td><td>1,794</td><td>&mdash;</td><td>&mdash;</td><td class="up">1.53&times;</td></tr>
-  </tfoot>
-</table>
-
-<div class="legend">
-  <span><span class="sw" style="background: var(--c-fast);"></span>fastjson best</span>
-  <span><span class="sw" style="background: var(--c-down);"></span>fastjson slower</span>
-  <span style="color: var(--muted)">ext/json takes <code>adversarial.json</code> (80 B) by ~10 ns/call: fastjson's per-call entry is heavier on the smallest inputs.</span>
-</div>
-
-<h2>Validate <span class="pill">vanilla PHP 8.6.0-dev</span></h2>
-
-<p>fastjson's edge comes from vendor patch <code>P-002</code> (<code>YYJSON_READ_VALIDATE_ONLY</code>), which adds a no-tree validate entry point to yyjson and drops peak memory 2.7&times; vs the stock read path. simdjson holds the validate crown via tape-format short-circuit.</p>
-
-<div class="hero">
-  <div class="label-row">
-    <div class="who">ext/json<span class="v">vanilla 8.6.0-dev</span></div>
-    <div class="bar-wrap"><div class="bar" style="width: 12.4%; background: var(--c-ext);"></div></div>
-    <div class="num">244 <span class="u">MB/s</span></div>
-  </div>
-  <div class="label-row">
-    <div class="who">fastjson 0.1.0<span class="v">vanilla 8.6.0-dev</span></div>
-    <div class="bar-wrap"><div class="bar" style="width: 68.2%; background: var(--c-fast);"></div></div>
-    <div class="num">1,344 <span class="u">MB/s</span></div>
-  </div>
-  <div class="label-row">
-    <div class="who">simdjson_php 4.0.1dev<span class="v">vanilla 8.6.0-dev</span></div>
-    <div class="bar-wrap"><div class="bar" style="width: 100%; background: var(--c-simd);"></div></div>
-    <div class="num">1,970 <span class="u">MB/s</span></div>
-  </div>
-  <div class="axis">
-    <div></div>
-    <div class="ticks"><span>0</span><span>500</span><span>1,000</span><span>1,500</span><span>1,970 MB/s</span></div>
-    <div></div>
-  </div>
-  <div class="caption">
-    Aggregate validate on the 14.81 MB large corpus. fastjson is <strong class="up" style="color:var(--c-up)">5.51&times;</strong> ext/json; simdjson is another <strong>1.47&times;</strong> ahead.
-  </div>
-</div>
-
-<h3>Per-file validate, large corpus</h3>
-
-<table class="matrix">
-  <thead>
-    <tr>
-      <th>File</th><th>Size</th>
-      <th>ext/json<span class="sub">MB/s</span></th>
-      <th>fastjson<span class="sub">MB/s</span></th>
-      <th>simdjson<span class="sub">MB/s</span></th>
-      <th>fastjson vs<span class="sub">ext/json</span></th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr><td>apache_builds.json</td>     <td class="size">124 KB</td>  <td>385</td>   <td>2,291</td> <td class="simd-win">3,958</td> <td class="up">5.95&times;</td></tr>
-    <tr><td>canada.json</td>            <td class="size">2.15 MB</td> <td>106</td>   <td>906</td>   <td class="simd-win">1,259</td> <td class="up">8.55&times;</td></tr>
-    <tr><td>citm_catalog.json</td>      <td class="size">1.65 MB</td> <td>565</td>   <td>2,407</td> <td class="simd-win">4,038</td> <td class="up">4.26&times;</td></tr>
-    <tr><td>github_events.json</td>     <td class="size">64 KB</td>   <td>444</td>   <td>3,015</td> <td class="simd-win">4,720</td> <td class="up">6.79&times;</td></tr>
-    <tr><td>gsoc-2018.json</td>         <td class="size">3.17 MB</td> <td>373</td>   <td>1,550</td> <td class="simd-win">4,250</td> <td class="up">4.16&times;</td></tr>
-    <tr><td>instruments.json</td>       <td class="size">215 KB</td>  <td>437</td>   <td>2,129</td> <td class="simd-win">3,559</td> <td class="up">4.87&times;</td></tr>
-    <tr><td>marine_ik.json</td>         <td class="size">2.85 MB</td> <td>235</td>   <td>895</td>   <td class="simd-win">1,225</td> <td class="up">3.81&times;</td></tr>
-    <tr><td>mesh.json</td>              <td class="size">707 KB</td>  <td>207</td>   <td class="win">1,292</td> <td>1,269</td>     <td class="up">6.24&times;</td></tr>
-    <tr><td>mesh.pretty.json</td>       <td class="size">1.50 MB</td> <td>262</td>   <td>1,696</td> <td class="simd-win">2,033</td> <td class="up">6.48&times;</td></tr>
-    <tr><td>numbers.json</td>           <td class="size">147 KB</td>  <td>251</td>   <td>1,482</td> <td class="simd-win">1,585</td> <td class="up">5.91&times;</td></tr>
-    <tr><td>random.json</td>            <td class="size">498 KB</td>  <td>310</td>   <td>1,515</td> <td class="simd-win">2,538</td> <td class="up">4.90&times;</td></tr>
-    <tr><td>stringifiedphp.json</td>    <td class="size">140 KB</td>  <td>360</td>   <td>2,849</td> <td class="simd-win">3,337</td> <td class="up">7.91&times;</td></tr>
-    <tr><td>twitter.json</td>           <td class="size">617 KB</td>  <td>482</td>   <td>2,736</td> <td class="simd-win">3,908</td> <td class="up">5.67&times;</td></tr>
-    <tr><td>twitterescaped.json</td>    <td class="size">549 KB</td>  <td>353</td>   <td class="win">2,376</td> <td>1,736</td>     <td class="up">6.73&times;</td></tr>
-    <tr><td>update-center.json</td>     <td class="size">521 KB</td>  <td>316</td>   <td>2,150</td> <td class="simd-win">3,078</td> <td class="up">6.81&times;</td></tr>
-  </tbody>
-  <tfoot>
-    <tr><td>aggregate</td><td class="size">14.81 MB</td><td>244</td><td>1,344</td><td>1,970</td><td class="up">5.51&times;</td></tr>
-  </tfoot>
-</table>
-
-<div class="legend">
-  <span><span class="sw" style="background: var(--c-fast);"></span>fastjson best (2 files)</span>
-  <span><span class="sw" style="background: var(--c-simd);"></span>simdjson best (13 files)</span>
-  <span style="color: var(--muted)">fastjson takes <code>mesh</code> and <code>twitterescaped</code>. simdjson's tape-based validator dominates everywhere else.</span>
-</div>
-
-<h3>Per-file validate, small corpus</h3>
-
-<table class="matrix">
-  <thead>
-    <tr>
-      <th>File</th><th>Size</th>
-      <th>ext/json<span class="sub">MB/s</span></th>
-      <th>fastjson<span class="sub">MB/s</span></th>
-      <th>simdjson<span class="sub">MB/s</span></th>
-      <th>fast/call<span class="sub">ns</span></th>
-      <th>fastjson vs<span class="sub">ext/json</span></th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr><td>flatadversarial.json</td>   <td class="size">64 B</td>    <td>157</td>   <td>492</td>   <td class="simd-win">581</td>   <td>124</td>   <td class="up">3.15&times;</td></tr>
-    <tr><td>adversarial.json</td>       <td class="size">80 B</td>    <td>195</td>   <td>694</td>   <td class="simd-win">727</td>   <td>110</td>   <td class="up">3.55&times;</td></tr>
-    <tr><td>demo.json</td>              <td class="size">387 B</td>   <td>341</td>   <td>1,670</td> <td class="simd-win">1,717</td> <td>221</td>   <td class="up">4.89&times;</td></tr>
-    <tr><td>repeat.json</td>            <td class="size">11.1 KB</td> <td>548</td>   <td>2,098</td> <td class="simd-win">4,016</td> <td>5,200</td> <td class="up">3.83&times;</td></tr>
-    <tr><td>truenull.json</td>          <td class="size">11.7 KB</td> <td>222</td>   <td class="win">2,596</td> <td>2,445</td> <td>4,400</td> <td class="up">11.68&times;</td></tr>
-    <tr><td>twitter_timeline.json</td>  <td class="size">41.2 KB</td> <td>380</td>   <td>2,971</td> <td class="simd-win">3,113</td> <td>13,600</td><td class="up">7.82&times;</td></tr>
-  </tbody>
-  <tfoot>
-    <tr><td>aggregate</td><td class="size">64.6 KB</td><td>352</td><td>2,674</td><td>3,040</td><td>&mdash;</td><td class="up">7.60&times;</td></tr>
-  </tfoot>
-</table>
-
-<div class="legend">
-  <span><span class="sw" style="background: var(--c-fast);"></span>fastjson best</span>
-  <span><span class="sw" style="background: var(--c-simd);"></span>simdjson best</span>
-</div>
-
-<h2>Memory peak</h2>
-
-<p>Single-call peak heap delta, aggregated across the 15-file large corpus on vanilla 8.6. simdjson and ext/json land identical for decode because the bench uses simdjson's eager <code>simdjson_decode</code> (builds a full PHP value tree like ext/json). simdjson's lazy walk would lower this, but it's a different programming model and not a fair like-for-like.</p>
-
-<div class="mem-grid">
-  <div class="mem-card">
-    <h3>Decode &rarr; stdClass</h3>
-    <div class="bar-row"><span class="who">ext/json</span><span class="b ext" style="width: 90px;"></span><span class="v">56.4 MB</span></div>
-    <div class="bar-row"><span class="who">fastjson</span><span class="b" style="width: 156px;"></span><span class="v">97.8 MB <span style="color:var(--muted);font-size:0.76rem">(1.74&times;)</span></span></div>
-    <div class="bar-row"><span class="who">simdjson</span><span class="b simd" style="width: 90px;"></span><span class="v">56.4 MB <span style="color:var(--muted);font-size:0.76rem">(1.00&times;)</span></span></div>
-    <div class="note">fastjson holds yyjson's full doc alongside the zval output until the walker finishes; simdjson and ext/json each free the parser state as they emit zvals.</div>
-  </div>
-  <div class="mem-card">
-    <h3>Encode</h3>
-    <div class="bar-row"><span class="who">ext/json</span><span class="b ext" style="width: 80px;"></span><span class="v">11.2 MB</span></div>
-    <div class="bar-row"><span class="who">fastjson</span><span class="b" style="width: 85px;"></span><span class="v">11.9 MB <span style="color:var(--muted);font-size:0.76rem">(1.06&times;)</span></span></div>
-    <div class="bar-row"><span class="who">simdjson</span><span style="color:var(--muted);font-size:0.78rem">no encode</span></div>
-    <div class="note">Direct-write encoder: walks zvals straight into <code>smart_str</code> using yyjson primitives (<code>yyjson_write_number</code>, <code>yyjson_write_string_to_buf</code>). Near-parity with ext/json.</div>
-  </div>
-  <div class="mem-card">
-    <h3>Validate</h3>
-    <div class="bar-row"><span class="who">ext/json</span><span class="b ext" style="width: 4px;"></span><span class="v">~80 B</span></div>
-    <div class="bar-row"><span class="who">fastjson</span><span class="b" style="width: 220px;"></span><span class="v">14.9 MB <span style="color:var(--muted);font-size:0.76rem">(101&times;)</span></span></div>
-    <div class="bar-row"><span class="who">simdjson</span><span class="b simd" style="width: 0px;"></span><span class="v">~0 B</span></div>
-    <div class="note">ext/json and simdjson validate stream the input. fastjson uses vendor patch P-002 for no-tree validate (2.7&times; less memory than stock yyjson) but still copies the input buffer; not yet streaming.</div>
-  </div>
-</div>
-
-<h2>Where each tool lands</h2>
 
 <div class="takeaway-grid">
   <div class="takeaway">
-    <h3 style="color: var(--c-ext);">ext/json</h3>
-    <p style="color: var(--ink); font-size: 0.92rem;">Always there. No install. Streaming validate at ~80 bytes of state. php-src#17734 (currently open) accelerates encoder long-string paths but is a net loss on JSON-shaped corpora today.</p>
+    <div class="num">2.59x</div>
+    <h3>Decode</h3>
+    <p>vs ext/json, decode &rarr; <code>stdClass</code> (14.81&nbsp;MB large corpus aggregate).</p>
   </div>
   <div class="takeaway">
-    <h3 style="color: var(--c-fast);">fastjson 0.1.0</h3>
-    <p style="color: var(--ink); font-size: 0.92rem;">Drop-in replacement. <code>fastjson_encode/decode/validate</code> match <code>json_*</code> argument-for-argument; <code>json_last_error</code>-compatible. Coexists with ext/json so adoption is per call site. Best encode by 5-6&times;, best small-input decode.</p>
+    <div class="num">5.92x</div>
+    <h3>Encode</h3>
+    <p>vs ext/json, encode a PHP value to JSON (14.81&nbsp;MB large corpus aggregate).</p>
   </div>
   <div class="takeaway">
-    <h3 style="color: var(--c-simd);">simdjson_php</h3>
-    <p style="color: var(--ink); font-size: 0.92rem;">Decode + validate only. Separate <code>simdjson_*</code> API with different semantics around lazy parsing. Fastest large-input decode and validate; loses to fastjson on small inputs. Not a drop-in for code calling <code>json_*</code>.</p>
+    <div class="num">5.23x</div>
+    <h3>Validate</h3>
+    <p>vs ext/json, validate without building a tree (14.81&nbsp;MB large corpus aggregate).</p>
   </div>
 </div>
 
-<h2>Methodology</h2>
+<h2>Decode <span class="pill">PHP 8.4.22-dev</span></h2>
+<p>Decode to <code>stdClass</code>. fastjson's decode path is unchanged from yyjson's reader; assoc-array decode tracks it closely (see <code>bench/baseline.md</code> for the full assoc table).</p>
+<div class="hero">
+  <div class="label-row">
+    <div class="who">ext/json<span class="v">PHP 8.4.22-dev</span></div>
+    <div class="bar-wrap"><div class="bar" style="width: 38.6%; background: var(--c-ext);"></div></div>
+    <div class="num">209 <span class="u">MB/s</span></div>
+  </div>
+  <div class="label-row">
+    <div class="who">fastjson 0.4.0<span class="v">PHP 8.4.22-dev</span></div>
+    <div class="bar-wrap"><div class="bar" style="width: 100%; background: var(--c-fast);"></div></div>
+    <div class="num">542 <span class="u">MB/s</span></div>
+  </div>
+  <div class="axis">
+    <div></div>
+    <div class="ticks"><span>0</span><span>500</span><span>1,000 MB/s</span></div>
+    <div></div>
+  </div>
+  <div class="caption">
+    Aggregate on the 14.81&nbsp;MB large corpus. fastjson is <strong class="up" style="color:var(--c-up)">2.59x</strong> ext/json.  </div>
+</div>
+<h3>Per-file decode, large corpus</h3>
+<table class="matrix">
+  <thead><tr>
+    <th>File</th><th>Size</th>
+    <th>ext/json<span class="sub">MB/s</span></th>
+    <th>fastjson<span class="sub">MB/s</span></th>
+    <th>fastjson vs<span class="sub">ext/json</span></th>
+  </tr></thead>
+  <tbody>
+    <tr><td>apache_builds.json</td><td class="size">124.3 KB</td>
+        <td>367</td>
+        <td class="win">980</td>
+        <td class="up">2.67x</td></tr>
+    <tr><td>canada.json</td><td class="size">2.15 MB</td>
+        <td>95</td>
+        <td class="win">386</td>
+        <td class="up">4.07x</td></tr>
+    <tr><td>citm_catalog.json</td><td class="size">1.65 MB</td>
+        <td>446</td>
+        <td class="win">1,065</td>
+        <td class="up">2.39x</td></tr>
+    <tr><td>github_events.json</td><td class="size">63.6 KB</td>
+        <td>413</td>
+        <td class="win">1,260</td>
+        <td class="up">3.05x</td></tr>
+    <tr><td>gsoc-2018.json</td><td class="size">3.17 MB</td>
+        <td>335</td>
+        <td class="win">1,044</td>
+        <td class="up">3.11x</td></tr>
+    <tr><td>instruments.json</td><td class="size">215.2 KB</td>
+        <td>345</td>
+        <td class="win">918</td>
+        <td class="up">2.66x</td></tr>
+    <tr><td>marine_ik.json</td><td class="size">2.85 MB</td>
+        <td>180</td>
+        <td class="win">297</td>
+        <td class="up">1.65x</td></tr>
+    <tr><td>mesh.json</td><td class="size">706.6 KB</td>
+        <td>188</td>
+        <td class="win">483</td>
+        <td class="up">2.57x</td></tr>
+    <tr><td>mesh.pretty.json</td><td class="size">1.50 MB</td>
+        <td>242</td>
+        <td class="win">654</td>
+        <td class="up">2.70x</td></tr>
+    <tr><td>numbers.json</td><td class="size">146.6 KB</td>
+        <td>225</td>
+        <td class="win">919</td>
+        <td class="up">4.09x</td></tr>
+    <tr><td>random.json</td><td class="size">498.5 KB</td>
+        <td>246</td>
+        <td class="win">465</td>
+        <td class="up">1.89x</td></tr>
+    <tr><td>stringifiedphp.json</td><td class="size">139.9 KB</td>
+        <td>338</td>
+        <td class="win">2,487</td>
+        <td class="up">7.36x</td></tr>
+    <tr><td>twitter.json</td><td class="size">616.7 KB</td>
+        <td>393</td>
+        <td class="win">942</td>
+        <td class="up">2.40x</td></tr>
+    <tr><td>twitterescaped.json</td><td class="size">549.2 KB</td>
+        <td>296</td>
+        <td class="win">779</td>
+        <td class="up">2.64x</td></tr>
+    <tr><td>update-center.json</td><td class="size">520.7 KB</td>
+        <td>259</td>
+        <td class="win">557</td>
+        <td class="up">2.15x</td></tr>
+  </tbody>
+  <tfoot>
+    <tr><td>aggregate</td><td class="size">14.81 MB</td>
+        <td>209</td><td>542</td>
+        <td class="up">2.59x</td></tr>
+  </tfoot>
+</table>
+<div class="legend">
+  <span><span class="sw" style="background: var(--c-fast);"></span>fastjson best</span>
+  <span><span class="sw" style="background: var(--c-up);"></span>fastjson faster than ext/json</span>
+</div>
+<h3>Per-file decode, small corpus</h3>
+<table class="matrix">
+  <thead><tr>
+    <th>File</th><th>Size</th>
+    <th>ext/json<span class="sub">MB/s</span></th>
+    <th>fastjson<span class="sub">MB/s</span></th>
+    <th>fast/call<span class="sub">ns</span></th>
+    <th>fastjson vs<span class="sub">ext/json</span></th>
+  </tr></thead>
+  <tbody>
+    <tr><td>adversarial.json</td><td class="size">80 B</td>
+        <td>168</td>
+        <td class="win">315</td>
+        <td>242 ns</td>
+        <td class="up">1.87x</td></tr>
+    <tr><td>demo.json</td><td class="size">387 B</td>
+        <td>308</td>
+        <td class="win">728</td>
+        <td>507 ns</td>
+        <td class="up">2.36x</td></tr>
+    <tr><td>flatadversarial.json</td><td class="size">64 B</td>
+        <td>131</td>
+        <td class="win">246</td>
+        <td>248 ns</td>
+        <td class="up">1.88x</td></tr>
+    <tr><td>repeat.json</td><td class="size">11.1 KB</td>
+        <td>434</td>
+        <td class="win">884</td>
+        <td>12.3 µs</td>
+        <td class="up">2.04x</td></tr>
+    <tr><td>truenull.json</td><td class="size">11.7 KB</td>
+        <td>208</td>
+        <td class="win">845</td>
+        <td>13.5 µs</td>
+        <td class="up">4.07x</td></tr>
+    <tr><td>twitter_timeline.json</td><td class="size">41.2 KB</td>
+        <td>306</td>
+        <td class="win">869</td>
+        <td>46.4 µs</td>
+        <td class="up">2.84x</td></tr>
+  </tbody>
+  <tfoot>
+    <tr><td>aggregate</td><td class="size">64.6 KB</td>
+        <td>295</td><td>862</td>
+        <td>&mdash;</td><td class="up">2.92x</td></tr>
+  </tfoot>
+</table>
 
-<details open>
-<summary>What "200 iterations" actually measures</summary>
-<p>Each (file, operation) cell is the median of 200 timed runs of the operation on the in-memory JSON, with the slowest 10% dropped (warmup + jitter filter). Throughput is bytes-in / median-ns &times; 1000 for decode and validate; bytes-out / median-ns for encode. <code>hrtime(true)</code> for timing.</p>
-</details>
+<h2>Encode <span class="pill">PHP 8.4.22-dev</span></h2>
+<p>fastjson 0.3.0+ encodes with a one-stage direct-write encoder (zval &rarr; <code>smart_str</code> via yyjson's scalar writers, no intermediate mutable document), which is where the largest wins on float- and pretty-heavy inputs come from.</p>
+<div class="hero">
+  <div class="label-row">
+    <div class="who">ext/json<span class="v">PHP 8.4.22-dev</span></div>
+    <div class="bar-wrap"><div class="bar" style="width: 16.9%; background: var(--c-ext);"></div></div>
+    <div class="num">166 <span class="u">MB/s</span></div>
+  </div>
+  <div class="label-row">
+    <div class="who">fastjson 0.4.0<span class="v">PHP 8.4.22-dev</span></div>
+    <div class="bar-wrap"><div class="bar" style="width: 100%; background: var(--c-fast);"></div></div>
+    <div class="num">983 <span class="u">MB/s</span></div>
+  </div>
+  <div class="axis">
+    <div></div>
+    <div class="ticks"><span>0</span><span>500</span><span>1,000 MB/s</span></div>
+    <div></div>
+  </div>
+  <div class="caption">
+    Aggregate on the 14.81&nbsp;MB large corpus. fastjson is <strong class="up" style="color:var(--c-up)">5.92x</strong> ext/json.  </div>
+</div>
+<h3>Per-file encode, large corpus</h3>
+<table class="matrix">
+  <thead><tr>
+    <th>File</th><th>Size</th>
+    <th>ext/json<span class="sub">MB/s</span></th>
+    <th>fastjson<span class="sub">MB/s</span></th>
+    <th>fastjson vs<span class="sub">ext/json</span></th>
+  </tr></thead>
+  <tbody>
+    <tr><td>apache_builds.json</td><td class="size">124.3 KB</td>
+        <td>1,093</td>
+        <td class="win">1,459</td>
+        <td class="up">1.33x</td></tr>
+    <tr><td>canada.json</td><td class="size">2.15 MB</td>
+        <td>56</td>
+        <td class="win">671</td>
+        <td class="up">12.07x</td></tr>
+    <tr><td>citm_catalog.json</td><td class="size">1.65 MB</td>
+        <td>2,349</td>
+        <td class="win">2,709</td>
+        <td class="up">1.15x</td></tr>
+    <tr><td>github_events.json</td><td class="size">63.6 KB</td>
+        <td>1,243</td>
+        <td class="win">1,952</td>
+        <td class="up">1.57x</td></tr>
+    <tr><td>gsoc-2018.json</td><td class="size">3.17 MB</td>
+        <td>714</td>
+        <td class="win">1,249</td>
+        <td class="up">1.75x</td></tr>
+    <tr><td>instruments.json</td><td class="size">215.2 KB</td>
+        <td>1,752</td>
+        <td class="win">1,902</td>
+        <td class="up">1.09x</td></tr>
+    <tr><td>marine_ik.json</td><td class="size">2.85 MB</td>
+        <td>125</td>
+        <td class="win">636</td>
+        <td class="up">5.10x</td></tr>
+    <tr><td>mesh.json</td><td class="size">706.6 KB</td>
+        <td>82</td>
+        <td class="win">736</td>
+        <td class="up">8.95x</td></tr>
+    <tr><td>mesh.pretty.json</td><td class="size">1.50 MB</td>
+        <td>179</td>
+        <td class="win">1,587</td>
+        <td class="up">8.88x</td></tr>
+    <tr><td>numbers.json</td><td class="size">146.6 KB</td>
+        <td>51</td>
+        <td class="win">649</td>
+        <td class="up">12.77x</td></tr>
+    <tr><td>random.json</td><td class="size">498.5 KB</td>
+        <td>589</td>
+        <td class="win">804</td>
+        <td class="up">1.37x</td></tr>
+    <tr><td>stringifiedphp.json</td><td class="size">139.9 KB</td>
+        <td>723</td>
+        <td class="win">2,870</td>
+        <td class="up">3.97x</td></tr>
+    <tr><td>twitter.json</td><td class="size">616.7 KB</td>
+        <td>1,090</td>
+        <td class="win">1,608</td>
+        <td class="up">1.48x</td></tr>
+    <tr><td>twitterescaped.json</td><td class="size">549.2 KB</td>
+        <td>981</td>
+        <td class="win">1,412</td>
+        <td class="up">1.44x</td></tr>
+    <tr><td>update-center.json</td><td class="size">520.7 KB</td>
+        <td>778</td>
+        <td class="win">992</td>
+        <td class="up">1.28x</td></tr>
+  </tbody>
+  <tfoot>
+    <tr><td>aggregate</td><td class="size">14.81 MB</td>
+        <td>166</td><td>983</td>
+        <td class="up">5.92x</td></tr>
+  </tfoot>
+</table>
+<div class="legend">
+  <span><span class="sw" style="background: var(--c-fast);"></span>fastjson best</span>
+  <span><span class="sw" style="background: var(--c-down);"></span>ext/json faster</span>
+</div>
+<h3>Per-file encode, small corpus</h3>
+<table class="matrix">
+  <thead><tr>
+    <th>File</th><th>Size</th>
+    <th>ext/json<span class="sub">MB/s</span></th>
+    <th>fastjson<span class="sub">MB/s</span></th>
+    <th>fast/call<span class="sub">ns</span></th>
+    <th>fastjson vs<span class="sub">ext/json</span></th>
+  </tr></thead>
+  <tbody>
+    <tr><td>adversarial.json</td><td class="size">80 B</td>
+        <td>610</td>
+        <td class="">596</td>
+        <td>128 ns</td>
+        <td class="down">0.98x</td></tr>
+    <tr><td>demo.json</td><td class="size">387 B</td>
+        <td>1,260</td>
+        <td class="win">1,465</td>
+        <td>252 ns</td>
+        <td class="up">1.16x</td></tr>
+    <tr><td>flatadversarial.json</td><td class="size">64 B</td>
+        <td>298</td>
+        <td class="win">436</td>
+        <td>140 ns</td>
+        <td class="up">1.46x</td></tr>
+    <tr><td>repeat.json</td><td class="size">11.1 KB</td>
+        <td>960</td>
+        <td class="win">1,707</td>
+        <td>6.3 µs</td>
+        <td class="up">1.78x</td></tr>
+    <tr><td>truenull.json</td><td class="size">11.7 KB</td>
+        <td>1,457</td>
+        <td class="win">2,170</td>
+        <td>5.3 µs</td>
+        <td class="up">1.49x</td></tr>
+    <tr><td>twitter_timeline.json</td><td class="size">41.2 KB</td>
+        <td>1,062</td>
+        <td class="win">1,427</td>
+        <td>28.2 µs</td>
+        <td class="up">1.34x</td></tr>
+  </tbody>
+  <tfoot>
+    <tr><td>aggregate</td><td class="size">64.6 KB</td>
+        <td>1,093</td><td>1,563</td>
+        <td>&mdash;</td><td class="up">1.43x</td></tr>
+  </tfoot>
+</table>
 
-<details>
-<summary>How the php-src#17734 column was produced</summary>
-<p>php-src#17734 (<a href="https://github.com/php/php-src/pull/17734">php/php-src#17734</a>) is currently open against PHP master, not merged. The vanilla 8.6 baseline is built from <code>php-src</code> master without the patch; the php-src#17734 column is built from the same tree with the three patched files (<code>ext/json/json_encoder.c</code>, <code>ext/standard/html.c</code>, <code>ext/standard/html.h</code>) applied. Both are release builds (<code>--disable-debug</code>, <code>-O2</code>); same configure flags. fastjson and simdjson_php are rebuilt against each PHP install.</p>
-</details>
+<h2>Validate <span class="pill">PHP 8.4.22-dev</span></h2>
+<p>fastjson's edge comes from vendor patch <code>P-002</code> (<code>YYJSON_READ_VALIDATE_ONLY</code>), a no-tree validate entry point that drops peak memory ~2.7&times; vs the stock read path. ext/json validates by fully decoding and discarding.</p>
+<div class="hero">
+  <div class="label-row">
+    <div class="who">ext/json<span class="v">PHP 8.4.22-dev</span></div>
+    <div class="bar-wrap"><div class="bar" style="width: 19.1%; background: var(--c-ext);"></div></div>
+    <div class="num">241 <span class="u">MB/s</span></div>
+  </div>
+  <div class="label-row">
+    <div class="who">fastjson 0.4.0<span class="v">PHP 8.4.22-dev</span></div>
+    <div class="bar-wrap"><div class="bar" style="width: 100%; background: var(--c-fast);"></div></div>
+    <div class="num">1,260 <span class="u">MB/s</span></div>
+  </div>
+  <div class="axis">
+    <div></div>
+    <div class="ticks"><span>0</span><span>750</span><span>1,500 MB/s</span></div>
+    <div></div>
+  </div>
+  <div class="caption">
+    Aggregate on the 14.81&nbsp;MB large corpus. fastjson is <strong class="up" style="color:var(--c-up)">5.23x</strong> ext/json.  </div>
+</div>
+<h3>Per-file validate, large corpus</h3>
+<table class="matrix">
+  <thead><tr>
+    <th>File</th><th>Size</th>
+    <th>ext/json<span class="sub">MB/s</span></th>
+    <th>fastjson<span class="sub">MB/s</span></th>
+    <th>fastjson vs<span class="sub">ext/json</span></th>
+  </tr></thead>
+  <tbody>
+    <tr><td>apache_builds.json</td><td class="size">124.3 KB</td>
+        <td>414</td>
+        <td class="win">2,470</td>
+        <td class="up">5.97x</td></tr>
+    <tr><td>canada.json</td><td class="size">2.15 MB</td>
+        <td>104</td>
+        <td class="win">863</td>
+        <td class="up">8.32x</td></tr>
+    <tr><td>citm_catalog.json</td><td class="size">1.65 MB</td>
+        <td>551</td>
+        <td class="win">2,457</td>
+        <td class="up">4.46x</td></tr>
+    <tr><td>github_events.json</td><td class="size">63.6 KB</td>
+        <td>476</td>
+        <td class="win">2,877</td>
+        <td class="up">6.04x</td></tr>
+    <tr><td>gsoc-2018.json</td><td class="size">3.17 MB</td>
+        <td>353</td>
+        <td class="win">1,469</td>
+        <td class="up">4.16x</td></tr>
+    <tr><td>instruments.json</td><td class="size">215.2 KB</td>
+        <td>437</td>
+        <td class="win">2,142</td>
+        <td class="up">4.90x</td></tr>
+    <tr><td>marine_ik.json</td><td class="size">2.85 MB</td>
+        <td>238</td>
+        <td class="win">821</td>
+        <td class="up">3.45x</td></tr>
+    <tr><td>mesh.json</td><td class="size">706.6 KB</td>
+        <td>212</td>
+        <td class="win">1,155</td>
+        <td class="up">5.45x</td></tr>
+    <tr><td>mesh.pretty.json</td><td class="size">1.50 MB</td>
+        <td>259</td>
+        <td class="win">1,575</td>
+        <td class="up">6.09x</td></tr>
+    <tr><td>numbers.json</td><td class="size">146.6 KB</td>
+        <td>237</td>
+        <td class="win">1,347</td>
+        <td class="up">5.68x</td></tr>
+    <tr><td>random.json</td><td class="size">498.5 KB</td>
+        <td>333</td>
+        <td class="win">1,409</td>
+        <td class="up">4.23x</td></tr>
+    <tr><td>stringifiedphp.json</td><td class="size">139.9 KB</td>
+        <td>334</td>
+        <td class="win">2,699</td>
+        <td class="up">8.07x</td></tr>
+    <tr><td>twitter.json</td><td class="size">616.7 KB</td>
+        <td>502</td>
+        <td class="win">2,431</td>
+        <td class="up">4.84x</td></tr>
+    <tr><td>twitterescaped.json</td><td class="size">549.2 KB</td>
+        <td>355</td>
+        <td class="win">2,309</td>
+        <td class="up">6.51x</td></tr>
+    <tr><td>update-center.json</td><td class="size">520.7 KB</td>
+        <td>306</td>
+        <td class="win">1,908</td>
+        <td class="up">6.23x</td></tr>
+  </tbody>
+  <tfoot>
+    <tr><td>aggregate</td><td class="size">14.81 MB</td>
+        <td>241</td><td>1,260</td>
+        <td class="up">5.23x</td></tr>
+  </tfoot>
+</table>
+<div class="legend">
+  <span><span class="sw" style="background: var(--c-fast);"></span>fastjson best</span>
+  <span><span class="sw" style="background: var(--c-up);"></span>fastjson faster than ext/json</span>
+</div>
+<h3>Per-file validate, small corpus</h3>
+<table class="matrix">
+  <thead><tr>
+    <th>File</th><th>Size</th>
+    <th>ext/json<span class="sub">MB/s</span></th>
+    <th>fastjson<span class="sub">MB/s</span></th>
+    <th>fast/call<span class="sub">ns</span></th>
+    <th>fastjson vs<span class="sub">ext/json</span></th>
+  </tr></thead>
+  <tbody>
+    <tr><td>adversarial.json</td><td class="size">80 B</td>
+        <td>160</td>
+        <td class="win">652</td>
+        <td>117 ns</td>
+        <td class="up">4.09x</td></tr>
+    <tr><td>demo.json</td><td class="size">387 B</td>
+        <td>360</td>
+        <td class="win">1,425</td>
+        <td>259 ns</td>
+        <td class="up">3.96x</td></tr>
+    <tr><td>flatadversarial.json</td><td class="size">64 B</td>
+        <td>161</td>
+        <td class="win">555</td>
+        <td>110 ns</td>
+        <td class="up">3.45x</td></tr>
+    <tr><td>repeat.json</td><td class="size">11.1 KB</td>
+        <td>536</td>
+        <td class="win">1,987</td>
+        <td>5.5 µs</td>
+        <td class="up">3.70x</td></tr>
+    <tr><td>truenull.json</td><td class="size">11.7 KB</td>
+        <td>232</td>
+        <td class="win">2,314</td>
+        <td>4.9 µs</td>
+        <td class="up">9.97x</td></tr>
+    <tr><td>twitter_timeline.json</td><td class="size">41.2 KB</td>
+        <td>382</td>
+        <td class="win">2,688</td>
+        <td>15.0 µs</td>
+        <td class="up">7.04x</td></tr>
+  </tbody>
+  <tfoot>
+    <tr><td>aggregate</td><td class="size">64.6 KB</td>
+        <td>357</td><td>2,438</td>
+        <td>&mdash;</td><td class="up">6.84x</td></tr>
+  </tfoot>
+</table>
 
-<details>
-<summary>Why simdjson is faster on float-heavy and large inputs</summary>
-<p><code>canada.json</code> is geographic coordinates: an array of arrays of doubles. simdjson's SSE-driven number parser hits multi-GB/s on doubles where yyjson's portable C99 number parser is slower. Similar gaps on <code>marine_ik</code> (mesh vertex data), <code>numbers</code>, and <code>gsoc-2018</code> (large date strings).</p>
-<p>fastjson catches simdjson on object-heavy inputs (<code>citm_catalog</code>, <code>instruments</code>, <code>twitterescaped</code>) because constructing PHP <code>stdClass</code> / array bodies dominates over raw parse, and fastjson writes object property tables via <code>Z_OBJPROP_P</code> directly, bypassing the per-property write-handler dispatch.</p>
-</details>
+<h2>Memory peak</h2>
+<p>Single-call peak heap, <code>fastjson / ext-json</code>. Above 1.0 means fastjson uses more &mdash; the price of yyjson's build-a-doc-then-walk model on decode. Encode is at parity (direct-write, no mutable doc); validate trades memory for the no-tree fast path.</p>
+<div class="mem-grid">
+  <div class="mem-card">
+    <h3>Decode &amp;rarr; stdClass</h3>
+    <div class="bar-row"><span class="who">ext/json</span><span class="b ext" style="width: 69px;"></span><span class="v">56.37 MB</span></div>
+    <div class="bar-row"><span class="who">fastjson</span><span class="b" style="width: 120px;"></span><span class="v">97.81 MB</span></div>
+    <div class="note">fastjson / ext-json peak: <strong>1.74x</strong></div>
+  </div>
+  <div class="mem-card">
+    <h3>Encode</h3>
+    <div class="bar-row"><span class="who">ext/json</span><span class="b ext" style="width: 113px;"></span><span class="v">11.24 MB</span></div>
+    <div class="bar-row"><span class="who">fastjson</span><span class="b" style="width: 120px;"></span><span class="v">11.92 MB</span></div>
+    <div class="note">fastjson / ext-json peak: <strong>1.06x</strong></div>
+  </div>
+  <div class="mem-card">
+    <h3>Validate</h3>
+    <div class="bar-row"><span class="who">ext/json</span><span class="b ext" style="width: 120px;"></span><span class="v">150.6 KB</span></div>
+    <div class="bar-row"><span class="who">fastjson</span><span class="b" style="width: 12px;"></span><span class="v">14.91 MB</span></div>
+    <div class="note">fastjson / ext-json peak: <strong>101.40x</strong></div>
+  </div>
+</div>
 
-<details>
-<summary>Reproducing this</summary>
-<pre><code>git clone https://github.com/iliaal/fastjson
-cd fastjson
-phpize &amp;&amp; ./configure --enable-fastjson &amp;&amp; make -j$(nproc)
-./bench/fetch-data.sh
-
-PHP=$HOME/php-install-PHP-8.6-vanilla/bin/php
-$PHP -d extension=$(pwd)/modules/fastjson.so \
-     -d extension=/path/to/simdjson.so \
-     bench/run.php bench/data 200 &gt; bench/baseline.md</code></pre>
-<p>Both PHP and fastjson must be release-built (<code>-O2</code>, no <code>--enable-debug</code>). <code>phpize</code> inherits the running PHP's CFLAGS, so building fastjson against a debug PHP gives a debug <code>.so</code> and 2-3&times; slower throughput. Full recipe at <a href="https://github.com/iliaal/fastjson/blob/master/bench/README.md"><code>bench/README.md</code></a>.</p>
-</details>
-
-<p class="meta" style="margin-top: 2.5rem; border-top: 1px solid var(--rule); padding-top: 1rem;">
-fastjson <a href="https://github.com/iliaal/fastjson">github.com/iliaal/fastjson</a> &middot; BSD 3-Clause &middot; vendors yyjson 0.12.0 (MIT) with three local patches documented in <code>vendor/yyjson/PATCHES.md</code>
+<p class="meta" style="border-top:1px solid var(--rule);padding-top:0.8rem;margin-top:2.5rem;">
+Regenerate: <code>php -d extension=modules/fastjson.so bench/run.php bench/data 300 &gt; bench/baseline.md</code> then <code>php bench/render-baseline-html.php bench/baseline.md &gt; docs/baseline.html</code>. Source: <a href="https://github.com/iliaal/fastjson">github.com/iliaal/fastjson</a>.
 </p>
 
 </div>
