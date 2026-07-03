@@ -9,6 +9,11 @@ name: Release Windows binaries
 on:
   release:
     types: [published]
+  # Manual build-only validation before tagging. On workflow_dispatch the
+  # matrix + build (with tests) run but the upload job is skipped, so a
+  # maintainer can confirm the Windows lanes compile on the release commit
+  # without publishing assets to a non-existent release.
+  workflow_dispatch:
 
 jobs:
   matrix:
@@ -41,6 +46,7 @@ jobs:
 
   release:
     name: Upload binaries to the release
+    if: github.event_name == 'release'
     runs-on: ubuntu-latest
     needs: build
     permissions:
