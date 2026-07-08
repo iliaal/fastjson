@@ -34,7 +34,7 @@ echo fastjson_pointer_set($doc, '', [1, 2, ['k' => 'v']]), "\n";
 
 // Scalar string still honors output-formatting flags on the write.
 echo fastjson_pointer_set($doc, '/a/b', 'a/b'), "\n";
-echo fastjson_pointer_set($doc, '/a/b', 'a/b', JSON_UNESCAPED_SLASHES), "\n";
+echo fastjson_pointer_set($doc, '/a/b', 'a/b', 512, JSON_UNESCAPED_SLASHES), "\n";
 
 var_dump(fastjson_last_error());
 ?>

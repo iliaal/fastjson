@@ -11,6 +11,7 @@ which run in-process under the same trust model as ext/json.
 
 | Version | Supported          |
 |---------|--------------------|
+| 0.5.x   | :white_check_mark: |
 | 0.4.x   | :white_check_mark: |
 
 Pre-1.0: the current minor gets security fixes, and the API may still

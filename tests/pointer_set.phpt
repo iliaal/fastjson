@@ -29,22 +29,26 @@ var_dump(fastjson_pointer_set($j, '/a/x', 1));
 var_dump(fastjson_last_error() === JSON_ERROR_SYNTAX);
 
 // Output formatting follows the encode bits of $flags.
-echo fastjson_pointer_set('{"a":1}', '/b', 2, JSON_PRETTY_PRINT), "\n";
+echo fastjson_pointer_set('{"a":1}', '/b', 2, 512, JSON_PRETTY_PRINT), "\n";
 echo fastjson_pointer_set('{}', '/u', 'a/b'), "\n";
-echo fastjson_pointer_set('{}', '/u', 'a/b', JSON_UNESCAPED_SLASHES), "\n";
+echo fastjson_pointer_set('{}', '/u', 'a/b', 512, JSON_UNESCAPED_SLASHES), "\n";
+
+// Malformed non-empty pointers fail; they must not silently no-op.
+var_dump(fastjson_pointer_set('{"a":1}', 'a', 2));
+var_dump(fastjson_last_error() === JSON_ERROR_SYNTAX);
 
 // Parse error on the target: false + error, or throw under THROW_ON_ERROR.
 var_dump(fastjson_pointer_set('{bad', '/x', 1));
 var_dump(fastjson_last_error() === JSON_ERROR_SYNTAX);
 try {
-    fastjson_pointer_set('{bad', '/x', 1, JSON_THROW_ON_ERROR);
+    fastjson_pointer_set('{bad', '/x', 1, 512, JSON_THROW_ON_ERROR);
 } catch (JsonException $e) {
     echo "threw: ", $e->getMessage(), "\n";
 }
 
-// $depth is argument #5.
+// $depth is argument #4.
 try {
-    fastjson_pointer_set('{}', '/x', 1, 0, 0);
+    fastjson_pointer_set('{}', '/x', 1, 0);
 } catch (ValueError $e) {
     echo $e->getMessage(), "\n";
 }
@@ -67,5 +71,7 @@ bool(true)
 {"u":"a/b"}
 bool(false)
 bool(true)
+bool(false)
+bool(true)
 threw: unexpected character, expected a string key
-fastjson_pointer_set(): Argument #5 ($depth) must be greater than 0
+fastjson_pointer_set(): Argument #4 ($depth) must be greater than 0

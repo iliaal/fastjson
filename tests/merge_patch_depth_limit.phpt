@@ -32,6 +32,12 @@ try {
     echo "threw: ", $e->getMessage(), "\n";
 }
 
+// User $depth above the stack-safe cap must not bypass the pre-check.
+$cap = str_repeat('{"a":', 1100) . '1' . str_repeat('}', 1100);
+$r = fastjson_merge_patch('{}', $cap, true, 100000);
+var_dump($r);
+var_dump(fastjson_last_error() === FASTJSON_ERROR_DEPTH);
+
 // A stray quote/brace inside a RELAXED comment must not let a deep
 // operand slip past the guard. The depth is measured on the parsed
 // tree, so source-level comments and quotes can't undercount it.
@@ -60,6 +66,8 @@ bool(true)
 NULL
 bool(true)
 threw: Maximum stack depth exceeded
+NULL
+bool(true)
 NULL
 bool(true)
 bool(true)

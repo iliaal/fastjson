@@ -55,6 +55,35 @@
     } \
 } while (0)
 
+/* Secondary helpers below call recursive C code before the normal zval
+ * walker can enforce the public $depth. Keep their effective depth bounded
+ * even when the caller passes a very large value. */
+#define FASTJSON_STACK_DEPTH_LIMIT 1024
+
+static size_t fastjson_effective_stack_depth(zend_long depth)
+{
+    if (depth > FASTJSON_STACK_DEPTH_LIMIT) {
+        return FASTJSON_STACK_DEPTH_LIMIT;
+    }
+    return (size_t)depth;
+}
+
+#define FASTJSON_POINTER_VALUE_ENCODE_FLAGS ( \
+    FASTJSON_ENCODE_HEX_TAG | \
+    FASTJSON_ENCODE_HEX_AMP | \
+    FASTJSON_ENCODE_HEX_APOS | \
+    FASTJSON_ENCODE_HEX_QUOT | \
+    FASTJSON_ENCODE_FORCE_OBJECT | \
+    FASTJSON_ENCODE_NUMERIC_CHECK | \
+    FASTJSON_ENCODE_UNESCAPED_SLASHES | \
+    FASTJSON_ENCODE_PRETTY_PRINT | \
+    FASTJSON_ENCODE_UNESCAPED_UNICODE | \
+    FASTJSON_ENCODE_PARTIAL_OUTPUT_ON_ERROR | \
+    FASTJSON_ENCODE_PRESERVE_ZERO_FRACTION | \
+    FASTJSON_ENCODE_INVALID_UTF8_IGNORE | \
+    FASTJSON_ENCODE_INVALID_UTF8_SUBSTITUTE | \
+    FASTJSON_ENCODE_THROW_ON_ERROR)
+
 static size_t fj_write_uint64_dec(char *buf, uint64_t u)
 {
     char tmp[24];
@@ -418,19 +447,23 @@ PHP_FUNCTION(fastjson_file_decode)
     }
     zend_string *contents = php_stream_copy_to_mem(stream,
                                                    PHP_STREAM_COPY_ALL, 0);
+    bool reached_eof = php_stream_eof(stream);
     /* php_stream_copy_to_mem returns NULL for a zero-byte stream, not an
      * empty zend_string. An empty file is not an I/O failure -- it must
      * decode exactly like fastjson_decode(""): yyjson rejects empty input
      * as a syntax error and JSON_THROW_ON_ERROR throws. Distinguish it
      * from a genuine read error by the stream's EOF state (checked before
      * close). */
-    if (contents == NULL && php_stream_eof(stream)) {
+    if (contents == NULL && reached_eof) {
         contents = ZSTR_EMPTY_ALLOC();
     }
     php_stream_close(stream);
-    if (contents == NULL) {
+    if (contents == NULL || !reached_eof) {
         /* A userspace wrapper's read() may have thrown mid-copy; propagate
          * it rather than clobbering it with a SYNTAX error. */
+        if (contents != NULL) {
+            zend_string_release(contents);
+        }
         if (EG(exception)) {
             fastjson_restore_error_state(&saved_err);
             RETURN_THROWS();
@@ -710,13 +743,15 @@ PHP_FUNCTION(fastjson_merge_patch)
 
     /* The merge and imut-copy below recurse on the C stack per nesting
      * level, ahead of the depth-capped walker. Reject operands whose
-     * parsed nesting reaches $depth up front so a pathological input
-     * fails with the same FASTJSON_ERROR_DEPTH the walker would raise,
+     * parsed nesting reaches the effective stack depth up front so a
+     * pathological input with a huge user $depth fails with the same
+     * FASTJSON_ERROR_DEPTH the walker would raise,
      * rather than overflowing the stack. The merged result's depth never
      * exceeds the deeper operand, so checking both inputs is sufficient. */
-    if (fastjson_val_depth_reaches(yyjson_doc_get_root(tdoc), (size_t)depth)
+    size_t stack_depth = fastjson_effective_stack_depth(depth);
+    if (fastjson_val_depth_reaches(yyjson_doc_get_root(tdoc), stack_depth)
             || fastjson_val_depth_reaches(yyjson_doc_get_root(pdoc),
-                                          (size_t)depth)) {
+                                          stack_depth)) {
         yyjson_doc_free(tdoc);
         yyjson_doc_free(pdoc);
         if (throw_mode) {
@@ -842,8 +877,8 @@ PHP_FUNCTION(fastjson_pointer_set)
         Z_PARAM_STRING(pointer, pointer_len)
         Z_PARAM_ZVAL(value)
         Z_PARAM_OPTIONAL
-        Z_PARAM_LONG(flags)
         Z_PARAM_LONG(depth)
+        Z_PARAM_LONG(flags)
     ZEND_PARSE_PARAMETERS_END();
 
     bool throw_mode = (flags & FASTJSON_DECODE_THROW_ON_ERROR) != 0;
@@ -853,23 +888,20 @@ PHP_FUNCTION(fastjson_pointer_set)
         fastjson_clear_error();
     }
 
-    FASTJSON_VALIDATE_DEPTH(depth, 5);
+    FASTJSON_VALIDATE_DEPTH(depth, 4);
+    size_t stack_depth = fastjson_effective_stack_depth(depth);
 
     zend_class_entry *ce = fastjson_json_exception_ce
         ? fastjson_json_exception_ce : zend_ce_exception;
 
-    /* Parse the target document. The IGNORE/SUBSTITUTE UTF-8 bits are
-     * masked off here: unlike decode/pointer_get, pointer_set writes the
-     * document back out through yyjson's writer, which cannot emit the
-     * invalid bytes those flags let the reader accept. Rather than
-     * half-accept and then fail opaquely at write time ("write failed"),
-     * reject an invalid base document at parse with a clean UTF-8 error.
-     * The flags still sanitize the replacement value below and still drive
-     * output formatting on the write. */
+    /* Parse the target document. RELAXED is the only decode-only bit accepted
+     * by pointer_set: the document is written back out rather than
+     * materialized into PHP, and low ext/json decode bits overlap encode bits.
+     * UTF-8 handling applies to the replacement value only; invalid UTF-8 in
+     * the base document is rejected so the writer never has to re-emit it. */
     yyjson_read_err err;
     yyjson_doc *idoc = fastjson_read_doc(json, json_len,
-        flags & ~(FASTJSON_INVALID_UTF8_IGNORE | FASTJSON_INVALID_UTF8_SUBSTITUTE),
-        &err);
+        flags & FASTJSON_DECODE_RELAXED, &err);
     if (idoc == NULL) {
         if (throw_mode) {
             fastjson_throw_read_err(&err, &saved_err);
@@ -879,12 +911,11 @@ PHP_FUNCTION(fastjson_pointer_set)
         RETURN_FALSE;
     }
 
-    /* yyjson_doc_mut_copy and yyjson_mut_write below recurse on the C stack
-     * per nesting level, ahead of any depth cap. Reject a target whose
-     * parsed nesting reaches $depth up front (same guard as
-     * fastjson_merge_patch) so an adversarial deep input fails cleanly
-     * rather than overflowing the stack. */
-    if (fastjson_val_depth_reaches(yyjson_doc_get_root(idoc), (size_t)depth)) {
+    /* The splice writer recurses on the C stack per container while
+     * re-emitting the target. Reject a target whose parsed nesting reaches
+     * the effective stack depth up front so adversarial deep input fails
+     * cleanly rather than overflowing the stack. */
+    if (fastjson_val_depth_reaches(yyjson_doc_get_root(idoc), stack_depth)) {
         yyjson_doc_free(idoc);
         if (throw_mode) {
             zend_throw_exception(ce, "Maximum stack depth exceeded",
@@ -897,11 +928,11 @@ PHP_FUNCTION(fastjson_pointer_set)
         RETURN_FALSE;
     }
 
-    zend_long value_flags =
-        flags & (FASTJSON_INVALID_UTF8_IGNORE | FASTJSON_INVALID_UTF8_SUBSTITUTE);
+    zend_long value_flags = flags & FASTJSON_POINTER_VALUE_ENCODE_FLAGS;
 
     fastjson_pointer_repl repl;
-    if (!fastjson_pointer_build_replacement(value, value_flags, depth, &repl)) {
+    if (!fastjson_pointer_build_replacement(value, value_flags,
+                                            (zend_long)stack_depth, &repl)) {
         yyjson_doc_free(idoc);
         if (EG(exception)) {
             RETURN_THROWS();
@@ -920,7 +951,7 @@ PHP_FUNCTION(fastjson_pointer_set)
     fj_splice_status splice_status;
     zend_string *out = fastjson_imut_pointer_set_write(
         yyjson_doc_get_root(idoc), pointer, pointer_len, repl.repl, flags,
-        &splice_status);
+        stack_depth, &splice_status);
 
     if (repl.owned_str != NULL) {
         efree(repl.owned_str);
@@ -933,6 +964,28 @@ PHP_FUNCTION(fastjson_pointer_set)
     yyjson_doc_free(idoc);
 
     if (out == NULL) {
+        if (splice_status == FJ_SPLICE_DEPTH_FAIL) {
+            if (throw_mode) {
+                zend_throw_exception(ce, "Maximum stack depth exceeded",
+                                     FASTJSON_ERROR_DEPTH);
+                fastjson_restore_error_state(&saved_err);
+                RETURN_THROWS();
+            }
+            fastjson_set_encode_error(FASTJSON_ERROR_DEPTH,
+                                      "Maximum stack depth exceeded");
+            RETURN_FALSE;
+        }
+        if (splice_status == FJ_SPLICE_TOO_LARGE) {
+            if (throw_mode) {
+                zend_throw_exception(ce, "Encoded JSON string is too large",
+                                     FASTJSON_ERROR_UNSUPPORTED_TYPE);
+                fastjson_restore_error_state(&saved_err);
+                RETURN_THROWS();
+            }
+            fastjson_set_encode_error(FASTJSON_ERROR_UNSUPPORTED_TYPE,
+                                      "Encoded JSON string is too large");
+            RETURN_FALSE;
+        }
         if (splice_status == FJ_SPLICE_SETTABLE_FAIL) {
             if (throw_mode) {
                 zend_throw_exception(ce,
@@ -957,7 +1010,7 @@ PHP_FUNCTION(fastjson_pointer_set)
     }
 
     RETVAL_STR(out);
-    if (!throw_mode) {
+    if (!throw_mode && FASTJSON_G(last_err_code) == FASTJSON_ERROR_NONE) {
         fastjson_clear_error();
     }
 }

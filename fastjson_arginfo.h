@@ -1,5 +1,5 @@
 /* This is a generated file, edit fastjson.stub.php instead.
- * Stub hash: 83e6b0a288edf54813699a12872d15853637a3a4 */
+ * Stub hash: bbe2f47360212c11c7604d29e0dfa671b908be42 */
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_fastjson_version, 0, 0, IS_STRING, 0)
 ZEND_END_ARG_INFO()
@@ -49,8 +49,8 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_MASK_EX(arginfo_fastjson_pointer_set, 0, 3, MAY_
 	ZEND_ARG_TYPE_INFO(0, json, IS_STRING, 0)
 	ZEND_ARG_TYPE_INFO(0, pointer, IS_STRING, 0)
 	ZEND_ARG_TYPE_INFO(0, value, IS_MIXED, 0)
-	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, flags, IS_LONG, 0, "0")
 	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, depth, IS_LONG, 0, "512")
+	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, flags, IS_LONG, 0, "0")
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_fastjson_merge_patch, 0, 2, IS_MIXED, 0)

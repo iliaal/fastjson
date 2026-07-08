@@ -16,11 +16,11 @@ fastjson
 $badval = "a\xFFb";
 
 // IGNORE strips the invalid byte from the replacement.
-var_dump(fastjson_pointer_set('{}', '/bad', $badval, JSON_INVALID_UTF8_IGNORE));
+var_dump(fastjson_pointer_set('{}', '/bad', $badval, 512, JSON_INVALID_UTF8_IGNORE));
 var_dump(fastjson_last_error());
 
 // SUBSTITUTE replaces it with U+FFFD.
-var_dump(fastjson_pointer_set('{}', '/bad', $badval, JSON_INVALID_UTF8_SUBSTITUTE));
+var_dump(fastjson_pointer_set('{}', '/bad', $badval, 512, JSON_INVALID_UTF8_SUBSTITUTE));
 
 // No UTF-8 flag: an invalid replacement is a hard UTF-8 error.
 var_dump(fastjson_pointer_set('{}', '/bad', $badval));
@@ -29,12 +29,12 @@ var_dump(fastjson_last_error());
 // Invalid UTF-8 in the base document is rejected at parse (error 5),
 // even with IGNORE set (the writer cannot emit those bytes).
 $doc = "{\"bad\":\"a\xFFb\",\"x\":1}";
-var_dump(fastjson_pointer_set($doc, '/x', 2, JSON_INVALID_UTF8_IGNORE));
+var_dump(fastjson_pointer_set($doc, '/x', 2, 512, JSON_INVALID_UTF8_IGNORE));
 var_dump(fastjson_last_error());
 
 // Output-formatting flags still take effect on the write.
-var_dump(fastjson_pointer_set('{"p":"x"}', '/p', 'a/b', JSON_UNESCAPED_SLASHES));
-var_dump(fastjson_pointer_set('{"p":"x"}', '/p', 'a/b', 0));
+var_dump(fastjson_pointer_set('{"p":"x"}', '/p', 'a/b', 512, JSON_UNESCAPED_SLASHES));
+var_dump(fastjson_pointer_set('{"p":"x"}', '/p', 'a/b', 512, 0));
 ?>
 --EXPECT--
 string(12) "{"bad":"ab"}"

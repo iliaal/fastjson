@@ -226,6 +226,8 @@ typedef enum {
     FJ_SPLICE_OK = 0,
     FJ_SPLICE_SETTABLE_FAIL,
     FJ_SPLICE_WRITE_FAIL,
+    FJ_SPLICE_DEPTH_FAIL,
+    FJ_SPLICE_TOO_LARGE,
 } fj_splice_status;
 
 typedef struct {
@@ -244,6 +246,7 @@ zend_string *fastjson_imut_pointer_set_write(yyjson_val *root,
                                              size_t pointer_len,
                                              const yyjson_val *replacement,
                                              zend_long flags,
+                                             size_t depth_limit,
                                              fj_splice_status *status);
 
 #endif /* PHP_FASTJSON_H */

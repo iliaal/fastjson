@@ -68,7 +68,7 @@ function fastjson_version(): string {}
  * Encodes a PHP value to a JSON string.
  *
  * Returns the JSON string on success, or false on failure (with
- * fastjson_last_error() set). Failure returns null behavior matches
+ * fastjson_last_error() set). The false-on-failure behavior matches
  * ext/json's json_encode().
  *
  * Supported $flags (all honored at the byte-equality level with
@@ -87,6 +87,8 @@ function fastjson_version(): string {}
  *                                   doubles (default strips it)
  *   JSON_PARTIAL_OUTPUT_ON_ERROR  - substitute on per-value errors
  *                                   instead of aborting
+ *   JSON_INVALID_UTF8_IGNORE      - drop malformed UTF-8 in strings
+ *   JSON_INVALID_UTF8_SUBSTITUTE  - replace malformed UTF-8 with U+FFFD
  *   JSON_THROW_ON_ERROR           - throw JsonException on encode
  *                                   failure (instead of returning
  *                                   false); global error state is
@@ -138,6 +140,8 @@ function fastjson_file_encode(string $filename, mixed $value, int $flags = 0, in
  *   JSON_BIGINT_AS_STRING         - emit integers that overflow PHP
  *                                   int range as strings instead of
  *                                   widening to double
+ *   JSON_INVALID_UTF8_IGNORE      - drop malformed UTF-8 in strings
+ *   JSON_INVALID_UTF8_SUBSTITUTE  - replace malformed UTF-8 with U+FFFD
  *   JSON_THROW_ON_ERROR           - throw JsonException on parse
  *                                   failure; global error state is
  *                                   preserved per ext/json's contract
@@ -223,14 +227,21 @@ function fastjson_pointer_exists(string $json, string $pointer, int $flags = 0):
  * resolve to a settable location (e.g. an array index gap or a scalar
  * mid-path).
  *
- * Output formatting follows the encode bits of $flags -- JSON_PRETTY_PRINT,
- * JSON_UNESCAPED_SLASHES, JSON_UNESCAPED_UNICODE -- while the parse bits
- * (FASTJSON_DECODE_RELAXED, JSON_THROW_ON_ERROR) apply to $json. Note: the
- * untouched portion of the document is re-emitted by yyjson's writer, so the
- * documented fastjson_encode divergences (large/scientific doubles,
- * U+2028/U+2029) apply to the whole output, not only the edited node.
+ * $depth is argument #4, matching fastjson_decode() and
+ * fastjson_pointer_get(). Output formatting follows the encode bits of
+ * $flags, including JSON_PRETTY_PRINT, JSON_UNESCAPED_SLASHES,
+ * JSON_UNESCAPED_UNICODE, JSON_HEX_*, JSON_NUMERIC_CHECK,
+ * JSON_PRESERVE_ZERO_FRACTION, JSON_FORCE_OBJECT, and
+ * JSON_PARTIAL_OUTPUT_ON_ERROR. JSON_INVALID_UTF8_IGNORE/SUBSTITUTE apply
+ * to $value. The parse bits FASTJSON_DECODE_RELAXED and JSON_THROW_ON_ERROR
+ * apply to $json.
+ *
+ * Note: the untouched portion of the document is re-emitted by yyjson's
+ * writer, so the documented fastjson_encode divergences
+ * (large/scientific doubles, U+2028/U+2029) apply to the whole output, not
+ * only the edited node.
  */
-function fastjson_pointer_set(string $json, string $pointer, mixed $value, int $flags = 0, int $depth = 512): string|false {}
+function fastjson_pointer_set(string $json, string $pointer, mixed $value, int $depth = 512, int $flags = 0): string|false {}
 
 /**
  * Applies an RFC 7386 JSON Merge Patch ($patch) to $target and returns

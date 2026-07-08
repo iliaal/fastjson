@@ -24,6 +24,11 @@
 #include <ctype.h>
 
 #include "php.h"
+#if PHP_VERSION_ID >= 80300 && defined(ZEND_CHECK_STACK_LIMIT)
+#include "Zend/zend_call_stack.h"
+#else
+#define zend_call_stack_overflowed(limit) (0)
+#endif
 #include "Zend/zend_smart_str.h"
 #include "php_fastjson.h"
 #include "fastjson_arginfo.h"
@@ -39,12 +44,14 @@ typedef struct fj_ptr_seg {
 
 typedef struct fj_splice_ctx {
     smart_str          buf;
+    zend_long          flags;
     yyjson_write_flag  yflags;
     bool               pretty;
     int                indent;
     const yyjson_val  *replacement;
     const fj_ptr_seg  *segs;
     size_t             nsegs;
+    fj_splice_status   status;
     bool               settable;
 } fj_splice_ctx;
 
@@ -52,9 +59,114 @@ static bool fj_splice_reserve(fj_splice_ctx *ctx, size_t add)
 {
     size_t cur = ctx->buf.s ? ZSTR_LEN(ctx->buf.s) : 0;
     if (UNEXPECTED(add > ZSTR_MAX_LEN - cur)) {
+        ctx->status = FJ_SPLICE_TOO_LARGE;
         return false;
     }
     smart_str_alloc(&ctx->buf, add, 0);
+    return true;
+}
+
+static bool fj_splice_stack_ok(fj_splice_ctx *ctx)
+{
+    if (UNEXPECTED(zend_call_stack_overflowed(EG(stack_limit)))) {
+        ctx->status = FJ_SPLICE_DEPTH_FAIL;
+        return false;
+    }
+    return true;
+}
+
+static bool fj_splice_apply_hex_escapes(fj_splice_ctx *ctx, size_t start_pos)
+{
+    zend_long flags = ctx->flags;
+    bool tag  = flags & FASTJSON_ENCODE_HEX_TAG;
+    bool amp  = flags & FASTJSON_ENCODE_HEX_AMP;
+    bool apos = flags & FASTJSON_ENCODE_HEX_APOS;
+    bool quot = flags & FASTJSON_ENCODE_HEX_QUOT;
+
+    if (!(tag || amp || apos || quot)) {
+        return true;
+    }
+
+    size_t orig_len = ZSTR_LEN(ctx->buf.s) - start_pos;
+    if (orig_len == 0) {
+        return true;
+    }
+
+    const char *src = ZSTR_VAL(ctx->buf.s) + start_pos;
+    size_t hits = 0;
+    for (size_t i = 0; i < orig_len; i++) {
+        unsigned char c = (unsigned char)src[i];
+        if (c == '\\' && i + 1 < orig_len) {
+            unsigned char next = (unsigned char)src[i + 1];
+            if (quot && next == '"') {
+                hits++;
+                i++;
+                continue;
+            }
+            if (next == 'u' && i + 5 < orig_len) {
+                i += 5;
+            } else {
+                i += 1;
+            }
+            continue;
+        }
+        if (tag  && (c == '<' || c == '>')) { hits++; continue; }
+        if (amp  && c == '&')               { hits++; continue; }
+        if (apos && c == '\'')              { hits++; continue; }
+    }
+    if (hits == 0) {
+        return true;
+    }
+
+    if (UNEXPECTED(hits > (ZSTR_MAX_LEN - orig_len) / 5)) {
+        ctx->status = FJ_SPLICE_TOO_LARGE;
+        return false;
+    }
+
+    char *orig = emalloc(orig_len);
+    memcpy(orig, ZSTR_VAL(ctx->buf.s) + start_pos, orig_len);
+
+    ZSTR_LEN(ctx->buf.s) = start_pos;
+    if (!fj_splice_reserve(ctx, orig_len + hits * 5)) {
+        efree(orig);
+        return false;
+    }
+
+    for (size_t i = 0; i < orig_len; i++) {
+        unsigned char c = (unsigned char)orig[i];
+        if (c == '\\' && i + 1 < orig_len) {
+            unsigned char next = (unsigned char)orig[i + 1];
+            if (quot && next == '"') {
+                smart_str_appendl(&ctx->buf, "\\u0022", 6);
+                i++;
+                continue;
+            }
+            smart_str_appendc(&ctx->buf, '\\');
+            smart_str_appendc(&ctx->buf, (char)next);
+            if (next == 'u' && i + 5 < orig_len) {
+                smart_str_appendl(&ctx->buf, &orig[i + 2], 4);
+                i += 5;
+            } else {
+                i += 1;
+            }
+            continue;
+        }
+        if (tag && c == '<') {
+            smart_str_appendl(&ctx->buf, "\\u003C", 6); continue;
+        }
+        if (tag && c == '>') {
+            smart_str_appendl(&ctx->buf, "\\u003E", 6); continue;
+        }
+        if (amp && c == '&') {
+            smart_str_appendl(&ctx->buf, "\\u0026", 6); continue;
+        }
+        if (apos && c == '\'') {
+            smart_str_appendl(&ctx->buf, "\\u0027", 6); continue;
+        }
+        smart_str_appendc(&ctx->buf, (char)c);
+    }
+
+    efree(orig);
     return true;
 }
 
@@ -79,6 +191,11 @@ static inline void fj_splice_newline_indent(fj_splice_ctx *ctx, int level)
 
 static bool fj_splice_write_string(fj_splice_ctx *ctx, const char *s, size_t len)
 {
+    if (UNEXPECTED(len > (ZSTR_MAX_LEN - 2) / 6)) {
+        ctx->status = FJ_SPLICE_TOO_LARGE;
+        return false;
+    }
+    size_t start_pos = ctx->buf.s ? ZSTR_LEN(ctx->buf.s) : 0;
     if (!fj_splice_reserve(ctx, len * 6 + 2)) {
         return false;
     }
@@ -88,7 +205,7 @@ static bool fj_splice_write_string(fj_splice_ctx *ctx, const char *s, size_t len
         return false;
     }
     ZSTR_LEN(ctx->buf.s) = (size_t)(end - ZSTR_VAL(ctx->buf.s));
-    return true;
+    return fj_splice_apply_hex_escapes(ctx, start_pos);
 }
 
 static bool fj_splice_write_number(fj_splice_ctx *ctx, const yyjson_val *val)
@@ -131,6 +248,9 @@ static bool fj_splice_build_suffix(fj_splice_ctx *ctx, size_t seg_idx);
 
 static bool fj_splice_write_full(fj_splice_ctx *ctx, const yyjson_val *val)
 {
+    if (!fj_splice_stack_ok(ctx)) {
+        return false;
+    }
     switch (yyjson_get_type(FJ_IMUT_VAL(val))) {
     case YYJSON_TYPE_NULL:
         smart_str_appendl(&ctx->buf, "null", 4);
@@ -200,6 +320,9 @@ static bool fj_splice_write_object_key(fj_splice_ctx *ctx,
 
 static bool fj_splice_write_array_full(fj_splice_ctx *ctx, const yyjson_val *arr)
 {
+    if (!fj_splice_stack_ok(ctx)) {
+        return false;
+    }
     bool pretty = ctx->pretty;
     size_t n = yyjson_arr_size(FJ_IMUT_VAL(arr));
     bool empty = n == 0;
@@ -235,6 +358,9 @@ static bool fj_splice_write_array_full(fj_splice_ctx *ctx, const yyjson_val *arr
 
 static bool fj_splice_write_object_full(fj_splice_ctx *ctx, const yyjson_val *obj)
 {
+    if (!fj_splice_stack_ok(ctx)) {
+        return false;
+    }
     bool pretty = ctx->pretty;
     size_t n = yyjson_obj_size(FJ_IMUT_VAL(obj));
     bool empty = n == 0;
@@ -281,6 +407,9 @@ static bool fj_splice_write_object_full(fj_splice_ctx *ctx, const yyjson_val *ob
 static bool fj_splice_write_array(fj_splice_ctx *ctx, const yyjson_val *arr,
                                   size_t seg_idx)
 {
+    if (!fj_splice_stack_ok(ctx)) {
+        return false;
+    }
     if (seg_idx >= ctx->nsegs) {
         return fj_splice_write_array_full(ctx, arr);
     }
@@ -342,6 +471,9 @@ static bool fj_splice_write_array(fj_splice_ctx *ctx, const yyjson_val *arr,
 static bool fj_splice_write_object(fj_splice_ctx *ctx, const yyjson_val *obj,
                                    size_t seg_idx)
 {
+    if (!fj_splice_stack_ok(ctx)) {
+        return false;
+    }
     if (seg_idx >= ctx->nsegs) {
         return fj_splice_write_object_full(ctx, obj);
     }
@@ -462,6 +594,9 @@ static bool fj_splice_write_object(fj_splice_ctx *ctx, const yyjson_val *obj,
  * keys through segs[seg_idx-1] already exist but segs[seg_idx] does not. */
 static bool fj_splice_build_suffix(fj_splice_ctx *ctx, size_t seg_idx)
 {
+    if (!fj_splice_stack_ok(ctx)) {
+        return false;
+    }
     if (seg_idx >= ctx->nsegs) {
         return false;
     }
@@ -497,6 +632,9 @@ static bool fj_splice_build_suffix(fj_splice_ctx *ctx, size_t seg_idx)
 static bool fj_splice_write_at(fj_splice_ctx *ctx, const yyjson_val *val,
                                size_t seg_idx)
 {
+    if (!fj_splice_stack_ok(ctx)) {
+        return false;
+    }
     if (seg_idx >= ctx->nsegs) {
         return fj_splice_write_full(ctx, val);
     }
@@ -578,14 +716,22 @@ static bool fj_pointer_fill_segments(const char *ptr, size_t len,
     return si == nsegs;
 }
 
-/* Build a replacement yyjson_val from a PHP zval without mut_copy. For
- * non-scalars, reuses direct-write + parse into a small side doc. */
+/* Build a replacement yyjson_val from a PHP zval without mut_copy on the
+ * scalar fast path. Values whose representation depends on encode flags
+ * reuse direct-write + parse into a small side doc. */
 bool fastjson_pointer_build_replacement(zval *value, zend_long value_flags,
                                         zend_long depth,
                                         fastjson_pointer_repl *out)
 {
     memset(out, 0, sizeof(*out));
     ZVAL_DEREF(value);
+
+    if (value_flags & (FASTJSON_ENCODE_FORCE_OBJECT
+            | FASTJSON_ENCODE_NUMERIC_CHECK
+            | FASTJSON_ENCODE_PARTIAL_OUTPUT_ON_ERROR
+            | FASTJSON_ENCODE_PRESERVE_ZERO_FRACTION)) {
+        goto encode_value;
+    }
 
     switch (Z_TYPE_P(value)) {
     case IS_NULL:
@@ -634,6 +780,8 @@ bool fastjson_pointer_build_replacement(zval *value, zend_long value_flags,
         break;
     }
 
+encode_value:
+    ;
     zend_string *vstr = fastjson_directwrite_encode(value, value_flags, depth);
     if (vstr == NULL) {
         return false;
@@ -641,6 +789,9 @@ bool fastjson_pointer_build_replacement(zval *value, zend_long value_flags,
     yyjson_read_err verr;
     out->doc = yyjson_read_opts(ZSTR_VAL(vstr), ZSTR_LEN(vstr), 0,
                                 &fastjson_php_alc, &verr);
+    if (out->doc == NULL) {
+        fastjson_set_read_error(ZSTR_VAL(vstr), ZSTR_LEN(vstr), &verr);
+    }
     zend_string_release(vstr);
     if (out->doc == NULL) {
         return false;
@@ -654,6 +805,7 @@ zend_string *fastjson_imut_pointer_set_write(yyjson_val *root,
                                              size_t pointer_len,
                                              const yyjson_val *replacement,
                                              zend_long flags,
+                                             size_t depth_limit,
                                              fj_splice_status *status)
 {
     *status = FJ_SPLICE_OK;
@@ -661,21 +813,34 @@ zend_string *fastjson_imut_pointer_set_write(yyjson_val *root,
     if (pointer_len == 0) {
         fj_splice_ctx ctx;
         memset(&ctx, 0, sizeof(ctx));
+        ctx.flags = flags;
         ctx.yflags = fastjson_translate_write_flags(flags, true);
         ctx.pretty = (flags & FASTJSON_ENCODE_PRETTY_PRINT) != 0;
         ctx.replacement = replacement;
+        ctx.status = FJ_SPLICE_OK;
         smart_str_alloc(&ctx.buf, 256, 0);
         if (!fj_splice_write_full(&ctx, replacement)) {
             smart_str_free(&ctx.buf);
-            *status = FJ_SPLICE_WRITE_FAIL;
+            *status = ctx.status == FJ_SPLICE_OK
+                ? FJ_SPLICE_WRITE_FAIL : ctx.status;
             return NULL;
         }
         smart_str_0(&ctx.buf);
         return ctx.buf.s;
     }
 
+    if (pointer[0] != '/') {
+        *status = FJ_SPLICE_SETTABLE_FAIL;
+        return NULL;
+    }
+
     size_t nsegs = fj_pointer_count_segments(pointer, pointer_len);
-    fj_ptr_seg *segs = nsegs ? emalloc(nsegs * sizeof(*segs)) : NULL;
+    if (depth_limit > 0 && nsegs >= depth_limit) {
+        *status = FJ_SPLICE_DEPTH_FAIL;
+        return NULL;
+    }
+
+    fj_ptr_seg *segs = nsegs ? safe_emalloc(nsegs, sizeof(*segs), 0) : NULL;
     char *storage = nsegs ? emalloc(pointer_len) : NULL;
     size_t storage_used = 0;
 
@@ -689,11 +854,13 @@ zend_string *fastjson_imut_pointer_set_write(yyjson_val *root,
 
     fj_splice_ctx ctx;
     memset(&ctx, 0, sizeof(ctx));
+    ctx.flags = flags;
     ctx.yflags = fastjson_translate_write_flags(flags, true);
     ctx.pretty = (flags & FASTJSON_ENCODE_PRETTY_PRINT) != 0;
     ctx.replacement = replacement;
     ctx.segs = segs;
     ctx.nsegs = nsegs;
+    ctx.status = FJ_SPLICE_OK;
     ctx.settable = true;
     smart_str_alloc(&ctx.buf, 256, 0);
 
@@ -703,7 +870,8 @@ zend_string *fastjson_imut_pointer_set_write(yyjson_val *root,
 
     if (!ok) {
         smart_str_free(&ctx.buf);
-        *status = ctx.settable ? FJ_SPLICE_WRITE_FAIL : FJ_SPLICE_SETTABLE_FAIL;
+        *status = ctx.status != FJ_SPLICE_OK ? ctx.status
+            : (ctx.settable ? FJ_SPLICE_WRITE_FAIL : FJ_SPLICE_SETTABLE_FAIL);
         return NULL;
     }
 
