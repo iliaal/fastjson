@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
+shopt -s inherit_errexit
+
+readonly COMPOSER_VERSION="2.10.2"
+readonly PIE_VERSION="1.4.8"
 
 echo "======================================================================"
 echo " PIE install smoke test for iliaal/fastjson"
@@ -33,29 +37,38 @@ git config --global --add safe.directory /fastjson
 git config --global --add safe.directory /fastjson/.git
 git clone -q file:///fastjson /tmp/src
 cd /tmp/src
-echo "HEAD: $(git log --oneline -1)"
-echo "tag:  $(git describe --tags --always)"
-ls composer.json config.m4 php_fastjson.h | head
+head_commit=$(git log --oneline -1)
+tag_name=$(git describe --tags --always)
+echo "HEAD: ${head_commit}"
+echo "tag:  ${tag_name}"
+printf '%s\n' composer.json config.m4 php_fastjson.h
 echo
 
 echo "---- 3. Install Composer ----"
-curl -sS https://getcomposer.org/installer | php -- --quiet
-mv composer.phar /usr/local/bin/composer
-composer --version | head -1
+curl -fsSL -o /tmp/composer.phar "https://getcomposer.org/download/${COMPOSER_VERSION}/composer.phar"
+curl -fsSL -o /tmp/composer.phar.sha256sum "https://getcomposer.org/download/${COMPOSER_VERSION}/composer.phar.sha256sum"
+(cd /tmp && sha256sum -c composer.phar.sha256sum)
+chmod +x /tmp/composer.phar
+mv /tmp/composer.phar /usr/local/bin/composer
+composer_version_output=$(composer --version)
+printf '%s\n' "${composer_version_output}" | head -1
+printf '%s\n' "${composer_version_output}" | grep -F "${COMPOSER_VERSION}" >/dev/null
 echo
 
 echo "---- 4. Download PIE ----"
-curl -sSL https://github.com/php/pie/releases/latest/download/pie.phar -o /usr/local/bin/pie
+curl -fsSL "https://github.com/php/pie/releases/download/${PIE_VERSION}/pie.phar" -o /usr/local/bin/pie
 chmod +x /usr/local/bin/pie
 ls -la /usr/local/bin/pie
-pie --version 2>&1 | head -3
+pie_version_output=$(pie --version 2>&1)
+printf '%s\n' "${pie_version_output}" | head -3
+printf '%s\n' "${pie_version_output}" | grep -F "${PIE_VERSION}" >/dev/null
 echo
 
 echo "---- 5. pie install ----"
 PIE_OK=0
 
 mkdir -p /tmp/piework
-cat > /tmp/piework/composer.json <<'JSON'
+cat >/tmp/piework/composer.json <<'JSON'
 {
     "name": "iliaal/pie-smoke",
     "repositories": [
@@ -68,56 +81,57 @@ JSON
 
 echo "   [A] pie install -d /tmp/piework iliaal/fastjson"
 pie install \
-    -d /tmp/piework \
-    --with-php-config=/usr/local/bin/php-config \
-    --auto-install-build-tools \
-    iliaal/fastjson 2>&1 \
-    | tee /tmp/pie-A.out | tail -40 || true
+	-d /tmp/piework \
+	--with-php-config=/usr/local/bin/php-config \
+	--auto-install-build-tools \
+	iliaal/fastjson 2>&1 |
+	tee /tmp/pie-A.out | tail -40 || true
 
 if php -m | grep -qi fastjson; then
-    PIE_OK=1
-    echo "   [A] RESULT: success"
+	PIE_OK=1
+	echo "   [A] RESULT: success"
 fi
 
 # Path B: plain Packagist lookup (expected to fail until iliaal/fastjson is
 # registered on packagist.org). Kept for completeness.
-if [ "$PIE_OK" = "0" ]; then
-    echo
-    echo "   [B] pie install iliaal/fastjson  (plain Packagist lookup)"
-    pie install \
-        --with-php-config=/usr/local/bin/php-config \
-        iliaal/fastjson 2>&1 | tee /tmp/pie-B.out | tail -20 || true
-    if php -m | grep -qi fastjson; then
-        PIE_OK=1
-        echo "   [B] RESULT: success"
-    fi
+if [[ "${PIE_OK}" = "0" ]]; then
+	echo
+	echo "   [B] pie install iliaal/fastjson  (plain Packagist lookup)"
+	pie install \
+		--with-php-config=/usr/local/bin/php-config \
+		iliaal/fastjson 2>&1 | tee /tmp/pie-B.out | tail -20 || true
+	if php -m | grep -qi fastjson; then
+		PIE_OK=1
+		echo "   [B] RESULT: success"
+	fi
 fi
 
-echo "   overall PIE result: PIE_OK=$PIE_OK"
+echo "   overall PIE result: PIE_OK=${PIE_OK}"
 echo
 
 echo "---- 6. Verify extension loads ----"
-if [ "$PIE_OK" = "0" ]; then
-    echo "   *** PIE did not install the extension; falling back to manual phpize+make+install ***"
-    cd /tmp/src
-    phpize >/dev/null
-    ./configure --enable-fastjson >/dev/null
-    make -j"$(nproc)" 2>&1 | tail -3
-    make install 2>&1 | tail -3
-    docker-php-ext-enable fastjson
-    echo "   [fallback] manual install SUCCEEDED"
+if [[ "${PIE_OK}" = "0" ]]; then
+	echo "   *** PIE did not install the extension; falling back to manual phpize+make+install ***"
+	cd /tmp/src
+	phpize >/dev/null
+	./configure --enable-fastjson >/dev/null
+	make_jobs=$(nproc)
+	make -j"${make_jobs}" 2>&1 | tail -3
+	make install 2>&1 | tail -3
+	docker-php-ext-enable fastjson
+	echo "   [fallback] manual install SUCCEEDED"
 fi
 php -m | grep -i fastjson
 php -r 'echo "fastjson version: ", phpversion("fastjson"), PHP_EOL;'
 echo
 
 echo "---- 7. Functional smoke test ----"
-php -r '
+php <<'PHP'
 $v = fastjson_version();
 if (!is_string($v) || $v === "") { echo "version FAIL: ", var_export($v, true), "\n"; exit(1); }
 if ($v !== phpversion("fastjson")) { echo "version mismatch: ", $v, " vs ", phpversion("fastjson"), "\n"; exit(1); }
 echo "version OK: $v\n";
-'
+PHP
 echo
 echo "======================================================================"
 echo " PIE install smoke test: PASSED"

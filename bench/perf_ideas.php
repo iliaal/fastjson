@@ -202,7 +202,7 @@ $cases = [
         'fn' => static fn() => fastjson_pointer_set('{}', '', 42),
     ],
     [
-        'name' => 'pointer_set root large scalar',
+        'name' => 'pointer_set root replace large target',
         'bytes' => strlen($json),
         'loops' => 140,
         'fn' => static fn() => fastjson_pointer_set($json, '', 42),
@@ -236,6 +236,18 @@ $cases = [
         'bytes' => strlen($json),
         'loops' => 100,
         'fn' => static fn() => fastjson_file_decode($tmpFile, true),
+    ],
+    [
+        'name' => 'merge_patch object merge',
+        'bytes' => strlen($json),
+        'loops' => 100,
+        'fn' => static fn() => fastjson_merge_patch($json, '{"summary":{"enabled":false}}', true),
+    ],
+    [
+        'name' => 'merge_patch scalar replace target',
+        'bytes' => strlen($json),
+        'loops' => 220,
+        'fn' => static fn() => fastjson_merge_patch($json, '0', true),
     ],
     [
         'name' => 'validate valid generated',

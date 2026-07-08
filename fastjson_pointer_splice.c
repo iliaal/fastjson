@@ -757,7 +757,7 @@ bool fastjson_pointer_build_replacement(zval *value, zend_long value_flags,
         size_t slen = ZSTR_LEN(str);
         if (!fastjson_utf8_well_formed(bytes, slen)) {
             if (!FASTJSON_HAS_UTF8_HANDLING_FLAG(value_flags)) {
-                fastjson_set_encode_error(FASTJSON_ERROR_UTF8,
+                fastjson_set_error_code(FASTJSON_ERROR_UTF8,
                     "Malformed UTF-8 characters, possibly incorrectly encoded");
                 return false;
             }

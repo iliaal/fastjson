@@ -275,9 +275,6 @@ static yyjson_doc *fastjson_read_doc(const char *json, size_t json_len,
  * the caller must already have cleared the error state; saved_err is the
  * snapshot to restore on the throw path. The param is named
  * `return_value` so RETURN_NULL() / RETURN_THROWS() expand correctly. */
-static void fastjson_throw_read_err(const yyjson_read_err *err,
-                                    const fastjson_error_state *saved_err);
-
 static void fastjson_decode_into(const char *json, size_t json_len,
                                  bool use_assoc, zend_long depth,
                                  zend_long flags, bool throw_mode,
@@ -288,7 +285,7 @@ static void fastjson_decode_into(const char *json, size_t json_len,
     yyjson_doc *doc = fastjson_read_doc(json, json_len, flags, &err);
     if (doc == NULL) {
         if (throw_mode) {
-            fastjson_throw_read_err(&err, saved_err);
+            fastjson_throw_read_error(&err, saved_err);
             RETURN_THROWS();
         }
         fastjson_set_read_error(json, json_len, &err);
@@ -310,13 +307,8 @@ static void fastjson_decode_into(const char *json, size_t json_len,
         ZVAL_NULL(return_value);
         yyjson_doc_free(doc);
         if (throw_mode) {
-            zend_class_entry *ce = fastjson_json_exception_ce
-                ? fastjson_json_exception_ce : zend_ce_exception;
-            zend_throw_exception(ce,
-                FASTJSON_G(last_err_msg) ? FASTJSON_G(last_err_msg)
-                                         : "Maximum stack depth exceeded",
-                FASTJSON_G(last_err_code));
-            fastjson_restore_error_state(saved_err);
+            fastjson_throw_current_error("Maximum stack depth exceeded",
+                                         saved_err);
             RETURN_THROWS();
         }
         return;
@@ -441,8 +433,8 @@ PHP_FUNCTION(fastjson_file_decode)
             fastjson_restore_error_state(&saved_err);
             RETURN_THROWS();
         }
-        fastjson_set_encode_error(FASTJSON_ERROR_SYNTAX,
-                                  "Failed to open file for reading");
+        fastjson_set_error_code(FASTJSON_ERROR_SYNTAX,
+                                "Failed to open file for reading");
         RETURN_NULL();
     }
     zend_string *contents = php_stream_copy_to_mem(stream,
@@ -468,27 +460,14 @@ PHP_FUNCTION(fastjson_file_decode)
             fastjson_restore_error_state(&saved_err);
             RETURN_THROWS();
         }
-        fastjson_set_encode_error(FASTJSON_ERROR_SYNTAX,
-                                  "Failed to read file");
+        fastjson_set_error_code(FASTJSON_ERROR_SYNTAX,
+                                "Failed to read file");
         RETURN_NULL();
     }
 
     fastjson_decode_into(ZSTR_VAL(contents), ZSTR_LEN(contents), use_assoc,
                          depth, flags, throw_mode, &saved_err, return_value);
     zend_string_release(contents);
-}
-
-/* Throw the JsonException matching a failed read and restore the prior
- * global error state (THROW_ON_ERROR's "exception carries the error,
- * globals untouched" contract). Caller must RETURN_THROWS() after. */
-static void fastjson_throw_read_err(const yyjson_read_err *err,
-                                    const fastjson_error_state *saved_err)
-{
-    zend_long code = fastjson_translate_read_code(err->code);
-    zend_class_entry *ce = fastjson_json_exception_ce
-        ? fastjson_json_exception_ce : zend_ce_exception;
-    zend_throw_exception(ce, err->msg, code);
-    fastjson_restore_error_state(saved_err);
 }
 
 /* Convert a resolved/merged immutable subtree into return_value, mirroring
@@ -512,13 +491,8 @@ static bool fastjson_walk_doc_into(yyjson_doc *doc, yyjson_val *root,
         ZVAL_NULL(return_value);
         yyjson_doc_free(doc);
         if (throw_mode) {
-            zend_class_entry *ce = fastjson_json_exception_ce
-                ? fastjson_json_exception_ce : zend_ce_exception;
-            zend_throw_exception(ce,
-                FASTJSON_G(last_err_msg) ? FASTJSON_G(last_err_msg)
-                                         : "Maximum stack depth exceeded",
-                FASTJSON_G(last_err_code));
-            fastjson_restore_error_state(saved_err);
+            fastjson_throw_current_error("Maximum stack depth exceeded",
+                                         saved_err);
         }
         return false;
     }
@@ -561,7 +535,7 @@ PHP_FUNCTION(fastjson_pointer_get)
     yyjson_doc *doc = fastjson_read_doc(json, json_len, flags, &err);
     if (doc == NULL) {
         if (throw_mode) {
-            fastjson_throw_read_err(&err, &saved_err);
+            fastjson_throw_read_error(&err, &saved_err);
             RETURN_THROWS();
         }
         fastjson_set_read_error(json, json_len, &err);
@@ -724,7 +698,7 @@ PHP_FUNCTION(fastjson_merge_patch)
     yyjson_doc *tdoc = fastjson_read_doc(target, target_len, flags, &err);
     if (tdoc == NULL) {
         if (throw_mode) {
-            fastjson_throw_read_err(&err, &saved_err);
+            fastjson_throw_read_error(&err, &saved_err);
             RETURN_THROWS();
         }
         fastjson_set_read_error(target, target_len, &err);
@@ -734,7 +708,7 @@ PHP_FUNCTION(fastjson_merge_patch)
     if (pdoc == NULL) {
         yyjson_doc_free(tdoc);
         if (throw_mode) {
-            fastjson_throw_read_err(&err, &saved_err);
+            fastjson_throw_read_error(&err, &saved_err);
             RETURN_THROWS();
         }
         fastjson_set_read_error(patch, patch_len, &err);
@@ -745,25 +719,26 @@ PHP_FUNCTION(fastjson_merge_patch)
      * level, ahead of the depth-capped walker. Reject operands whose
      * parsed nesting reaches the effective stack depth up front so a
      * pathological input with a huge user $depth fails with the same
-     * FASTJSON_ERROR_DEPTH the walker would raise,
-     * rather than overflowing the stack. The merged result's depth never
-     * exceeds the deeper operand, so checking both inputs is sufficient. */
+     * FASTJSON_ERROR_DEPTH the walker would raise, rather than overflowing
+     * the stack. A non-object patch replaces the target wholesale, so the
+     * target cannot contribute to recursive merge/copy cost on that path. */
     size_t stack_depth = fastjson_effective_stack_depth(depth);
-    if (fastjson_val_depth_reaches(yyjson_doc_get_root(tdoc), stack_depth)
-            || fastjson_val_depth_reaches(yyjson_doc_get_root(pdoc),
-                                          stack_depth)) {
+    yyjson_val *target_root = yyjson_doc_get_root(tdoc);
+    yyjson_val *patch_root = yyjson_doc_get_root(pdoc);
+    bool patch_merges_target = yyjson_is_obj(patch_root);
+    if ((patch_merges_target
+                && fastjson_val_depth_reaches(target_root, stack_depth))
+            || fastjson_val_depth_reaches(patch_root, stack_depth)) {
         yyjson_doc_free(tdoc);
         yyjson_doc_free(pdoc);
         if (throw_mode) {
-            zend_class_entry *ce = fastjson_json_exception_ce
-                ? fastjson_json_exception_ce : zend_ce_exception;
-            zend_throw_exception(ce, "Maximum stack depth exceeded",
-                                 FASTJSON_ERROR_DEPTH);
-            fastjson_restore_error_state(&saved_err);
+            fastjson_throw_error(FASTJSON_ERROR_DEPTH,
+                                 "Maximum stack depth exceeded", NULL,
+                                 &saved_err);
             RETURN_THROWS();
         }
-        fastjson_set_encode_error(FASTJSON_ERROR_DEPTH,
-                                  "Maximum stack depth exceeded");
+        fastjson_set_error_code(FASTJSON_ERROR_DEPTH,
+                                "Maximum stack depth exceeded");
         RETURN_NULL();
     }
 
@@ -777,7 +752,7 @@ PHP_FUNCTION(fastjson_merge_patch)
     yyjson_mut_doc *mdoc = yyjson_mut_doc_new(&fastjson_php_alc);
     if (mdoc != NULL) {
         yyjson_mut_val *merged = yyjson_merge_patch(
-            mdoc, yyjson_doc_get_root(tdoc), yyjson_doc_get_root(pdoc));
+            mdoc, target_root, patch_root);
         if (merged != NULL) {
             yyjson_mut_doc_set_root(mdoc, merged);
             idoc = yyjson_mut_doc_imut_copy(mdoc, &fastjson_php_alc);
@@ -790,15 +765,13 @@ PHP_FUNCTION(fastjson_merge_patch)
     if (idoc == NULL) {
         /* Only reachable on allocator failure inside yyjson. */
         if (throw_mode) {
-            zend_class_entry *ce = fastjson_json_exception_ce
-                ? fastjson_json_exception_ce : zend_ce_exception;
-            zend_throw_exception(ce, "fastjson_merge_patch failed",
-                                 FASTJSON_ERROR_SYNTAX);
-            fastjson_restore_error_state(&saved_err);
+            fastjson_throw_error(FASTJSON_ERROR_SYNTAX,
+                                 "fastjson_merge_patch failed", NULL,
+                                 &saved_err);
             RETURN_THROWS();
         }
-        fastjson_set_encode_error(FASTJSON_ERROR_SYNTAX,
-                                  "fastjson_merge_patch failed");
+        fastjson_set_error_code(FASTJSON_ERROR_SYNTAX,
+                                "fastjson_merge_patch failed");
         RETURN_NULL();
     }
 
@@ -839,7 +812,7 @@ PHP_FUNCTION(fastjson_pointer_exists)
     yyjson_doc *doc = fastjson_read_doc(json, json_len, flags, &err);
     if (doc == NULL) {
         if (throw_mode) {
-            fastjson_throw_read_err(&err, &saved_err);
+            fastjson_throw_read_error(&err, &saved_err);
             RETURN_THROWS();
         }
         fastjson_set_read_error(json, json_len, &err);
@@ -891,9 +864,6 @@ PHP_FUNCTION(fastjson_pointer_set)
     FASTJSON_VALIDATE_DEPTH(depth, 4);
     size_t stack_depth = fastjson_effective_stack_depth(depth);
 
-    zend_class_entry *ce = fastjson_json_exception_ce
-        ? fastjson_json_exception_ce : zend_ce_exception;
-
     /* Parse the target document. RELAXED is the only decode-only bit accepted
      * by pointer_set: the document is written back out rather than
      * materialized into PHP, and low ext/json decode bits overlap encode bits.
@@ -904,7 +874,7 @@ PHP_FUNCTION(fastjson_pointer_set)
         flags & FASTJSON_DECODE_RELAXED, &err);
     if (idoc == NULL) {
         if (throw_mode) {
-            fastjson_throw_read_err(&err, &saved_err);
+            fastjson_throw_read_error(&err, &saved_err);
             RETURN_THROWS();
         }
         fastjson_set_read_error(json, json_len, &err);
@@ -912,19 +882,20 @@ PHP_FUNCTION(fastjson_pointer_set)
     }
 
     /* The splice writer recurses on the C stack per container while
-     * re-emitting the target. Reject a target whose parsed nesting reaches
-     * the effective stack depth up front so adversarial deep input fails
-     * cleanly rather than overflowing the stack. */
-    if (fastjson_val_depth_reaches(yyjson_doc_get_root(idoc), stack_depth)) {
+     * re-emitting the target. Root replacement discards the target after
+     * parsing it, so only non-root edits need the target depth prewalk. */
+    if (pointer_len != 0
+            && fastjson_val_depth_reaches(yyjson_doc_get_root(idoc),
+                                          stack_depth)) {
         yyjson_doc_free(idoc);
         if (throw_mode) {
-            zend_throw_exception(ce, "Maximum stack depth exceeded",
-                                 FASTJSON_ERROR_DEPTH);
-            fastjson_restore_error_state(&saved_err);
+            fastjson_throw_error(FASTJSON_ERROR_DEPTH,
+                                 "Maximum stack depth exceeded", NULL,
+                                 &saved_err);
             RETURN_THROWS();
         }
-        fastjson_set_encode_error(FASTJSON_ERROR_DEPTH,
-                                  "Maximum stack depth exceeded");
+        fastjson_set_error_code(FASTJSON_ERROR_DEPTH,
+                                "Maximum stack depth exceeded");
         RETURN_FALSE;
     }
 
@@ -938,11 +909,8 @@ PHP_FUNCTION(fastjson_pointer_set)
             RETURN_THROWS();
         }
         if (throw_mode) {
-            zend_throw_exception(ce,
-                FASTJSON_G(last_err_msg) ? FASTJSON_G(last_err_msg)
-                                         : "fastjson_pointer_set encode failed",
-                FASTJSON_G(last_err_code));
-            fastjson_restore_error_state(&saved_err);
+            fastjson_throw_current_error("fastjson_pointer_set encode failed",
+                                         &saved_err);
             RETURN_THROWS();
         }
         RETURN_FALSE;
@@ -966,46 +934,45 @@ PHP_FUNCTION(fastjson_pointer_set)
     if (out == NULL) {
         if (splice_status == FJ_SPLICE_DEPTH_FAIL) {
             if (throw_mode) {
-                zend_throw_exception(ce, "Maximum stack depth exceeded",
-                                     FASTJSON_ERROR_DEPTH);
-                fastjson_restore_error_state(&saved_err);
+                fastjson_throw_error(FASTJSON_ERROR_DEPTH,
+                                     "Maximum stack depth exceeded", NULL,
+                                     &saved_err);
                 RETURN_THROWS();
             }
-            fastjson_set_encode_error(FASTJSON_ERROR_DEPTH,
-                                      "Maximum stack depth exceeded");
+            fastjson_set_error_code(FASTJSON_ERROR_DEPTH,
+                                    "Maximum stack depth exceeded");
             RETURN_FALSE;
         }
         if (splice_status == FJ_SPLICE_TOO_LARGE) {
             if (throw_mode) {
-                zend_throw_exception(ce, "Encoded JSON string is too large",
-                                     FASTJSON_ERROR_UNSUPPORTED_TYPE);
-                fastjson_restore_error_state(&saved_err);
+                fastjson_throw_error(FASTJSON_ERROR_UNSUPPORTED_TYPE,
+                                     "Encoded JSON string is too large", NULL,
+                                     &saved_err);
                 RETURN_THROWS();
             }
-            fastjson_set_encode_error(FASTJSON_ERROR_UNSUPPORTED_TYPE,
-                                      "Encoded JSON string is too large");
+            fastjson_set_error_code(FASTJSON_ERROR_UNSUPPORTED_TYPE,
+                                    "Encoded JSON string is too large");
             RETURN_FALSE;
         }
         if (splice_status == FJ_SPLICE_SETTABLE_FAIL) {
             if (throw_mode) {
-                zend_throw_exception(ce,
+                fastjson_throw_error(FASTJSON_ERROR_SYNTAX,
                     "JSON pointer does not resolve to a settable location",
-                    FASTJSON_ERROR_SYNTAX);
-                fastjson_restore_error_state(&saved_err);
+                    NULL, &saved_err);
                 RETURN_THROWS();
             }
-            fastjson_set_encode_error(FASTJSON_ERROR_SYNTAX,
+            fastjson_set_error_code(FASTJSON_ERROR_SYNTAX,
                 "JSON pointer does not resolve to a settable location");
             RETURN_FALSE;
         }
         if (throw_mode) {
-            zend_throw_exception(ce, "fastjson_pointer_set write failed",
-                                 FASTJSON_ERROR_SYNTAX);
-            fastjson_restore_error_state(&saved_err);
+            fastjson_throw_error(FASTJSON_ERROR_SYNTAX,
+                                 "fastjson_pointer_set write failed", NULL,
+                                 &saved_err);
             RETURN_THROWS();
         }
-        fastjson_set_encode_error(FASTJSON_ERROR_SYNTAX,
-                                  "fastjson_pointer_set write failed");
+        fastjson_set_error_code(FASTJSON_ERROR_SYNTAX,
+                                "fastjson_pointer_set write failed");
         RETURN_FALSE;
     }
 

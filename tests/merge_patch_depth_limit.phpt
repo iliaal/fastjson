@@ -8,11 +8,12 @@ fastjson
 /* Regression: yyjson_merge_patch and yyjson_mut_doc_imut_copy recurse
  * once per nesting level on the C stack, BEFORE the depth-capped zval
  * walker runs. A deeply nested patch therefore overflowed the stack
- * (SIGSEGV) before the $depth guard could fire. The fix bounds both
- * operands' structural nesting against $depth up front. */
+ * (SIGSEGV) before the $depth guard could fire. The fix bounds the structural
+ * nesting of every operand that the merge/copy path still has to traverse. */
 
 $n = 200000;
 $patch = str_repeat('{"a":', $n) . '1' . str_repeat('}', $n);
+$cap = str_repeat('{"a":', 1100) . '1' . str_repeat('}', 1100);
 
 // Deep patch, shallow target: must fail with DEPTH, not crash.
 $r = fastjson_merge_patch('{}', $patch, true, 512);
@@ -24,6 +25,12 @@ $r = fastjson_merge_patch($patch, '{}', true, 512);
 var_dump($r);
 var_dump(fastjson_last_error() === FASTJSON_ERROR_DEPTH);
 
+// A non-object patch replaces the target wholesale, so the target doesn't need
+// the stack-depth prewalk that protects recursive object merges.
+$r = fastjson_merge_patch($cap, '0', true, 100000);
+var_dump($r);
+var_dump(fastjson_last_error() === FASTJSON_ERROR_NONE);
+
 // THROW_ON_ERROR surfaces the depth failure as an exception.
 try {
     fastjson_merge_patch('{}', $patch, true, 512, JSON_THROW_ON_ERROR);
@@ -33,7 +40,6 @@ try {
 }
 
 // User $depth above the stack-safe cap must not bypass the pre-check.
-$cap = str_repeat('{"a":', 1100) . '1' . str_repeat('}', 1100);
 $r = fastjson_merge_patch('{}', $cap, true, 100000);
 var_dump($r);
 var_dump(fastjson_last_error() === FASTJSON_ERROR_DEPTH);
@@ -64,6 +70,8 @@ echo fastjson_encode(
 NULL
 bool(true)
 NULL
+bool(true)
+int(0)
 bool(true)
 threw: Maximum stack depth exceeded
 NULL

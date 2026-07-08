@@ -6,6 +6,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Clarified the file helper error contract: I/O failures still use `FASTJSON_ERROR_SYNTAX` to stay inside the `JSON_ERROR_*` range, and callers should distinguish them with `fastjson_last_error_msg()`.
+
+### Performance
+
+- `fastjson_pointer_set()` root replacement and `fastjson_merge_patch()` with a non-object patch now skip the target depth prewalk because those paths discard the target after parsing it. The stack-depth prewalk still runs when the operation traverses or re-emits the target.
+
+### Build
+
+- Pinned the PIE smoke job and local smoke script to explicit PIE and Composer PHAR versions instead of downloading moving `latest` artifacts.
+
 ## [0.5.0] - 2026-07-03
 
 ### Added

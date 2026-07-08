@@ -143,13 +143,20 @@ void fastjson_set_error(yyjson_read_code code, const char *msg);
  * successful fastjson_* call and on each RINIT. */
 void fastjson_clear_error(void);
 
-/* Encode-side: set a FASTJSON_ERROR_* code directly (no read-code
- * translation). msg may be NULL or a string literal -- not freed.
- * Clears the source-location fields (no offset for encode/IO errors). */
-void fastjson_set_encode_error(zend_long code, const char *msg);
+/* Record a FASTJSON_ERROR_* code directly (no read-code translation). msg may
+ * be NULL or a string literal -- not freed. Clears the source-location fields
+ * because encode, I/O, and depth errors have no source byte offset. */
+void fastjson_set_error_code(zend_long code, const char *msg);
 
 void fastjson_save_error_state(fastjson_error_state *state);
 void fastjson_restore_error_state(const fastjson_error_state *state);
+void fastjson_throw_error(zend_long code, const char *msg,
+                          const char *fallback_msg,
+                          const fastjson_error_state *saved_err);
+void fastjson_throw_current_error(const char *fallback_msg,
+                                  const fastjson_error_state *saved_err);
+void fastjson_throw_read_error(const yyjson_read_err *err,
+                               const fastjson_error_state *saved_err);
 
 /* Record a yyjson read error together with its source location. Stores
  * the translated code and (verbatim) message like fastjson_set_error,

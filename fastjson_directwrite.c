@@ -112,8 +112,8 @@ static zval *dw_stash_zval(fastjson_dw_ctx *ctx, zval *src)
 
 static bool dw_fail_too_large(void)
 {
-    fastjson_set_encode_error(FASTJSON_ERROR_UNSUPPORTED_TYPE,
-                              "Encoded JSON string is too large");
+    fastjson_set_error_code(FASTJSON_ERROR_UNSUPPORTED_TYPE,
+                            "Encoded JSON string is too large");
     return false;
 }
 
@@ -361,7 +361,7 @@ static bool dw_emit_string_ex(fastjson_dw_ctx *ctx, const char *s, size_t len,
              * fail, but if yyjson rejects our output we still need a
              * graceful exit. */
         }
-        fastjson_set_encode_error(FASTJSON_ERROR_UTF8,
+        fastjson_set_error_code(FASTJSON_ERROR_UTF8,
             "Malformed UTF-8 characters, possibly incorrectly encoded");
         if (ctx->partial_output) {
             if (is_key) {
@@ -397,7 +397,7 @@ static void dw_emit_long(fastjson_dw_ctx *ctx, zend_long n)
 static bool dw_emit_double(fastjson_dw_ctx *ctx, double d)
 {
     if (!isfinite(d)) {
-        fastjson_set_encode_error(FASTJSON_ERROR_INF_OR_NAN,
+        fastjson_set_error_code(FASTJSON_ERROR_INF_OR_NAN,
             "Inf and NaN cannot be JSON encoded");
         if (ctx->partial_output) {
             /* ext/json's substitution for INF/NaN is JSON `0` per
@@ -469,7 +469,7 @@ static bool dw_emit_double(fastjson_dw_ctx *ctx, double d)
     char *end = yyjson_write_number(&v, cur);
     if (UNEXPECTED(end == NULL)) {
         /* Should be unreachable since we filtered !isfinite above. */
-        fastjson_set_encode_error(FASTJSON_ERROR_INF_OR_NAN,
+        fastjson_set_error_code(FASTJSON_ERROR_INF_OR_NAN,
             "Inf and NaN cannot be JSON encoded");
         if (ctx->partial_output) {
             smart_str_appendc(&ctx->buf, '0');
@@ -489,7 +489,7 @@ static bool dw_partial_or_fail(fastjson_dw_ctx *ctx,
                                const char *error_msg,
                                bool emit_zero_not_null)
 {
-    fastjson_set_encode_error(error_code, error_msg);
+    fastjson_set_error_code(error_code, error_msg);
     if (ctx->partial_output) {
         if (emit_zero_not_null) {
             smart_str_appendc(&ctx->buf, '0');

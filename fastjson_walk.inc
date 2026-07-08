@@ -45,8 +45,8 @@ static bool FJ_WALK_NAME(yyjson_val *val, bool assoc,
                          zend_long flags, zval *out)
 {
     if (remaining_depth <= 0) {
-        fastjson_set_encode_error(FASTJSON_ERROR_DEPTH,
-                                  "Maximum stack depth exceeded");
+        fastjson_set_error_code(FASTJSON_ERROR_DEPTH,
+                                "Maximum stack depth exceeded");
         ZVAL_NULL(out);
         return false;
     }
@@ -97,14 +97,14 @@ static bool FJ_WALK_NAME(yyjson_val *val, bool assoc,
          * encoder's check; fires when remaining_depth is configured
          * looser than zend.max_allowed_stack_size allows). */
         if (UNEXPECTED(zend_call_stack_overflowed(EG(stack_limit)))) {
-            fastjson_set_encode_error(FASTJSON_ERROR_DEPTH,
-                                      "Maximum stack depth exceeded");
+            fastjson_set_error_code(FASTJSON_ERROR_DEPTH,
+                                    "Maximum stack depth exceeded");
             ZVAL_NULL(out);
             return false;
         }
         if (remaining_depth <= 1) {
-            fastjson_set_encode_error(FASTJSON_ERROR_DEPTH,
-                                      "Maximum stack depth exceeded");
+            fastjson_set_error_code(FASTJSON_ERROR_DEPTH,
+                                    "Maximum stack depth exceeded");
             ZVAL_NULL(out);
             return false;
         }
@@ -127,14 +127,14 @@ static bool FJ_WALK_NAME(yyjson_val *val, bool assoc,
 
     case YYJSON_TYPE_OBJ: {
         if (UNEXPECTED(zend_call_stack_overflowed(EG(stack_limit)))) {
-            fastjson_set_encode_error(FASTJSON_ERROR_DEPTH,
-                                      "Maximum stack depth exceeded");
+            fastjson_set_error_code(FASTJSON_ERROR_DEPTH,
+                                    "Maximum stack depth exceeded");
             ZVAL_NULL(out);
             return false;
         }
         if (remaining_depth <= 1) {
-            fastjson_set_encode_error(FASTJSON_ERROR_DEPTH,
-                                      "Maximum stack depth exceeded");
+            fastjson_set_error_code(FASTJSON_ERROR_DEPTH,
+                                    "Maximum stack depth exceeded");
             ZVAL_NULL(out);
             return false;
         }

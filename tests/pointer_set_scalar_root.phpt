@@ -36,6 +36,11 @@ echo fastjson_pointer_set($doc, '', [1, 2, ['k' => 'v']]), "\n";
 echo fastjson_pointer_set($doc, '/a/b', 'a/b'), "\n";
 echo fastjson_pointer_set($doc, '/a/b', 'a/b', 512, JSON_UNESCAPED_SLASHES), "\n";
 
+// Root replacement parses the base document for validity, but doesn't walk or
+// re-emit it. A stack-safe depth cap for the discarded target is unnecessary.
+$deep = str_repeat('{"a":', 1100) . '1' . str_repeat('}', 1100);
+echo fastjson_pointer_set($deep, '', 1, 100000), "\n";
+
 var_dump(fastjson_last_error());
 ?>
 --EXPECT--
@@ -54,4 +59,5 @@ true
 [1,2,{"k":"v"}]
 {"a":{"b":"a\/b"},"list":[10,20]}
 {"a":{"b":"a/b"},"list":[10,20]}
+1
 int(0)

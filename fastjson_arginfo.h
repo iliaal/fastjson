@@ -1,5 +1,5 @@
-/* This is a generated file, edit fastjson.stub.php instead.
- * Stub hash: bbe2f47360212c11c7604d29e0dfa671b908be42 */
+/* This is a generated file, edit the .stub.php file instead.
+ * Stub hash: bf419e0a969ef4b0c46b738e571c25fc3e68bc14 */
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_fastjson_version, 0, 0, IS_STRING, 0)
 ZEND_END_ARG_INFO()

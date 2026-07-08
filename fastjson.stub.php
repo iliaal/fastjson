@@ -113,8 +113,12 @@ function fastjson_encode(mixed $value, int $flags = 0, int $depth = 512): string
  *
  * Returns true on success, false on failure (encode error or I/O
  * error). On failure fastjson_last_error() is set; an I/O failure is
- * silent (no warning). JSON_THROW_ON_ERROR throws on an encode error;
- * an I/O failure still returns false.
+ * silent (no warning). I/O failures use FASTJSON_ERROR_SYNTAX because
+ * fastjson intentionally stays inside the JSON_ERROR_* code range; use
+ * fastjson_last_error_msg() ("Failed to open file for writing" or
+ * "Failed to write file") to distinguish them from encode failures.
+ * JSON_THROW_ON_ERROR throws on an encode error; an I/O failure still
+ * returns false.
  */
 function fastjson_file_encode(string $filename, mixed $value, int $flags = 0, int $depth = 512): bool {}
 
@@ -170,7 +174,11 @@ function fastjson_decode(string $json, ?bool $associative = null, int $depth = 5
  * distinguish a decoded-null from a failure. Failure covers both a
  * file that cannot be read (silent: no warning, fastjson_last_error()
  * set to a non-zero code with a descriptive message) and a JSON parse
- * error (translated code as usual). JSON_THROW_ON_ERROR throws on a
+ * error (translated code as usual). I/O failures use
+ * FASTJSON_ERROR_SYNTAX because fastjson intentionally stays inside
+ * the JSON_ERROR_* code range; use fastjson_last_error_msg()
+ * ("Failed to open file for reading" or "Failed to read file") to
+ * distinguish them from parse errors. JSON_THROW_ON_ERROR throws on a
  * parse error; an I/O failure still returns null (a filesystem error
  * is not a JSON error).
  */

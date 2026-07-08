@@ -85,17 +85,7 @@ fail:
         RETURN_THROWS();
     }
     if (throw_mode) {
-        /* Throw \JsonException when ext/json provided it (always in
-         * standard builds); fall back to \Exception otherwise. */
-        zend_class_entry *ce = fastjson_json_exception_ce
-            ? fastjson_json_exception_ce : zend_ce_exception;
-        zend_long throw_code = FASTJSON_G(last_err_code);
-        const char *throw_msg = FASTJSON_G(last_err_msg)
-            ? FASTJSON_G(last_err_msg) : "fastjson_encode failed";
-        /* Restore prior global state: THROW_ON_ERROR's contract is
-         * "exception carries the error, global state untouched". */
-        fastjson_restore_error_state(&saved_err);
-        zend_throw_exception(ce, throw_msg, throw_code);
+        fastjson_throw_current_error("fastjson_encode failed", &saved_err);
         RETURN_THROWS();
     }
     RETURN_FALSE;
@@ -150,8 +140,8 @@ PHP_FUNCTION(fastjson_file_encode)
             fastjson_restore_error_state(&saved_err);
             RETURN_THROWS();
         }
-        fastjson_set_encode_error(FASTJSON_ERROR_SYNTAX,
-                                  "Failed to open file for writing");
+        fastjson_set_error_code(FASTJSON_ERROR_SYNTAX,
+                                "Failed to open file for writing");
         RETURN_FALSE;
     }
     size_t written = php_stream_write(stream, ZSTR_VAL(zs), ZSTR_LEN(zs));
@@ -164,8 +154,8 @@ PHP_FUNCTION(fastjson_file_encode)
             fastjson_restore_error_state(&saved_err);
             RETURN_THROWS();
         }
-        fastjson_set_encode_error(FASTJSON_ERROR_SYNTAX,
-                                  "Failed to write file");
+        fastjson_set_error_code(FASTJSON_ERROR_SYNTAX,
+                                "Failed to write file");
         RETURN_FALSE;
     }
     RETURN_TRUE;
@@ -177,13 +167,7 @@ encode_fail:
         RETURN_THROWS();
     }
     if (throw_mode) {
-        zend_class_entry *ce = fastjson_json_exception_ce
-            ? fastjson_json_exception_ce : zend_ce_exception;
-        zend_long throw_code = FASTJSON_G(last_err_code);
-        const char *throw_msg = FASTJSON_G(last_err_msg)
-            ? FASTJSON_G(last_err_msg) : "fastjson_file_encode failed";
-        fastjson_restore_error_state(&saved_err);
-        zend_throw_exception(ce, throw_msg, throw_code);
+        fastjson_throw_current_error("fastjson_file_encode failed", &saved_err);
         RETURN_THROWS();
     }
     RETURN_FALSE;

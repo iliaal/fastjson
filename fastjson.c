@@ -18,6 +18,7 @@
 
 #include "php.h"
 #include "php_ini.h"
+#include "Zend/zend_exceptions.h"
 #include "ext/standard/info.h"
 #include "php_fastjson.h"
 #include "fastjson_arginfo.h"
@@ -79,7 +80,7 @@ void fastjson_clear_error(void)
     FASTJSON_G(last_err_col) = 0;
 }
 
-void fastjson_set_encode_error(zend_long code, const char *msg)
+void fastjson_set_error_code(zend_long code, const char *msg)
 {
     FASTJSON_G(last_err_code) = code;
     FASTJSON_G(last_err_msg) = msg;
@@ -105,6 +106,39 @@ void fastjson_restore_error_state(const fastjson_error_state *state)
     FASTJSON_G(last_err_pos) = state->pos;
     FASTJSON_G(last_err_line) = state->line;
     FASTJSON_G(last_err_col) = state->col;
+}
+
+static zend_class_entry *fastjson_exception_ce(void)
+{
+    return fastjson_json_exception_ce
+        ? fastjson_json_exception_ce : zend_ce_exception;
+}
+
+void fastjson_throw_error(zend_long code, const char *msg,
+                          const char *fallback_msg,
+                          const fastjson_error_state *saved_err)
+{
+    if (msg == NULL) {
+        msg = fallback_msg ? fallback_msg : "fastjson error";
+    }
+    zend_throw_exception(fastjson_exception_ce(), msg, code);
+    if (saved_err != NULL) {
+        fastjson_restore_error_state(saved_err);
+    }
+}
+
+void fastjson_throw_current_error(const char *fallback_msg,
+                                  const fastjson_error_state *saved_err)
+{
+    fastjson_throw_error(FASTJSON_G(last_err_code), FASTJSON_G(last_err_msg),
+                         fallback_msg, saved_err);
+}
+
+void fastjson_throw_read_error(const yyjson_read_err *err,
+                               const fastjson_error_state *saved_err)
+{
+    fastjson_throw_error(fastjson_translate_read_code(err->code), err->msg,
+                         "JSON parse error", saved_err);
 }
 
 bool fastjson_byte_is_valid_utf8_start(const char *s, size_t len, size_t pos)
