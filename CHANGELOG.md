@@ -8,27 +8,29 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- Encode use-after-free when a nested `JsonSerializable` grows the array being encoded through an aliasing `&`-reference (an append inside `jsonSerialize()` reallocates its storage mid-iteration); the encoder now copies the array before descending, as `ext/json` does.
+- Fixed a use-after-free encoding an array that a nested `JsonSerializable` mutates through an aliasing `&`-reference; the array is now copied before encoding, as `ext/json` does.
 - `JsonSerializable::jsonSerialize()` returning `$this` encodes the object's public properties, matching `ext/json`, instead of a false `JSON_ERROR_RECURSION`.
 - `JsonSerializable` no longer charges its serialize call an extra nesting level: a `jsonSerialize()` returning an M-deep value needs `$depth >= M`, as in `ext/json`.
-- `fastjson_decode()` and `fastjson_validate()` reject raw control characters in strings under `JSON_INVALID_UTF8_IGNORE` / `SUBSTITUTE`, which relax UTF-8 validity only (invalid UTF-8 stays tolerated, escaped `\n` stays valid), matching `ext/json`.
+- `fastjson_decode()` and `fastjson_validate()` reject raw control characters in strings under `JSON_INVALID_UTF8_IGNORE`/`SUBSTITUTE`, which relax UTF-8 validity only, matching `ext/json`.
 - `fastjson_pointer_set()` fails with `JSON_ERROR_INF_OR_NAN` instead of emitting invalid `Infinity` when the document carries a non-finite number (an untouched `1e309` decoded to `INF`).
 - `fastjson_pointer_set()` counts the pointer path against the replacement's depth budget, so its output always re-decodes at the same `$depth`.
 - `fastjson_pointer_set()` guards its array-index parser against 32-bit `size_t` overflow, keeping `get`/`set` in agreement.
+- `fastjson_pointer_set()` and `fastjson_merge_patch()` clamp deeply nested input to `JSON_ERROR_DEPTH` before recursing into yyjson, instead of risking a stack overflow.
+- `fastjson_pointer_set()` applies its encode flags consistently and reports settable, depth, and size failures through `fastjson_last_error()`.
 
 ### Changed
 
 - Clarified the file helper error contract: I/O failures still use `FASTJSON_ERROR_SYNTAX` to stay inside the `JSON_ERROR_*` range, and callers should distinguish them with `fastjson_last_error_msg()`.
-- Corrected the file helper documentation: a missing or unreadable file fails silently, but an `open_basedir` denial emits the stream layer's `open_basedir` warning (as `file_get_contents()`/`file_put_contents()` do). The prior "I/O failures are silent" wording overstated this; behavior is unchanged.
+- Corrected the file helper docs: a missing or unreadable file fails silently, but an `open_basedir` denial warns like `file_get_contents()`/`file_put_contents()` (behavior unchanged).
 
 ### Performance
 
-- `fastjson_pointer_set()` root replacement and `fastjson_merge_patch()` with a non-object patch skip the target depth prewalk, because those paths discard the target after parsing it. The prewalk still runs when the operation traverses or re-emits the target.
+- `fastjson_pointer_set()` root replacement and `fastjson_merge_patch()` with a non-object patch skip the target depth prewalk, since those paths discard the target after parsing.
 
 ### Build
 
 - Pinned the PIE smoke job and local smoke script to explicit PIE and Composer PHAR versions instead of moving `latest` artifacts.
-- CI no longer masks failures: the Linux build step propagates a failing `make` via `pipefail`, the test steps assert the extension actually loaded (a bad ABI otherwise skips every test with a green summary), and the ASAN step keeps the runner's exit status and checks for leaked/borked/no-summary outcomes.
+- Hardened CI failure detection so a broken build or a non-loading module can no longer pass as green: `pipefail` on the Linux build, an extension-load guard in the test steps, and runner-status plus leak/bork checks under ASAN.
 - `scripts/pie-smoke.sh` exits non-zero when PIE itself fails to install, instead of printing `PASSED` after the manual `phpize` fallback.
 - Vendored yyjson carries a new local patch (P-004) that rejects control characters in strings regardless of `ALLOW_INVALID_UNICODE`; re-apply on upgrade (see `vendor/yyjson/PATCHES.md`).
 
