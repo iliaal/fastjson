@@ -8,13 +8,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- **Encode use-after-free** when a nested `JsonSerializable` mutates the array being encoded through an aliasing `&`-reference (e.g. appending inside `jsonSerialize()`, reallocating the array's storage). The encoder now holds a reference across the array descent so the mutation copies-on-write away, mirroring ext/json. Regression test: `encode_jsonserializable_array_mutation.phpt` (ASAN/valgrind).
-- `JsonSerializable::jsonSerialize()` returning `$this` now encodes the object's public properties (matching ext/json) instead of reporting a false `JSON_ERROR_RECURSION`. Un-skips `json_encode_recursion_01/02` and `bug77843` in the compat harness.
-- `fastjson_pointer_set()` no longer emits invalid JSON when re-serializing a document that carries a non-finite number (e.g. an untouched `1e309` that decoded to `INF`). It now fails with `JSON_ERROR_INF_OR_NAN`, matching the encoder's contract.
-- `fastjson_decode()` **and** `fastjson_validate()` under `JSON_INVALID_UTF8_IGNORE` / `SUBSTITUTE` no longer silently accept raw control characters inside strings; those flags relax UTF-8 validity only, so control chars are rejected as ext/json does (escaped forms like `\n` remain valid, and invalid UTF-8 is still tolerated). Fixed at the reader level (yyjson patch P-004) so every decode path is covered uniformly and comments under `FASTJSON_DECODE_RELAXED` are handled correctly.
-- `JsonSerializable::jsonSerialize()` no longer charges the serialize call an extra nesting level: a `jsonSerialize()` returning an M-deep structure now needs `$depth >= M`, matching ext/json (previously rejected valid input one level too shallow, for both the returns-`$this` and returns-a-fresh-value paths).
-- `fastjson_pointer_set()` now counts the pointer path against the replacement's depth budget, so it can no longer emit a document deeper than `$depth` — output that `fastjson_decode(..., $depth)` would then reject.
-- `fastjson_pointer_set()` array-index parsing now guards against integer overflow on 32-bit builds, keeping `get`/`set` in agreement (out-of-range, not a wrapped slot).
+- Encode use-after-free when a nested `JsonSerializable` grows the array being encoded through an aliasing `&`-reference (an append inside `jsonSerialize()` reallocates its storage mid-iteration); the encoder now copies the array before descending, as `ext/json` does.
+- `JsonSerializable::jsonSerialize()` returning `$this` encodes the object's public properties, matching `ext/json`, instead of a false `JSON_ERROR_RECURSION`.
+- `JsonSerializable` no longer charges its serialize call an extra nesting level: a `jsonSerialize()` returning an M-deep value needs `$depth >= M`, as in `ext/json`.
+- `fastjson_decode()` and `fastjson_validate()` reject raw control characters in strings under `JSON_INVALID_UTF8_IGNORE` / `SUBSTITUTE`, which relax UTF-8 validity only (invalid UTF-8 stays tolerated, escaped `\n` stays valid), matching `ext/json`.
+- `fastjson_pointer_set()` fails with `JSON_ERROR_INF_OR_NAN` instead of emitting invalid `Infinity` when the document carries a non-finite number (an untouched `1e309` decoded to `INF`).
+- `fastjson_pointer_set()` counts the pointer path against the replacement's depth budget, so its output always re-decodes at the same `$depth`.
+- `fastjson_pointer_set()` guards its array-index parser against 32-bit `size_t` overflow, keeping `get`/`set` in agreement.
 
 ### Changed
 
@@ -22,13 +22,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Performance
 
-- `fastjson_pointer_set()` root replacement and `fastjson_merge_patch()` with a non-object patch now skip the target depth prewalk because those paths discard the target after parsing it. The stack-depth prewalk still runs when the operation traverses or re-emits the target.
+- `fastjson_pointer_set()` root replacement and `fastjson_merge_patch()` with a non-object patch skip the target depth prewalk, because those paths discard the target after parsing it. The prewalk still runs when the operation traverses or re-emits the target.
 
 ### Build
 
-- Pinned the PIE smoke job and local smoke script to explicit PIE and Composer PHAR versions instead of downloading moving `latest` artifacts.
-- CI no longer masks failures: the Linux build step propagates a failing `make` (via `pipefail`) instead of swallowing it behind a warning grep; the test steps assert the extension actually loaded (a bad ABI otherwise SKIPs every test with a green summary); and the ASAN step keeps the runner's exit status and checks for leaked/borked/no-summary outcomes, not just `Tests failed`.
-- `scripts/pie-smoke.sh` now reports and exits non-zero when PIE itself fails to install, instead of printing `PASSED` after the manual `phpize` fallback loads the extension.
+- Pinned the PIE smoke job and local smoke script to explicit PIE and Composer PHAR versions instead of moving `latest` artifacts.
+- CI no longer masks failures: the Linux build step propagates a failing `make` via `pipefail`, the test steps assert the extension actually loaded (a bad ABI otherwise skips every test with a green summary), and the ASAN step keeps the runner's exit status and checks for leaked/borked/no-summary outcomes.
+- `scripts/pie-smoke.sh` exits non-zero when PIE itself fails to install, instead of printing `PASSED` after the manual `phpize` fallback.
+- Vendored yyjson carries a new local patch (P-004) that rejects control characters in strings regardless of `ALLOW_INVALID_UNICODE`; re-apply on upgrade (see `vendor/yyjson/PATCHES.md`).
 
 ## [0.5.0] - 2026-07-03
 
