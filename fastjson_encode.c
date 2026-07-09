@@ -125,9 +125,12 @@ PHP_FUNCTION(fastjson_file_encode)
     }
 
     /* Write through the streams layer (wrappers + open_basedir honored).
-     * Silent: no REPORT_ERRORS. An I/O failure is not a JSON error, so
-     * it never throws even under JSON_THROW_ON_ERROR -- the false return
-     * is unambiguous; we set last_error only for introspection. */
+     * No REPORT_ERRORS, so a failed open/write emits no warning -- except
+     * an open_basedir denial, whose warning the plain-file wrapper emits
+     * regardless of REPORT_ERRORS (as file_put_contents does); we leave
+     * that security-boundary warning visible. An I/O failure is not a JSON
+     * error, so it never throws even under JSON_THROW_ON_ERROR -- the false
+     * return is unambiguous; we set last_error only for introspection. */
     php_stream_context *context = php_stream_context_from_zval(NULL, 0);
     php_stream *stream = php_stream_open_wrapper_ex(path, "wb", 0, NULL,
                                                     context);

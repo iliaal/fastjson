@@ -410,9 +410,13 @@ PHP_FUNCTION(fastjson_file_decode)
         : (bool)assoc;
 
     /* Read through the streams layer (wrappers + open_basedir honored).
-     * Silent: no REPORT_ERRORS, so a missing/unreadable file emits no
-     * warning -- failure is surfaced via the null return + last_error,
-     * matching the documented contract. An I/O failure is NOT a JSON
+     * No REPORT_ERRORS, so a missing/unreadable file emits no warning --
+     * that failure is surfaced via the null return + last_error, matching
+     * the documented contract. The one exception is an open_basedir denial:
+     * the plain-file wrapper emits its own open_basedir warning regardless
+     * of REPORT_ERRORS (exactly as file_get_contents does), which we let
+     * through rather than suppress -- a security-boundary violation should
+     * stay visible. An I/O failure is NOT a JSON
      * error, so it never throws even under JSON_THROW_ON_ERROR: there
      * is no JSON_ERROR_* code for a filesystem fault, and a missing
      * file should not masquerade as a JsonException. We surface it as

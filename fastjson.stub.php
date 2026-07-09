@@ -112,8 +112,10 @@ function fastjson_encode(mixed $value, int $flags = 0, int $depth = 512): string
  * fastjson_encode().
  *
  * Returns true on success, false on failure (encode error or I/O
- * error). On failure fastjson_last_error() is set; an I/O failure is
- * silent (no warning). I/O failures use FASTJSON_ERROR_SYNTAX because
+ * error). On failure fastjson_last_error() is set; a failed open/write
+ * is silent (no warning), except an open_basedir denial, which emits the
+ * stream layer's open_basedir warning like file_put_contents() does.
+ * I/O failures use FASTJSON_ERROR_SYNTAX because
  * fastjson intentionally stays inside the JSON_ERROR_* code range; use
  * fastjson_last_error_msg() ("Failed to open file for writing" or
  * "Failed to write file") to distinguish them from encode failures.
@@ -172,8 +174,10 @@ function fastjson_decode(string $json, ?bool $associative = null, int $depth = 5
  * Returns the decoded value on success, or null on failure -- the same
  * contract as fastjson_decode(): callers check fastjson_last_error() to
  * distinguish a decoded-null from a failure. Failure covers both a
- * file that cannot be read (silent: no warning, fastjson_last_error()
- * set to a non-zero code with a descriptive message) and a JSON parse
+ * file that cannot be read (silent: no warning -- except an open_basedir
+ * denial, which emits the stream layer's open_basedir warning as
+ * file_get_contents() does -- with fastjson_last_error() set to a
+ * non-zero code and a descriptive message) and a JSON parse
  * error (translated code as usual). I/O failures use
  * FASTJSON_ERROR_SYNTAX because fastjson intentionally stays inside
  * the JSON_ERROR_* code range; use fastjson_last_error_msg()

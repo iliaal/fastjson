@@ -19,6 +19,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 
 - Clarified the file helper error contract: I/O failures still use `FASTJSON_ERROR_SYNTAX` to stay inside the `JSON_ERROR_*` range, and callers should distinguish them with `fastjson_last_error_msg()`.
+- Corrected the file helper documentation: a missing or unreadable file fails silently, but an `open_basedir` denial emits the stream layer's `open_basedir` warning (as `file_get_contents()`/`file_put_contents()` do). The prior "I/O failures are silent" wording overstated this; behavior is unchanged.
 
 ### Performance
 
@@ -67,7 +68,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   - `fastjson_file_decode(string $filename, ?bool $associative = null, int $depth = 512, int $flags = 0): mixed`
   - `fastjson_file_encode(string $filename, mixed $value, int $flags = 0, int $depth = 512): bool`
 
-  Both read and write through the PHP streams layer with the request default stream context, so stream wrappers, `open_basedir`, and `stream_context_set_default()` apply, matching `file_get_contents()`/`file_put_contents()`. I/O failures are silent (no warning): `fastjson_file_decode()` returns null with `fastjson_last_error()` set, `fastjson_file_encode()` returns false. An empty file decodes like `fastjson_decode("")`. `JSON_THROW_ON_ERROR` throws on JSON parse/encode errors but not on filesystem errors. Implements [php-src#22137](https://github.com/php/php-src/issues/22137).
+  Both read and write through the PHP streams layer with the request default stream context, so stream wrappers, `open_basedir`, and `stream_context_set_default()` apply, matching `file_get_contents()`/`file_put_contents()`. A missing or unreadable file fails silently (no warning): `fastjson_file_decode()` returns null with `fastjson_last_error()` set, `fastjson_file_encode()` returns false. An `open_basedir` denial is the exception: like `file_get_contents()`/`file_put_contents()`, it emits the stream layer's `open_basedir` warning in addition to the null/false return. An empty file decodes like `fastjson_decode("")`. `JSON_THROW_ON_ERROR` throws on JSON parse/encode errors but not on filesystem errors. Implements [php-src#22137](https://github.com/php/php-src/issues/22137).
 
 ## [0.3.0] - 2026-05-19
 
