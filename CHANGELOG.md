@@ -15,8 +15,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `fastjson_pointer_set()` fails with `JSON_ERROR_INF_OR_NAN` instead of emitting invalid `Infinity` when the document carries a non-finite number (an untouched `1e309` decoded to `INF`).
 - `fastjson_pointer_set()` counts the pointer path against the replacement's depth budget, so its output always re-decodes at the same `$depth`.
 - `fastjson_pointer_set()` guards its array-index parser against 32-bit `size_t` overflow, keeping `get`/`set` in agreement.
-- `fastjson_pointer_set()` and `fastjson_merge_patch()` clamp deeply nested input to `JSON_ERROR_DEPTH` before recursing into yyjson, instead of risking a stack overflow.
-- `fastjson_pointer_set()` applies its encode flags consistently and reports settable, depth, and size failures through `fastjson_last_error()`.
+- `fastjson_pointer_set()` and `fastjson_merge_patch()` reject stack-exhausting nesting with `JSON_ERROR_DEPTH` up front, closing a crash on adversarial deep input.
+- `fastjson_pointer_set()`/`_get()` apply their encode/decode flags and `$depth` to the selected value, handle RFC 6901 escapes, and report non-settable paths through the error state.
+- `fastjson_file_decode()` fails a truncated stream read instead of decoding the partial bytes.
 
 ### Changed
 
