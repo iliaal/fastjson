@@ -83,7 +83,10 @@ jobs:
       - name: Run tests
         shell: bash
         run: |
-          set -euo pipefail
+          # -uo pipefail but not -e: the explicit checks below own failure
+          # detection, and -e would abort the tee'd run-tests pipeline before
+          # they run (hiding the summary) when run-tests exits non-zero.
+          set -uo pipefail
           export TEST_PHP_EXECUTABLE=$(which php)
           export TEST_PHP_ARGS="-d extension=$(pwd)/modules/fastjson.so"
           export NO_INTERACTION=1
@@ -95,12 +98,18 @@ jobs:
           mods=$(php $TEST_PHP_ARGS -m)
           grep -qix fastjson <<< "$mods" \
             || { echo "::error::fastjson extension failed to load"; exit 1; }
-          RESULT=$(php run-tests.php --show-diff -g FAIL,BORK,LEAK,XLEAK \
-                       tests/ tests/upstream-json/ 2>&1)
-          echo "$RESULT"
-          FAILED=$(echo "$RESULT" | grep 'Tests failed' | grep -oP '\d+' | head -1)
-          if [ "${FAILED:-0}" -gt 0 ]; then
-            echo "::error::$FAILED test(s) failed"
+          # tee (not $(...)) so the run-tests summary and diffs are always
+          # visible: under set -e a `RESULT=$(...)` assignment aborts before
+          # echo when run-tests exits non-zero, hiding which test failed.
+          php run-tests.php --show-diff -g FAIL,BORK,LEAK,XLEAK \
+              tests/ tests/upstream-json/ 2>&1 | tee /tmp/test-output.txt
+          run_status=${PIPESTATUS[0]}
+          if ! grep -q 'Number of tests' /tmp/test-output.txt; then
+            echo "::error::run-tests.php produced no summary (aborted?), status $run_status"
+            exit 1
+          fi
+          if grep -qiP 'Tests (failed|leaked|borked)\s*:\s*[1-9]' /tmp/test-output.txt; then
+            echo "::error::tests failed/leaked/borked"
             exit 1
           fi
 
@@ -130,7 +139,10 @@ jobs:
       - name: Run tests
         shell: bash
         run: |
-          set -euo pipefail
+          # -uo pipefail but not -e: the explicit checks below own failure
+          # detection, and -e would abort the tee'd run-tests pipeline before
+          # they run (hiding the summary) when run-tests exits non-zero.
+          set -uo pipefail
           export TEST_PHP_EXECUTABLE=$(which php)
           export TEST_PHP_ARGS="-d extension=$(pwd)/modules/fastjson.so"
           export NO_INTERACTION=1
@@ -142,12 +154,18 @@ jobs:
           mods=$(php $TEST_PHP_ARGS -m)
           grep -qix fastjson <<< "$mods" \
             || { echo "::error::fastjson extension failed to load"; exit 1; }
-          RESULT=$(php run-tests.php --show-diff -g FAIL,BORK,LEAK,XLEAK \
-                       tests/ tests/upstream-json/ 2>&1)
-          echo "$RESULT"
-          FAILED=$(echo "$RESULT" | grep 'Tests failed' | grep -oP '\d+' | head -1)
-          if [ "${FAILED:-0}" -gt 0 ]; then
-            echo "::error::$FAILED test(s) failed"
+          # tee (not $(...)) so the run-tests summary and diffs are always
+          # visible: under set -e a `RESULT=$(...)` assignment aborts before
+          # echo when run-tests exits non-zero, hiding which test failed.
+          php run-tests.php --show-diff -g FAIL,BORK,LEAK,XLEAK \
+              tests/ tests/upstream-json/ 2>&1 | tee /tmp/test-output.txt
+          run_status=${PIPESTATUS[0]}
+          if ! grep -q 'Number of tests' /tmp/test-output.txt; then
+            echo "::error::run-tests.php produced no summary (aborted?), status $run_status"
+            exit 1
+          fi
+          if grep -qiP 'Tests (failed|leaked|borked)\s*:\s*[1-9]' /tmp/test-output.txt; then
+            echo "::error::tests failed/leaked/borked"
             exit 1
           fi
 

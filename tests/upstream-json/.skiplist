@@ -64,9 +64,17 @@ json_encode_pretty_print2.phpt  # ext-json-internals # PRESERVE_ZERO_FRACTION kn
 # === JSON_PARTIAL_OUTPUT_ON_ERROR (now honored) ===
 # 003, 004, inf_nan_error, unsupported_type_error: all unskipped after
 # implementing the flag at the encoder's value-level error sites.
-# json_encode_recursion_01/02 now pass: fastjson honors the "jsonSerialize
+# json_encode_recursion_01 now passes: fastjson honors the "jsonSerialize
 # returns $this" special case (retval IS the original zval -> encode the
 # object's properties instead of re-entering jsonSerialize).
+# json_encode_recursion_02 stays skiplisted: its body var_dump()s $this
+# *during* jsonSerialize(). fastjson guards recursion with the generic
+# GC_PROTECT_RECURSION flag, so var_dump prints "*RECURSION*"; modern
+# ext/json (8.3+) uses a JSON-specific guard bit var_dump doesn't see, so
+# it prints the object. Encode output matches ({"a":1}); only the var_dump
+# diagnostic differs, and it varies by PHP version/platform. The
+# returns-$this behavior is covered by native encode_jsonserializable*.phpt.
+json_encode_recursion_02.phpt # ext-json-internals # var_dump($this) mid-encode: *RECURSION* vs object (guard-mechanism divergence)
 
 # === JSON_INVALID_UTF8_IGNORE / SUBSTITUTE (honored) ===
 # fastjson honors both flags with ext/json-matching semantics:
@@ -93,16 +101,20 @@ json_encode_pretty_print2.phpt  # ext-json-internals # PRESERVE_ZERO_FRACTION kn
 #  - ext/json's specific "Malformed UTF-8 characters" wording,
 #  - JSON_ERROR_CTRL_CHAR (code 3) which yyjson doesn't surface,
 #  - NUL-byte filtering in stdClass property names.
-# bug77843 now passes: the jsonSerialize()-returns-$this special case plus
-# the encode-side array-copy guard (mirroring ext/json's ZVAL_COPY) make
-# the mutate-mid-encode output match byte-for-byte. Native ASAN coverage
-# lives in encode_jsonserializable_unset_self.phpt and
-# encode_jsonserializable_array_mutation.phpt.
+# bug77843's use-after-free (both the object-lifetime and the array-storage
+# / arData-realloc variants) is fixed and natively covered under ASAN by
+# encode_jsonserializable_unset_self.phpt and
+# encode_jsonserializable_array_mutation.phpt. The upstream .phpt stays
+# skiplisted only because its body var_dump()s $this mid-encode, which
+# prints "*RECURSION*" under fastjson's generic GC_PROTECT_RECURSION guard
+# vs the object under modern ext/json's JSON-specific guard bit -- a
+# version/platform-dependent diagnostic, not an encode divergence.
 bug54484.phpt # ext-json-internals # error code numbering for UTF-8 within JSON
 bug61537.phpt # ext-json-internals # ext/json UTF-8 message text
 bug62010.phpt # ext-json-internals # ext/json UTF-8 message text
 bug68546.phpt # ext-json-internals # NUL bytes in property names
 bug69187.phpt # ext-json-internals # JSON_ERROR_CTRL_CHAR code numbering
+bug77843.phpt # ext-json-internals # var_dump($this) mid-encode: *RECURSION* vs object (guard-mechanism divergence); UAF fixed + natively covered
 
 # === Object property keys with embedded NUL (ext/json strips them) ===
 bug66021.phpt # ext-json-internals # NUL bytes in property names
