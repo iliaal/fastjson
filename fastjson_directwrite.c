@@ -90,6 +90,8 @@ typedef struct fastjson_dw_ctx {
 
 static bool dw_encode_zval(fastjson_dw_ctx *ctx, zval *zv,
                            zend_long remaining_depth);
+static bool dw_emit_object_props(fastjson_dw_ctx *ctx, zval *zv,
+                                 zend_long remaining_depth);
 
 /* Takes ownership of *src (move, not copy): callers hand over an owned
  * temporary and do not release it afterward, matching the hash path's
@@ -651,6 +653,27 @@ static bool dw_emit_jsonserializable(fastjson_dw_ctx *ctx, zval *zv,
         return false;
     }
 
+    /* The serialized result is encoded at the object's own depth, not one
+     * level deeper: ext/json's serializable path adds no depth level of its
+     * own (only php_json_encode_array increments encoder->depth), so a
+     * jsonSerialize() returning an M-deep structure needs $depth >= M, same
+     * as returning that structure directly. Passing remaining_depth - 1 here
+     * rejected valid input one level too shallow. */
+
+    /* jsonSerialize() returning $this: ext/json encodes the object's own
+     * properties rather than re-entering jsonSerialize() (which would trip
+     * the recursion guard). Mirror json_encoder.c's `Z_OBJ(retval) == obj`
+     * special case by encoding the property view directly. The recursion
+     * guard on obj stays set so a genuine self-referential property cycle
+     * is still caught. */
+    if (Z_TYPE(retval) == IS_OBJECT && Z_OBJ(retval) == obj) {
+        bool ok = dw_emit_object_props(ctx, &retval, remaining_depth);
+        zval_ptr_dtor(&retval);
+        GC_UNPROTECT_RECURSION(obj);
+        OBJ_RELEASE(obj);
+        return ok;
+    }
+
     /* Stash the retval so its zend_strings outlive any uses below.
      * Same lifetime mechanism as the legacy encoder. Lazy-init keeps
      * the no-JsonSerializable-anywhere path cheap. */
@@ -662,7 +685,7 @@ static bool dw_emit_jsonserializable(fastjson_dw_ctx *ctx, zval *zv,
         return false;
     }
 
-    bool ok = dw_encode_zval(ctx, stashed, remaining_depth - 1);
+    bool ok = dw_encode_zval(ctx, stashed, remaining_depth);
     GC_UNPROTECT_RECURSION(obj);
     OBJ_RELEASE(obj);
     return ok;
@@ -702,6 +725,16 @@ static bool dw_emit_object(fastjson_dw_ctx *ctx, zval *zv,
         return dw_encode_zval(ctx, backing, remaining_depth);
     }
 
+    return dw_emit_object_props(ctx, zv, remaining_depth);
+}
+
+/* Encode an object's JSON property view as a `{...}` body, skipping the
+ * JsonSerializable / enum dispatch dw_emit_object does up front. Called
+ * directly for the jsonSerialize()-returns-$this case, which must emit
+ * properties rather than re-invoke jsonSerialize(). */
+static bool dw_emit_object_props(fastjson_dw_ctx *ctx, zval *zv,
+                                 zend_long remaining_depth)
+{
     /* Use the JSON-purpose property view so engine objects (DateTime,
      * ArrayObject, etc.) get the same property set ext/json sees, and
      * stdClass's protected/private members get filtered out at the
@@ -884,8 +917,19 @@ emit_string:
     }
     case IS_ARRAY: {
         bool force_object = (ctx->flags & FASTJSON_ENCODE_FORCE_OBJECT) != 0;
-        return dw_emit_array(ctx, Z_ARRVAL_P(zv), remaining_depth,
-                             force_object);
+        /* Hold a reference across the descent: a nested JsonSerializable's
+         * jsonSerialize() may mutate this very array through an aliasing
+         * `&`-reference (refcount 1 -> in-place realloc of arData), which
+         * would dangle the ZEND_HASH_FOREACH cursor in dw_emit_array.
+         * The extra ref forces copy-on-write to separate the mutation onto
+         * a fresh array, leaving the iterated storage stable. Mirrors
+         * ext/json's json_encode_zval IS_ARRAY guard. */
+        zval arr_copy;
+        ZVAL_COPY(&arr_copy, zv);
+        bool ok = dw_emit_array(ctx, Z_ARRVAL(arr_copy), remaining_depth,
+                                force_object);
+        zval_ptr_dtor_nogc(&arr_copy);
+        return ok;
     }
     case IS_OBJECT:
         return dw_emit_object(ctx, zv, remaining_depth);

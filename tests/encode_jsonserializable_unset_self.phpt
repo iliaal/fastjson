@@ -38,13 +38,13 @@ class ReturnSelf implements JsonSerializable {
     public function jsonSerialize(): mixed {
         global $arr2;
         unset($arr2[0]);
-        return $this;        // self-return: fastjson reports recursion, no crash
+        return $this;        // self-return: encodes own properties, no crash
     }
 }
 
 $arr2 = [new ReturnSelf()];
 $out2 = fastjson_encode([&$arr2]);
-var_dump($out2 === false || is_string($out2));
+var_dump(is_string($out2));
 
 /* Hammer the path so a use-after-free reliably trips ASAN / the debug
  * allocator rather than surviving by luck on a single call. */

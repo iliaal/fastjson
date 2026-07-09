@@ -11,8 +11,12 @@ fastjson
  * would disagree on the same pointer. */
 $doc = '{"arr":[10,20,30]}';
 
+// The 19-digit run fits the length cap but overflows a 32-bit size_t; the
+// accumulator's overflow guard keeps set()/get() agreeing (out of range,
+// not a wrapped slot) on both word sizes.
 foreach (['/arr/0', '/arr/1', '/arr/2', '/arr/01', '/arr/00', '/arr/-',
-          '/arr/99999999999999999999999999', '/arr/3'] as $ptr) {
+          '/arr/99999999999999999999999999', '/arr/9999999999999999999',
+          '/arr/3'] as $ptr) {
     $get = fastjson_pointer_get($doc, $ptr);
     $set = fastjson_pointer_set($doc, $ptr, 99);
     printf("%-32s get=%-5s set=%s\n", $ptr,
@@ -28,4 +32,5 @@ foreach (['/arr/0', '/arr/1', '/arr/2', '/arr/01', '/arr/00', '/arr/-',
 /arr/00                          get=null  set=false
 /arr/-                           get=null  set=false
 /arr/99999999999999999999999999  get=null  set=false
+/arr/9999999999999999999         get=null  set=false
 /arr/3                           get=null  set=false

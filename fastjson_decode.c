@@ -901,9 +901,20 @@ PHP_FUNCTION(fastjson_pointer_set)
 
     zend_long value_flags = flags & FASTJSON_POINTER_VALUE_ENCODE_FLAGS;
 
+    /* The replacement lands nsegs containers deep in the output, so its own
+     * nesting budget is what remains of the effective stack depth after the
+     * pointer path. Passing the full depth let pointer_set emit a document
+     * deeper than $depth -- one it would then reject on decode. Subtract the
+     * path (floored at 0; a scalar replacement still encodes at budget 0). */
+    size_t nsegs = fastjson_pointer_count_segments(pointer, pointer_len);
+    zend_long repl_depth = (zend_long)stack_depth - (zend_long)nsegs - 1;
+    if (repl_depth < 0) {
+        repl_depth = 0;
+    }
+
     fastjson_pointer_repl repl;
     if (!fastjson_pointer_build_replacement(value, value_flags,
-                                            (zend_long)stack_depth, &repl)) {
+                                            repl_depth, &repl)) {
         yyjson_doc_free(idoc);
         if (EG(exception)) {
             RETURN_THROWS();
@@ -952,6 +963,17 @@ PHP_FUNCTION(fastjson_pointer_set)
             }
             fastjson_set_error_code(FASTJSON_ERROR_UNSUPPORTED_TYPE,
                                     "Encoded JSON string is too large");
+            RETURN_FALSE;
+        }
+        if (splice_status == FJ_SPLICE_INF_OR_NAN) {
+            if (throw_mode) {
+                fastjson_throw_error(FASTJSON_ERROR_INF_OR_NAN,
+                                     "Inf and NaN cannot be JSON encoded", NULL,
+                                     &saved_err);
+                RETURN_THROWS();
+            }
+            fastjson_set_error_code(FASTJSON_ERROR_INF_OR_NAN,
+                                    "Inf and NaN cannot be JSON encoded");
             RETURN_FALSE;
         }
         if (splice_status == FJ_SPLICE_SETTABLE_FAIL) {

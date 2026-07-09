@@ -134,5 +134,18 @@ echo "version OK: $v\n";
 PHP
 echo
 echo "======================================================================"
-echo " PIE install smoke test: PASSED"
-echo "======================================================================"
+# The manual phpize fallback (step 6) can load the extension even when PIE
+# itself is broken. This is a *PIE install* smoke test, so a fallback load
+# is not a pass: report it distinctly and exit non-zero so a PIE regression
+# is not hidden behind "extension loads".
+if [[ "${PIE_OK}" = "1" ]]; then
+	echo " PIE install smoke test: PASSED"
+	echo "======================================================================"
+else
+	echo " PIE install smoke test: FAILED"
+	echo " (PIE did not install the extension; it loaded only via the manual"
+	echo "  phpize+make fallback. The functional check above ran against that"
+	echo "  fallback build, not a PIE install.)"
+	echo "======================================================================"
+	exit 1
+fi

@@ -64,25 +64,39 @@ jobs:
           tools: phpize, php-config
 
       - name: Build extension
+        shell: bash
         run: |
+          set -euo pipefail
           phpize
           ./configure --enable-fastjson
-          WARNINGS=$(make -j$(nproc) 2>&1 | tee /dev/stderr | grep -c 'warning:' || true)
-          if [ "$WARNINGS" -gt 0 ]; then
-            echo "::error::Build produced $WARNINGS warning(s)"
+          # pipefail makes a failing `make` fail the step: the old
+          # `make | tee | grep -c || true` swallowed make's exit status
+          # (GitHub's default shell does not set pipefail), so a broken
+          # build could pass and the tests would then merely skip.
+          make -j"$(nproc)" 2>&1 | tee build.log
+          if grep -q 'warning:' build.log; then
+            echo "::error::Build produced warning(s)"
+            grep 'warning:' build.log || true
             exit 1
           fi
 
       - name: Run tests
+        shell: bash
         run: |
+          set -euo pipefail
           export TEST_PHP_EXECUTABLE=$(which php)
           export TEST_PHP_ARGS="-d extension=$(pwd)/modules/fastjson.so"
           export NO_INTERACTION=1
+          # A bad module ABI loads no extension, so every PHPT SKIPs and the
+          # summary reports 0 failures -- a green run that tested nothing.
+          # Fail fast unless the extension actually loaded.
+          php $TEST_PHP_ARGS -m | grep -qi '^fastjson$' \
+            || { echo "::error::fastjson extension failed to load"; exit 1; }
           RESULT=$(php run-tests.php --show-diff -g FAIL,BORK,LEAK,XLEAK \
                        tests/ tests/upstream-json/ 2>&1)
           echo "$RESULT"
           FAILED=$(echo "$RESULT" | grep 'Tests failed' | grep -oP '\d+' | head -1)
-          if [ "$FAILED" -gt 0 ]; then
+          if [ "${FAILED:-0}" -gt 0 ]; then
             echo "::error::$FAILED test(s) failed"
             exit 1
           fi
@@ -111,15 +125,22 @@ jobs:
           make -j$(sysctl -n hw.ncpu)
 
       - name: Run tests
+        shell: bash
         run: |
+          set -euo pipefail
           export TEST_PHP_EXECUTABLE=$(which php)
           export TEST_PHP_ARGS="-d extension=$(pwd)/modules/fastjson.so"
           export NO_INTERACTION=1
+          # A bad module ABI loads no extension, so every PHPT SKIPs and the
+          # summary reports 0 failures -- a green run that tested nothing.
+          # Fail fast unless the extension actually loaded.
+          php $TEST_PHP_ARGS -m | grep -qi '^fastjson$' \
+            || { echo "::error::fastjson extension failed to load"; exit 1; }
           RESULT=$(php run-tests.php --show-diff -g FAIL,BORK,LEAK,XLEAK \
                        tests/ tests/upstream-json/ 2>&1)
           echo "$RESULT"
           FAILED=$(echo "$RESULT" | grep 'Tests failed' | grep -oP '\d+' | head -1)
-          if [ "$FAILED" -gt 0 ]; then
+          if [ "${FAILED:-0}" -gt 0 ]; then
             echo "::error::$FAILED test(s) failed"
             exit 1
           fi
@@ -206,13 +227,30 @@ jobs:
           make -j$(nproc)
 
       - name: Run tests under ASAN
+        shell: bash
         run: |
+          set -uo pipefail
           export TEST_PHP_EXECUTABLE=/tmp/php-asan/bin/php
           export TEST_PHP_ARGS="-d extension=$(pwd)/modules/fastjson.so"
           export NO_INTERACTION=1
+          /tmp/php-asan/bin/php $TEST_PHP_ARGS -m | grep -qi '^fastjson$' \
+            || { echo "::error::fastjson extension failed to load under ASAN"; exit 1; }
+          # No `|| true`: it masked the runner exit status, so an ASAN abort
+          # or a no-summary exit read as success. Capture the status, then
+          # look beyond "Tests failed" (leaks/borks are distinct classes)
+          # and confirm a summary was actually produced.
           /tmp/php-asan/bin/php run-tests.php --show-diff --asan -g FAIL,BORK,LEAK,XLEAK \
-              tests/ tests/upstream-json/ 2>&1 | tee /tmp/test-output.txt || true
-          if grep -qP 'Tests failed\s*:\s*[1-9]' /tmp/test-output.txt; then
-            echo "::error::Tests failed under ASAN"
+              tests/ tests/upstream-json/ 2>&1 | tee /tmp/test-output.txt
+          run_status=${PIPESTATUS[0]}
+          if ! grep -q 'Number of tests' /tmp/test-output.txt; then
+            echo "::error::run-tests.php produced no summary under ASAN (aborted?), status $run_status"
+            exit 1
+          fi
+          if grep -qiP 'Tests (failed|leaked|borked)\s*:\s*[1-9]' /tmp/test-output.txt; then
+            echo "::error::Tests failed/leaked/borked under ASAN"
+            exit 1
+          fi
+          if [ "$run_status" -ne 0 ]; then
+            echo "::error::run-tests.php exited with status $run_status under ASAN"
             exit 1
           fi

@@ -21,12 +21,14 @@ class IntBox implements JsonSerializable {
 }
 echo fastjson_encode(new IntBox()), "\n";
 
-// Returning $this triggers recursion detection.
+// Returning $this: ext/json encodes the object's own public properties
+// rather than re-entering jsonSerialize(). fastjson mirrors that.
 class Loop implements JsonSerializable {
+    public int $id = 7;
     public function jsonSerialize(): mixed { return $this; }
 }
-var_dump(fastjson_encode(new Loop()));
-var_dump(fastjson_last_error() === FASTJSON_ERROR_RECURSION);
+echo fastjson_encode(new Loop()), "\n";
+var_dump(fastjson_last_error() === FASTJSON_ERROR_NONE);
 
 // Throwing in jsonSerialize bubbles up unchanged.
 class Boom implements JsonSerializable {
@@ -58,7 +60,7 @@ echo fastjson_encode(new Plain()), "\n";
 --EXPECT--
 {"box":"widgets","n":5}
 42
-bool(false)
+{"id":7}
 bool(true)
 RuntimeException: custom failure
 [{"box":"inner","n":1},99]

@@ -1,7 +1,7 @@
 # Patches applied to vendored yyjson sources
 
 The bundled yyjson sources at `vendor/yyjson/yyjson.{c,h}` are
-upstream's tag 0.12.0 with three local modifications documented below.
+upstream's tag 0.12.0 with four local modifications documented below.
 The upstream `vendor/yyjson/LICENSE` and `vendor/yyjson/CHANGELOG.md`
 are unchanged.
 
@@ -169,6 +169,77 @@ to fit worst-case `\uXXXX` expansion plus surrounding quotes.
   smart_str / yyjson_alc concern.
 - No `YYJSON_WRITE_INF_AND_NAN_AS_NULL` handling (string-only path).
 - No pretty-print logic (strings have no indentation context).
+
+## P-004: reject control characters in strings under `ALLOW_INVALID_UNICODE`
+
+**File:** `vendor/yyjson/yyjson.c` (the string reader `read_string`)
+**Region:** the `else` branch that handles a non-escape, non-quote byte,
+carrying the `"unexpected control character in string"` message (around
+line 4937 in 0.12.0).
+
+**Reason.** ext/json rejects raw control characters (byte `< 0x20`)
+inside JSON strings as `JSON_ERROR_CTRL_CHAR`, *regardless* of its
+`JSON_INVALID_UTF8_IGNORE` / `SUBSTITUTE` flags — those relax UTF-8
+validity only. yyjson conflates the two: `YYJSON_READ_ALLOW_INVALID_UNICODE`
+(which fastjson enables for the INVALID_UTF8 flags) also makes yyjson
+*accept* raw control chars in strings. The result was `fastjson_decode()`
+and `fastjson_validate()` silently accepting `"[\"a\x01b\"]"` under
+`JSON_INVALID_UTF8_IGNORE`.
+
+Fixing this in the reader (rather than post-parse in fastjson) is the
+correct layer: the check fires exactly where a string byte is consumed,
+so it covers `fastjson_decode`, `fastjson_file_decode`, `fastjson_validate`,
+`fastjson_pointer_*`, and `fastjson_merge_patch` uniformly, and it is
+comment-aware for free under `RELAXED` (yyjson's comment parser never
+routes comment bytes through the string reader, so a quote or control
+char inside a `//`/`/* */` comment is not misread as string content).
+
+**Invalid UTF-8 tolerance is preserved.** High bytes (`>= 0x80`) are
+handled on a *separate* path (the non-ASCII branch, message
+`"invalid UTF-8 encoding in string"`), which still honors
+`ALLOW_INVALID_UNICODE`. Only the control-char branch is made
+unconditional.
+
+**Patch.** Replace the flag-gated control-char branch:
+
+```c
+    } else {
+        if (!has_allow(INVALID_UNICODE)) {
+            return_err(src, "unexpected control character in string");
+        }
+        if (src >= eof) return_err(src, "unclosed string");
+        *dst++ = *src++;
+    }
+```
+
+with an unconditional rejection (unclosed strings are already caught
+earlier as `"unexpected end of data"`, so only genuine control chars
+reach here):
+
+```c
+    } else {
+        if (src >= eof) return_err(src, "unclosed string");
+        return_err(src, "unexpected control character in string");
+    }
+```
+
+**Verification.**
+
+```sh
+make && php -d extension=$(pwd)/modules/fastjson.so -r '
+    var_dump(fastjson_decode("[\"a\x01b\"]", true, 512, JSON_INVALID_UTF8_IGNORE));   // NULL
+    var_dump(fastjson_validate("[\"a\x01b\"]", 512, JSON_INVALID_UTF8_IGNORE));       // false
+    var_dump(fastjson_decode("[\"a\xffb\"]", true, 512, JSON_INVALID_UTF8_IGNORE));   // ["ab"] (utf-8 still tolerated)
+    var_dump(fastjson_decode("// x \" y\n[1]", true, 512, FASTJSON_DECODE_RELAXED));  // [1] (comment quote not misread)
+'
+```
+
+**Re-apply recipe on yyjson upgrade.** Locate the single
+`"unexpected control character in string"` return in `read_string` and
+drop the `has_allow(INVALID_UNICODE)` gate as shown. Confirm the
+high-byte path still carries its own separate
+`"invalid UTF-8 encoding in string"` return (that one keeps the flag
+gate).
 
 ## Build-flag dependencies (not vendor patches)
 

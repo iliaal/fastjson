@@ -10,27 +10,29 @@ category notes summarize it.
 | Bucket | Count | Source |
 |---|---|---|
 | Total upstream tests | 98 | `php-src/ext/json/tests/*.phpt` |
-| Skipped (categorized) | 36 | `tests/upstream-json/.skiplist` |
-| Rewritten + run | 62 | this directory |
-| Passing | 62 | run-tests output |
+| Skipped (categorized) | 33 | `tests/upstream-json/.skiplist` |
+| Rewritten + run | 65 | this directory |
+| Passing | 65 | run-tests output |
 | Environment-skip (--SKIPIF--) | 0 | none currently |
 | Failing | 0 | clean against current fastjson |
 
-So the harness is **green for everything not on the skiplist**: all 62
+So the harness is **green for everything not on the skiplist**: all 65
 rewritten tests pass. The skiplist is the contract surface; every entry
 names a category plus a one-line reason or TODO reference.
 
-Since v0.1.0 the rewritten set has grown from 53 to 62 as fastjson
+Since v0.1.0 the rewritten set has grown from 53 to 65 as fastjson
 honored more flags. Vendor patch P-001 (lowercase `\uXXXX` hex digits)
 landed the first batch; honoring `JSON_HEX_*`, `JSON_NUMERIC_CHECK`,
 `JSON_PARTIAL_OUTPUT_ON_ERROR`, and `JSON_INVALID_UTF8_IGNORE/SUBSTITUTE`
-moved the rest off the skiplist. Remaining skiplist entries fail for
-reasons orthogonal to the flag itself (error-message text, error-code
-numbering, NUL-byte handling) or are explicit divergences.
+moved the next batch; the `jsonSerialize()`-returns-`$this` special case
+plus the encode-side array-copy guard moved `json_encode_recursion_01/02`
+and `bug77843`. Remaining skiplist entries fail for reasons orthogonal to
+the flag itself (error-message text, error-code numbering, NUL-byte
+handling) or are explicit divergences.
 
 ## Skiplist categories
 
-- **ext-json-internals** (31 tests). Behavior fastjson does not aim to
+- **ext-json-internals** (29 tests). Behavior fastjson does not aim to
   mirror byte-for-byte. By feature:
   - JsonSerializable + var_export / print_r / serialize interplay
     (5 tests: `json_encode_recursion_03..06`, `serialize`). The core
@@ -47,16 +49,23 @@ numbering, NUL-byte handling) or are explicit divergences.
     message wording differs.
   - UTF-8 error code numbering and NUL-byte handling (6 tests:
     `bug54484`, `bug61537`, `bug62010`, `bug68546`, `bug69187`,
-    `bug66021`). `JSON_ERROR_CTRL_CHAR` (code 3) is not surfaced by
-    yyjson, and ext/json strips NUL bytes from stdClass property names.
+    `bug66021`). yyjson lumps invalid-string failures under one code, so
+    both a raw control char (ext/json `JSON_ERROR_CTRL_CHAR`, code 3) and
+    an unpaired surrogate (ext/json `JSON_ERROR_UTF16`, code 10) surface
+    as `JSON_ERROR_UTF8` (code 5). fastjson still *rejects* both inputs,
+    including under `JSON_INVALID_UTF8_IGNORE/SUBSTITUTE` (which relax
+    UTF-8 validity, not control-char/structural strictness); only the
+    reported code differs. ext/json also strips NUL bytes from stdClass
+    property names, which fastjson does not.
   - `JSON_PRESERVE_ZERO_FRACTION` knock-on (2 tests:
     `json_encode_basic`, `json_encode_pretty_print2`). `(double)1230.0`
     encodes as `1230`, not `1230.0`.
-  - `JSON_PARTIAL_OUTPUT_ON_ERROR` with `jsonSerialize()` returning
-    `$this` (2 tests: `json_encode_recursion_01`, `_02`). The flag is
-    honored generally; this needs ext/json's special case where the
-    returned zval IS the original and it falls through to property
-    serialization.
+  - `serialize_precision` is not honored: fastjson always emits yyjson's
+    shortest round-trippable double (matching ext/json's default
+    `serialize_precision = -1`). Under a fixed precision (e.g. `4`),
+    ext/json rounds (`1.235`) while fastjson emits the full value
+    (`1.2345678901234567`). Replacing yyjson's number writer with a
+    precision-aware one is out of scope.
 
 - **doc-divergence** (4 tests). Behavior fastjson explicitly diverges
   from:
@@ -65,10 +74,6 @@ numbering, NUL-byte handling) or are explicit divergences.
     ext/json `1.0e+17`); not a target.
   - U+2028 / U+2029 line separator escaping (1 test). yyjson treats them
     as ordinary code points; ext/json always escapes for JSONP safety.
-
-- **bug-report** (1 test). `bug77843`: memory leak in encode +
-  `JsonSerializable` + `PARTIAL_OUTPUT`; a fastjson-side bug to
-  investigate, not a contract divergence.
 
 ## How to add to the skiplist
 
@@ -87,11 +92,11 @@ numbering, NUL-byte handling) or are explicit divergences.
 
 ## Reaching 100% non-skip pass rate
 
-Already there: all 62 rewritten tests pass. Moving more upstream tests
+Already there: all 65 rewritten tests pass. Moving more upstream tests
 off the skiplist depends on honoring the remaining flag knock-ons
-(`PRESERVE_ZERO_FRACTION`, the `jsonSerialize() returns $this` case) and
-deciding whether to match ext/json's exact error-message text, which is
-the single largest skiplist category.
+(`PRESERVE_ZERO_FRACTION`, `serialize_precision`) and deciding whether to
+match ext/json's exact error-message text and error-code numbering, which
+is the single largest skiplist category.
 
 ## Reaching parity with full ext/json
 

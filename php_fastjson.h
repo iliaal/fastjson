@@ -235,6 +235,7 @@ typedef enum {
     FJ_SPLICE_WRITE_FAIL,
     FJ_SPLICE_DEPTH_FAIL,
     FJ_SPLICE_TOO_LARGE,
+    FJ_SPLICE_INF_OR_NAN,
 } fj_splice_status;
 
 typedef struct {
@@ -247,6 +248,11 @@ typedef struct {
 bool fastjson_pointer_build_replacement(zval *value, zend_long value_flags,
                                         zend_long depth,
                                         fastjson_pointer_repl *out);
+
+/* Count RFC 6901 segments in a pointer ("" -> 0, "/a" -> 1, "/a/b" -> 2).
+ * The replacement in a non-root set nests under this many path containers,
+ * so the caller subtracts it from the value's depth budget. */
+size_t fastjson_pointer_count_segments(const char *ptr, size_t len);
 
 zend_string *fastjson_imut_pointer_set_write(yyjson_val *root,
                                              const char *pointer,

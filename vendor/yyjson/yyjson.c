@@ -4935,11 +4935,16 @@ copy_escape:
         if (con) con[0] = con[1] = NULL;
         return true;
     } else {
-        if (!has_allow(INVALID_UNICODE)) {
-            return_err(src, "unexpected control character in string");
-        }
+        /* fastjson patch P-004: reject raw control characters in strings
+         * even under ALLOW_INVALID_UNICODE. That flag is meant to relax
+         * UTF-8 validity only (handled on the high-byte path above); a
+         * literal control byte (< 0x20) is a JSON-grammar violation that
+         * ext/json always rejects (JSON_ERROR_CTRL_CHAR) regardless of its
+         * JSON_INVALID_UTF8_* flags. Unclosed strings are caught earlier as
+         * "unexpected end of data", so only genuine control chars reach here.
+         * Original upstream tolerated them here under the flag. */
         if (src >= eof) return_err(src, "unclosed string");
-        *dst++ = *src++;
+        return_err(src, "unexpected control character in string");
     }
 
 copy_ascii:

@@ -22,6 +22,7 @@
 #endif
 
 #include <ctype.h>
+#include <math.h>
 
 #include "php.h"
 #if PHP_VERSION_ID >= 80300 && defined(ZEND_CHECK_STACK_LIMIT)
@@ -210,6 +211,17 @@ static bool fj_splice_write_string(fj_splice_ctx *ctx, const char *s, size_t len
 
 static bool fj_splice_write_number(fj_splice_ctx *ctx, const yyjson_val *val)
 {
+    /* yyjson_write_number emits "Infinity"/"NaN" for non-finite reals,
+     * which is invalid JSON. The target may carry such a value: fastjson's
+     * reader retries exponent-overflow numbers (e.g. 1e309) with
+     * ALLOW_INF_AND_NAN to match ext/json's decode-to-INF, so re-emitting
+     * an untouched node here could smuggle Infinity into the output. Reject
+     * it the way the encoder rejects INF/NaN. */
+    if (yyjson_is_real(FJ_IMUT_VAL(val))
+            && !isfinite(yyjson_get_real(FJ_IMUT_VAL(val)))) {
+        ctx->status = FJ_SPLICE_INF_OR_NAN;
+        return false;
+    }
     if (!fj_splice_reserve(ctx, 40)) {
         return false;
     }
@@ -300,7 +312,15 @@ static bool fj_seg_is_index(const fj_ptr_seg *seg, size_t *out_idx)
         if (!isdigit(c)) {
             return false;
         }
-        idx = idx * 10 + (size_t)(c - '0');
+        /* The 19-digit cap above bounds overflow only where size_t is
+         * 64-bit; on a 32-bit build (size_t max ~4.29e9) a 10-digit index
+         * already overflows. Guard the accumulation so an out-of-range
+         * index is rejected rather than silently wrapping to a bogus slot. */
+        size_t digit = (size_t)(c - '0');
+        if (idx > ((size_t)-1 - digit) / 10) {
+            return false;
+        }
+        idx = idx * 10 + digit;
     }
     *out_idx = idx;
     return true;
@@ -648,7 +668,7 @@ static bool fj_splice_write_at(fj_splice_ctx *ctx, const yyjson_val *val,
     return false;
 }
 
-static size_t fj_pointer_count_segments(const char *ptr, size_t len)
+size_t fastjson_pointer_count_segments(const char *ptr, size_t len)
 {
     if (len == 0) {
         return 0;
@@ -834,7 +854,7 @@ zend_string *fastjson_imut_pointer_set_write(yyjson_val *root,
         return NULL;
     }
 
-    size_t nsegs = fj_pointer_count_segments(pointer, pointer_len);
+    size_t nsegs = fastjson_pointer_count_segments(pointer, pointer_len);
     if (depth_limit > 0 && nsegs >= depth_limit) {
         *status = FJ_SPLICE_DEPTH_FAIL;
         return NULL;
