@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-09
+
 ### Fixed
 
 - Fixed a use-after-free encoding an array that a nested `JsonSerializable` mutates through an aliasing `&`-reference; the array is now copied before encoding, as `ext/json` does.
@@ -245,7 +247,8 @@ backed by yyjson 0.12.0.
 - U+2028 / U+2029 line separators emitted as ordinary code points
   (yyjson default). ext/json always escapes for JSONP safety.
 
-[Unreleased]: https://github.com/iliaal/fastjson/compare/0.5.0...HEAD
+[Unreleased]: https://github.com/iliaal/fastjson/compare/0.6.0...HEAD
+[0.6.0]: https://github.com/iliaal/fastjson/releases/tag/0.6.0
 [0.5.0]: https://github.com/iliaal/fastjson/releases/tag/0.5.0
 [0.4.0]: https://github.com/iliaal/fastjson/releases/tag/0.4.0
 [0.3.0]: https://github.com/iliaal/fastjson/releases/tag/0.3.0
