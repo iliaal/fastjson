@@ -89,8 +89,11 @@ jobs:
           export NO_INTERACTION=1
           # A bad module ABI loads no extension, so every PHPT SKIPs and the
           # summary reports 0 failures -- a green run that tested nothing.
-          # Fail fast unless the extension actually loaded.
-          php $TEST_PHP_ARGS -m | grep -qi '^fastjson$' \
+          # Fail fast unless the extension actually loaded. Capture first,
+          # then match: piping `php -m` straight into `grep -q` lets grep
+          # close the pipe on the first hit, SIGPIPEs php, and trips pipefail.
+          mods=$(php $TEST_PHP_ARGS -m)
+          grep -qix fastjson <<< "$mods" \
             || { echo "::error::fastjson extension failed to load"; exit 1; }
           RESULT=$(php run-tests.php --show-diff -g FAIL,BORK,LEAK,XLEAK \
                        tests/ tests/upstream-json/ 2>&1)
@@ -133,8 +136,11 @@ jobs:
           export NO_INTERACTION=1
           # A bad module ABI loads no extension, so every PHPT SKIPs and the
           # summary reports 0 failures -- a green run that tested nothing.
-          # Fail fast unless the extension actually loaded.
-          php $TEST_PHP_ARGS -m | grep -qi '^fastjson$' \
+          # Fail fast unless the extension actually loaded. Capture first,
+          # then match: piping `php -m` straight into `grep -q` lets grep
+          # close the pipe on the first hit, SIGPIPEs php, and trips pipefail.
+          mods=$(php $TEST_PHP_ARGS -m)
+          grep -qix fastjson <<< "$mods" \
             || { echo "::error::fastjson extension failed to load"; exit 1; }
           RESULT=$(php run-tests.php --show-diff -g FAIL,BORK,LEAK,XLEAK \
                        tests/ tests/upstream-json/ 2>&1)
@@ -233,7 +239,8 @@ jobs:
           export TEST_PHP_EXECUTABLE=/tmp/php-asan/bin/php
           export TEST_PHP_ARGS="-d extension=$(pwd)/modules/fastjson.so"
           export NO_INTERACTION=1
-          /tmp/php-asan/bin/php $TEST_PHP_ARGS -m | grep -qi '^fastjson$' \
+          mods=$(/tmp/php-asan/bin/php $TEST_PHP_ARGS -m)
+          grep -qix fastjson <<< "$mods" \
             || { echo "::error::fastjson extension failed to load under ASAN"; exit 1; }
           # No `|| true`: it masked the runner exit status, so an ASAN abort
           # or a no-summary exit read as success. Capture the status, then
