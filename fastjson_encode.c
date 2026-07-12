@@ -71,7 +71,14 @@ PHP_FUNCTION(fastjson_encode)
         fastjson_clear_error();
     }
 
-    zend_string *zs = fastjson_directwrite_encode(value, flags, depth);
+    fastjson_error_state encode_err;
+    zend_string *zs = fastjson_directwrite_encode(value, flags, depth,
+                                                   &encode_err);
+    if (!throw_mode) {
+        /* User callbacks and temporary destructors may call fastjson again.
+         * Publish this invocation's outcome after they have all returned. */
+        fastjson_restore_error_state(&encode_err);
+    }
     if (zs == NULL) {
         goto fail;
     }
@@ -85,7 +92,8 @@ fail:
         RETURN_THROWS();
     }
     if (throw_mode) {
-        fastjson_throw_current_error("fastjson_encode failed", &saved_err);
+        fastjson_throw_error(encode_err.code, encode_err.msg,
+                             "fastjson_encode failed", &saved_err);
         RETURN_THROWS();
     }
     RETURN_FALSE;
@@ -119,7 +127,14 @@ PHP_FUNCTION(fastjson_file_encode)
     /* Encode first; only touch the filesystem once we have bytes to
      * write. Reuses the exact encoder + error semantics of
      * fastjson_encode. */
-    zend_string *zs = fastjson_directwrite_encode(value, flags, depth);
+    fastjson_error_state encode_err;
+    zend_string *zs = fastjson_directwrite_encode(value, flags, depth,
+                                                   &encode_err);
+    if (!throw_mode) {
+        /* See fastjson_encode: nested calls must not become the file
+         * operation's final encode result. */
+        fastjson_restore_error_state(&encode_err);
+    }
     if (zs == NULL) {
         goto encode_fail;
     }
@@ -140,7 +155,7 @@ PHP_FUNCTION(fastjson_file_encode)
          * that rather than masking it (and never RETURN_FALSE with an
          * exception still pending). */
         if (EG(exception)) {
-            fastjson_restore_error_state(&saved_err);
+            fastjson_restore_error_state(throw_mode ? &saved_err : &encode_err);
             RETURN_THROWS();
         }
         fastjson_set_error_code(FASTJSON_ERROR_SYNTAX,
@@ -151,15 +166,17 @@ PHP_FUNCTION(fastjson_file_encode)
     php_stream_close(stream);
     bool wrote_all = (written == ZSTR_LEN(zs));
     zend_string_release(zs);
+    if (EG(exception)) {
+        fastjson_restore_error_state(throw_mode ? &saved_err : &encode_err);
+        RETURN_THROWS();
+    }
     if (!wrote_all) {
-        /* A userspace wrapper's write() may have thrown mid-write. */
-        if (EG(exception)) {
-            fastjson_restore_error_state(&saved_err);
-            RETURN_THROWS();
-        }
         fastjson_set_error_code(FASTJSON_ERROR_SYNTAX,
                                 "Failed to write file");
         RETURN_FALSE;
+    }
+    if (!throw_mode) {
+        fastjson_restore_error_state(&encode_err);
     }
     RETURN_TRUE;
 
@@ -170,7 +187,8 @@ encode_fail:
         RETURN_THROWS();
     }
     if (throw_mode) {
-        fastjson_throw_current_error("fastjson_file_encode failed", &saved_err);
+        fastjson_throw_error(encode_err.code, encode_err.msg,
+                             "fastjson_file_encode failed", &saved_err);
         RETURN_THROWS();
     }
     RETURN_FALSE;

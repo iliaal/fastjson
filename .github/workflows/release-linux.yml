@@ -67,6 +67,18 @@ jobs:
         php: ['8.4', '8.5']
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.release_tag }}
+
+      - name: Verify release checkout
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          checked_out_tag=$(git describe --tags --exact-match)
+          test "$checked_out_tag" = "$RELEASE_TAG"
+          source_version=$(sed -n 's/^#define PHP_FASTJSON_VERSION "\([^"]*\)"/\1/p' php_fastjson.h)
+          test "$source_version" = "${RELEASE_TAG#v}"
 
       - name: Setup PHP
         uses: shivammathur/setup-php@v2

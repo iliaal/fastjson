@@ -68,6 +68,15 @@ static size_t fastjson_effective_stack_depth(zend_long depth)
     return (size_t)depth;
 }
 
+static zend_long fastjson_effective_walk_depth(zend_long depth)
+{
+#if PHP_VERSION_ID >= 80300 && defined(ZEND_CHECK_STACK_LIMIT)
+    return depth;
+#else
+    return (zend_long)fastjson_effective_stack_depth(depth);
+#endif
+}
+
 #define FASTJSON_POINTER_VALUE_ENCODE_FLAGS ( \
     FASTJSON_ENCODE_HEX_TAG | \
     FASTJSON_ENCODE_HEX_AMP | \
@@ -296,9 +305,10 @@ static void fastjson_decode_into(const char *json, size_t json_len,
     /* Single dispatch: pick the sanitizing walker only when the
      * caller asked for UTF-8 handling. The fast walker is otherwise
      * branch-identical to the pre-IGNORE/SUBSTITUTE code. */
+    zend_long walk_depth = fastjson_effective_walk_depth(depth);
     bool walk_ok = FASTJSON_HAS_UTF8_HANDLING_FLAG(flags)
-        ? fastjson_yyval_to_zval_sanitize(root, use_assoc, depth, flags, return_value)
-        : fastjson_yyval_to_zval(root, use_assoc, depth, flags, return_value);
+        ? fastjson_yyval_to_zval_sanitize(root, use_assoc, walk_depth, flags, return_value)
+        : fastjson_yyval_to_zval(root, use_assoc, walk_depth, flags, return_value);
     if (!walk_ok) {
         /* fastjson_yyval_to_zval already populated FASTJSON_ERROR_DEPTH.
          * return_value may hold a partial zend_array/zend_object; reset
@@ -434,7 +444,7 @@ PHP_FUNCTION(fastjson_file_decode)
          * that exception rather than masking it with our own SYNTAX error
          * (and never RETURN_NULL with an exception still pending). */
         if (EG(exception)) {
-            fastjson_restore_error_state(&saved_err);
+            if (throw_mode) fastjson_restore_error_state(&saved_err);
             RETURN_THROWS();
         }
         fastjson_set_error_code(FASTJSON_ERROR_SYNTAX,
@@ -454,6 +464,15 @@ PHP_FUNCTION(fastjson_file_decode)
         contents = ZSTR_EMPTY_ALLOC();
     }
     php_stream_close(stream);
+    /* A userspace wrapper may throw from stream_close() after a successful
+     * read. Stop before parsing so the wrapper exception remains primary. */
+    if (EG(exception)) {
+        if (contents != NULL) {
+            zend_string_release(contents);
+        }
+        if (throw_mode) fastjson_restore_error_state(&saved_err);
+        RETURN_THROWS();
+    }
     if (contents == NULL || !reached_eof) {
         /* A userspace wrapper's read() may have thrown mid-copy; propagate
          * it rather than clobbering it with a SYNTAX error. */
@@ -461,7 +480,7 @@ PHP_FUNCTION(fastjson_file_decode)
             zend_string_release(contents);
         }
         if (EG(exception)) {
-            fastjson_restore_error_state(&saved_err);
+            if (throw_mode) fastjson_restore_error_state(&saved_err);
             RETURN_THROWS();
         }
         fastjson_set_error_code(FASTJSON_ERROR_SYNTAX,
@@ -485,9 +504,10 @@ static bool fastjson_walk_doc_into(yyjson_doc *doc, yyjson_val *root,
                                    const fastjson_error_state *saved_err,
                                    zval *return_value)
 {
+    zend_long walk_depth = fastjson_effective_walk_depth(depth);
     bool walk_ok = FASTJSON_HAS_UTF8_HANDLING_FLAG(flags)
-        ? fastjson_yyval_to_zval_sanitize(root, use_assoc, depth, flags, return_value)
-        : fastjson_yyval_to_zval(root, use_assoc, depth, flags, return_value);
+        ? fastjson_yyval_to_zval_sanitize(root, use_assoc, walk_depth, flags, return_value)
+        : fastjson_yyval_to_zval(root, use_assoc, walk_depth, flags, return_value);
     if (!walk_ok) {
         /* The walker set FASTJSON_ERROR_DEPTH and return_value may hold a
          * partial container; reset to a clean null. */
@@ -917,15 +937,21 @@ PHP_FUNCTION(fastjson_pointer_set)
     }
 
     fastjson_pointer_repl repl;
-    if (!fastjson_pointer_build_replacement(value, value_flags,
-                                            repl_depth, &repl)) {
+    fastjson_error_state replacement_err;
+    bool replacement_ok = fastjson_pointer_build_replacement(
+        value, value_flags, repl_depth, &repl, &replacement_err);
+    if (!throw_mode) {
+        fastjson_restore_error_state(&replacement_err);
+    }
+    if (!replacement_ok) {
         yyjson_doc_free(idoc);
         if (EG(exception)) {
             RETURN_THROWS();
         }
         if (throw_mode) {
-            fastjson_throw_current_error("fastjson_pointer_set encode failed",
-                                         &saved_err);
+            fastjson_throw_error(replacement_err.code, replacement_err.msg,
+                                 "fastjson_pointer_set encode failed",
+                                 &saved_err);
             RETURN_THROWS();
         }
         RETURN_FALSE;

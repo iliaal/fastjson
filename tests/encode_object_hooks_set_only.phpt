@@ -9,9 +9,10 @@ fastjson
 
 /* Non-virtual property with a SET hook and no GET hook: the engine's
  * zend_std_read_property returns the backing field via OBJ_PROP() as a
- * borrowed pointer (no refcount bump). A naive stash + ZVAL_PTR_DTOR
- * would decrement the backing field's refcount and free the underlying
- * zend_string while the object still owns it -- UAF on the next read.
+ * borrowed pointer (no refcount bump). Treating that pointer as an owned
+ * temporary would decrement the backing field's refcount and free the
+ * underlying zend_string while the object still owns it -- UAF on the
+ * next read.
  *
  * The `set => $value;` shorthand stores the parameter into the backing
  * field unchanged, so the encoded value equals the assigned value and

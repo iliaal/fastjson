@@ -3,6 +3,10 @@
 ARG_ENABLE("fastjson", "Enable fastjson (yyjson-backed JSON) support", "no");
 
 if (PHP_FASTJSON != "no") {
+    if (PHP_VERSION < 8 || (PHP_VERSION == 8 && PHP_MINOR_VERSION < 1)) {
+        ERROR("fastjson requires PHP 8.1 or newer");
+    }
+
     var yyjson_src_dir = "vendor\\yyjson";
 
     // yyjson.h on Windows expands `yyjson_api` to __declspec(dllexport) only

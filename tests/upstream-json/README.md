@@ -12,7 +12,7 @@ scripts/sync-upstream-json-tests.sh [$HOME/php-src]
 ```
 
 | Source PHP version | 8.6.0 |
-| Synced count       | 98 |
+| Synced count       | 100 |
 | Skipped            | 36 (per .skiplist) |
 
 Tests intentionally not rewritten are listed in `.skiplist` with a

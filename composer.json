@@ -3,7 +3,7 @@
     "type": "php-ext",
     "description": "Fast JSON encode/decode/validate for PHP 8.1+, backed by yyjson. Drop-in alternative to ext/json with namespaced fastjson_* functions and json_last_error-compatible error reporting.",
     "keywords": ["json", "yyjson", "decode", "encode", "validate", "performance", "php-extension", "pie"],
-    "license": ["BSD-3-Clause", "MIT"],
+    "license": "(BSD-3-Clause AND MIT)",
     "homepage": "https://github.com/iliaal/fastjson",
     "authors": [
         {

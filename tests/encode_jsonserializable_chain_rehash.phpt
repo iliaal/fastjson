@@ -1,20 +1,13 @@
 --TEST--
-fastjson_encode: JsonSerializable chain that rehashes the retval stash (UAF)
+fastjson_encode: nested JsonSerializable callback results remain stable
 --EXTENSIONS--
 fastjson
 --FILE--
 <?php
 
-/* Regression: dw_emit_jsonserializable stashes the jsonSerialize() result
- * in ctx->retval_stash and, when that result is itself a JsonSerializable
- * object, passes the interior stash pointer down as `zv`. Each nested
- * level inserts into the SAME stash; once the inserts cross the stash's
- * initial capacity (8), the HashTable rehashes and relocates arData --
- * dangling every `zv` that points at an earlier slot. The pre-fix code
- * then read Z_UNPROTECT_RECURSION_P(zv) from the freed slot while
- * unwinding each level: a use-after-free (ASAN: heap-use-after-free at
- * dw_emit_jsonserializable). The chain must be deep enough to force at
- * least one rehash while early frames are still live. */
+/* Regression coverage for nested callback-result ownership. Each result
+ * must remain alive through its recursive encode and be released while its
+ * owning frame is still active. */
 
 class Node implements JsonSerializable {
     public function __construct(private ?Node $next, private int $v) {}

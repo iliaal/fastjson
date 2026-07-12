@@ -92,20 +92,6 @@ if php -m | grep -qi fastjson; then
 	echo "   [A] RESULT: success"
 fi
 
-# Path B: plain Packagist lookup (expected to fail until iliaal/fastjson is
-# registered on packagist.org). Kept for completeness.
-if [[ "${PIE_OK}" = "0" ]]; then
-	echo
-	echo "   [B] pie install iliaal/fastjson  (plain Packagist lookup)"
-	pie install \
-		--with-php-config=/usr/local/bin/php-config \
-		iliaal/fastjson 2>&1 | tee /tmp/pie-B.out | tail -20 || true
-	if php -m | grep -qi fastjson; then
-		PIE_OK=1
-		echo "   [B] RESULT: success"
-	fi
-fi
-
 echo "   overall PIE result: PIE_OK=${PIE_OK}"
 echo
 

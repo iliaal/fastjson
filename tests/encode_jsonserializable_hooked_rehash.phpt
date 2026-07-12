@@ -1,5 +1,5 @@
 --TEST--
-fastjson_encode: JsonSerializable returning a hooked object that rehashes the retval stash
+fastjson_encode: JsonSerializable returning an object with many hooked properties
 --EXTENSIONS--
 fastjson
 --SKIPIF--
@@ -7,15 +7,9 @@ fastjson
 --FILE--
 <?php
 
-/* Regression: dw_emit_jsonserializable stashes the jsonSerialize() result
- * in ctx->retval_stash and passes the interior stash pointer down to
- * dw_emit_object as `zv`. When that result is an OBJECT with GET-hooked
- * properties, each hook value is inserted into the SAME stash. Once the
- * inserts cross the stash's initial capacity (8), the HashTable rehashes
- * and relocates arData -- dangling `zv`. The pre-fix code then read
- * Z_OBJ_P(zv) from the freed slot on every later property: a
- * use-after-free. The object must therefore have enough hooked
- * properties to force at least one rehash mid-loop. */
+/* Regression coverage for callback-result ownership while hooked property
+ * reads create temporary zvals. The callback object and every hook result
+ * must stay alive for exactly the recursive encode that consumes it. */
 
 function make_hooked(int $count): string {
     $props = '';
@@ -38,17 +32,13 @@ $w = new Wrap();
 /* Output must match ext/json byte-for-byte. */
 var_dump(fastjson_encode($w) === json_encode($w));
 
-/* Encode repeatedly: with the bug, later iterations read the relocated
- * (freed) stash slot. Under ASAN this aborts; in a plain build it is
- * latent corruption. The fix captures the zend_object before the loop. */
+/* Encode repeatedly to exercise callback and hook cleanup under ASAN. */
 for ($i = 0; $i < 100; $i++) {
     $r = fastjson_encode($w);
 }
 var_dump($r === json_encode($w));
 
-/* Nested: a JsonSerializable whose result is a hooked object that itself
- * contains another wrapped hooked object, so the stash holds several live
- * interior pointers across rehashes. */
+/* Nested callback and hooked-object lifetimes. */
 class WrapNested implements JsonSerializable {
     public function jsonSerialize(): mixed {
         $o = new Hooked();

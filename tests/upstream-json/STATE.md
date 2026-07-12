@@ -9,18 +9,18 @@ category notes summarize it.
 
 | Bucket | Count | Source |
 |---|---|---|
-| Total upstream tests | 98 | `php-src/ext/json/tests/*.phpt` |
-| Skipped (categorized) | 35 | `tests/upstream-json/.skiplist` |
-| Rewritten + run | 63 | this directory |
-| Passing | 63 | run-tests output |
+| Total upstream tests | 100 | `php-src/ext/json/tests/*.phpt` |
+| Skipped (categorized) | 36 | `tests/upstream-json/.skiplist` |
+| Rewritten + run | 64 | this directory |
+| Passing | 64 | run-tests output |
 | Environment-skip (--SKIPIF--) | 0 | none currently |
 | Failing | 0 | clean against current fastjson |
 
-So the harness is **green for everything not on the skiplist**: all 63
+So the harness is **green for everything not on the skiplist**: all 64
 rewritten tests pass. The skiplist is the contract surface; every entry
 names a category plus a one-line reason or TODO reference.
 
-Since v0.1.0 the rewritten set has grown from 53 to 63 as fastjson
+Since v0.1.0 the rewritten set has grown from 53 to 64 as fastjson
 honored more flags. Vendor patch P-001 (lowercase `\uXXXX` hex digits)
 landed the first batch; honoring `JSON_HEX_*`, `JSON_NUMERIC_CHECK`,
 `JSON_PARTIAL_OUTPUT_ON_ERROR`, and `JSON_INVALID_UTF8_IGNORE/SUBSTITUTE`
@@ -31,24 +31,23 @@ handling) or are explicit divergences.
 
 ## Skiplist categories
 
-- **ext-json-internals** (31 tests). Behavior fastjson does not aim to
+- **ext-json-internals** (32 tests). Behavior fastjson does not aim to
   mirror byte-for-byte. By feature:
   - JsonSerializable + var_export / print_r / serialize interplay
     (5 tests: `json_encode_recursion_03..06`, `serialize`). The core
     `jsonSerialize()` path is honored; these exercise ext/json-internal
     dumping behavior fastjson does not reproduce.
   - `var_dump($this)` *during* `jsonSerialize()` (2 tests:
-    `json_encode_recursion_02`, `bug77843`). fastjson guards encode
-    recursion with the generic `GC_PROTECT_RECURSION` flag, so `var_dump`
-    prints `*RECURSION*`; modern ext/json (8.3+) uses a JSON-specific
-    guard bit `var_dump` doesn't see, so it prints the object. The encode
-    output matches; only the diagnostic differs, and it varies by PHP
-    version/platform. The returns-`$this` behavior and `bug77843`'s
-    use-after-free are covered by native `encode_jsonserializable*.phpt`.
+    `json_encode_recursion_02`, `bug77843`). Fastjson uses ext/json's
+    JSON-specific guard on PHP 8.3+, but PHP 8.1/8.2 expose only the generic
+    recursion flag. The resulting diagnostic is version-dependent, so one
+    generated expectation cannot cover every supported runtime. The
+    returns-`$this` behavior and `bug77843`'s use-after-free are covered by
+    native `encode_jsonserializable*.phpt` tests.
   - Error-message text ext/json owns verbatim, including the
     `Syntax error near location X:Y` and `Malformed UTF-8 characters`
-    wording (14 tests: the 10 `error_location_*`, `bug54058`,
-    `json_validate_002`, `json_validate_004`, `007`). yyjson's
+    wording (15 tests: the 10 `error_location_*`, `bug54058`,
+    `json_validate_002`, `json_validate_004`, `007`, `gh22420`). yyjson's
     diagnostics differ; codes still match.
   - JsonException message-text divergence (2 tests:
     `json_decode_exceptions`, `json_encode_exceptions`). fastjson throws

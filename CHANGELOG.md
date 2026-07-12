@@ -6,6 +6,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- `fastjson_encode()`, `fastjson_file_encode()`, and replacement encoding in `fastjson_pointer_set()` now publish the outer operation's final error state after nested callbacks or destructors call fastjson recursively, matching `ext/json` for success, partial-output, failure, and exception paths.
+- `fastjson_file_encode()` now stops immediately when a userspace stream wrapper throws from `stream_close()`, keeping that exception primary and preserving the applicable error-state contract.
+
 ## [0.6.0] - 2026-07-09
 
 ### Fixed
@@ -204,7 +209,7 @@ backed by yyjson 0.12.0.
   `zend_call_stack_overflowed(EG(stack_limit))` so deeply chained inputs
   fail cleanly instead of being killed by the OS.
 
-- Bundled yyjson 0.12.0 (MIT) with three local patches in
+- Bundled yyjson 0.12.0 (MIT) with four local patches in
   `vendor/yyjson/PATCHES.md`:
   - **P-001**: lowercase `\uXXXX` escape table for byte-equality with
     ext/json. Submitted upstream as ibireme/yyjson#263, #264.
@@ -213,6 +218,8 @@ backed by yyjson 0.12.0.
   - **P-003**: public `yyjson_write_string_to_buf()` wrapper around the
     internal escape-table writer. Required for the one-stage encoder.
     Submitted upstream as ibireme/yyjson#265, #266.
+  - **P-004**: reject raw control characters even when invalid-Unicode
+    tolerance is enabled, preserving ext/json's UTF-8 flag semantics.
 
 - yyjson allocator (`fastjson_php_alc`) routes every malloc/realloc/free
   through Zend's `emalloc`/`erealloc`/`efree`. JSON allocations participate

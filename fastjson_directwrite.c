@@ -31,7 +31,7 @@
  *
  * What we implement ourselves:
  *   - Container brackets/commas/colons
- *   - Recursion guards, retval_stash for JsonSerializable lifetime
+ *   - Recursion guards and scoped JsonSerializable/property-hook lifetimes
  *   - Pretty-print indent (when JSON_PRETTY_PRINT is set)
  *   - JSON_HEX_* substitutions (inline; no second pass needed because
  *     we own the byte stream as it's written)
@@ -51,6 +51,7 @@
 #include "php.h"
 #if PHP_VERSION_ID >= 80300 && defined(ZEND_CHECK_STACK_LIMIT)
 #include "Zend/zend_call_stack.h"
+#define FASTJSON_HAVE_NATIVE_STACK_LIMIT 1
 #else
 /* zend_call_stack_overflowed() / EG(stack_limit) are 8.3+, and even on
  * 8.3+ the function is only declared when ZEND_CHECK_STACK_LIMIT is
@@ -59,6 +60,7 @@
  * still bounds recursion, so the secondary C-stack check degrades to a
  * no-op. */
 #define zend_call_stack_overflowed(limit) (0)
+#define FASTJSON_HAVE_NATIVE_STACK_LIMIT 0
 #endif
 #include "Zend/zend_enum.h"
 #include "Zend/zend_exceptions.h"
@@ -80,12 +82,10 @@ typedef struct fastjson_dw_ctx {
                                  * call to yyjson_write_string_to_buf */
     bool            partial_output;
     bool            pretty_print;
+    fastjson_error_state error;
+    uint32_t        call_depth;
     int             indent_level;  /* current pretty-print depth; 0 at
                                     * top level, +1 per open container */
-    HashTable       retval_stash;
-    bool            retval_stash_inited;
-    zval            stash_stack[12];
-    uint32_t        stash_stack_top;
 } fastjson_dw_ctx;
 
 static bool dw_encode_zval(fastjson_dw_ctx *ctx, zval *zv,
@@ -93,29 +93,55 @@ static bool dw_encode_zval(fastjson_dw_ctx *ctx, zval *zv,
 static bool dw_emit_object_props(fastjson_dw_ctx *ctx, zval *zv,
                                  zend_long remaining_depth);
 
-/* Takes ownership of *src (move, not copy): callers hand over an owned
- * temporary and do not release it afterward, matching the hash path's
- * zend_hash_next_index_insert. The stash's dtor (or the stack cleanup
- * loop in fastjson_directwrite_encode) balances the reference. Using
- * ZVAL_COPY here would addref and leak the caller's temporary. */
-static zval *dw_stash_zval(fastjson_dw_ctx *ctx, zval *src)
+typedef struct {
+#if PHP_VERSION_ID >= 80300
+    uint32_t *value;
+#else
+    HashTable *value;
+#endif
+} fastjson_dw_json_guard;
+
+static bool dw_json_guard_is_recursive(fastjson_dw_json_guard *guard,
+                                       zval *zv)
 {
-    if (ctx->stash_stack_top < 12) {
-        zval *slot = &ctx->stash_stack[ctx->stash_stack_top++];
-        ZVAL_COPY_VALUE(slot, src);
-        return slot;
-    }
-    if (!ctx->retval_stash_inited) {
-        zend_hash_init(&ctx->retval_stash, 0, NULL, ZVAL_PTR_DTOR, 0);
-        ctx->retval_stash_inited = true;
-    }
-    return zend_hash_next_index_insert(&ctx->retval_stash, src);
+#if PHP_VERSION_ID >= 80300
+    guard->value = zend_get_recursion_guard(Z_OBJ_P(zv));
+    return ZEND_GUARD_IS_RECURSIVE(guard->value, JSON);
+#else
+    guard->value = Z_OBJPROP_P(zv);
+    return guard->value != NULL && GC_IS_RECURSIVE(guard->value);
+#endif
 }
 
-static bool dw_fail_too_large(void)
+static void dw_json_guard_protect(fastjson_dw_json_guard *guard)
 {
-    fastjson_set_error_code(FASTJSON_ERROR_UNSUPPORTED_TYPE,
-                            "Encoded JSON string is too large");
+#if PHP_VERSION_ID >= 80300
+    ZEND_GUARD_PROTECT_RECURSION(guard->value, JSON);
+#else
+    if (guard->value != NULL) GC_TRY_PROTECT_RECURSION(guard->value);
+#endif
+}
+
+static void dw_json_guard_unprotect(fastjson_dw_json_guard *guard)
+{
+#if PHP_VERSION_ID >= 80300
+    ZEND_GUARD_UNPROTECT_RECURSION(guard->value, JSON);
+#else
+    if (guard->value != NULL) GC_TRY_UNPROTECT_RECURSION(guard->value);
+#endif
+}
+
+static void dw_set_error(fastjson_dw_ctx *ctx, zend_long code,
+                         const char *msg)
+{
+    fastjson_error_state_set(&ctx->error, code, msg);
+    fastjson_set_error_code(code, msg);
+}
+
+static bool dw_fail_too_large(fastjson_dw_ctx *ctx)
+{
+    dw_set_error(ctx, FASTJSON_ERROR_UNSUPPORTED_TYPE,
+                 "Encoded JSON string is too large");
     return false;
 }
 
@@ -123,7 +149,7 @@ static bool dw_reserve(fastjson_dw_ctx *ctx, size_t add_len)
 {
     size_t cur_len = ctx->buf.s ? ZSTR_LEN(ctx->buf.s) : 0;
     if (UNEXPECTED(add_len > ZSTR_MAX_LEN - cur_len)) {
-        return dw_fail_too_large();
+        return dw_fail_too_large(ctx);
     }
     smart_str_alloc(&ctx->buf, add_len, 0);
     return true;
@@ -135,7 +161,7 @@ static bool dw_reserve(fastjson_dw_ctx *ctx, size_t add_len)
 static bool dw_reserve_string(fastjson_dw_ctx *ctx, size_t len)
 {
     if (UNEXPECTED(len > (ZSTR_MAX_LEN - 2) / 6)) {
-        return dw_fail_too_large();
+        return dw_fail_too_large(ctx);
     }
     return dw_reserve(ctx, len * 6 + 2);
 }
@@ -259,7 +285,7 @@ static bool dw_apply_hex_escapes(fastjson_dw_ctx *ctx,
     if (hits == 0) return true;
 
     if (UNEXPECTED(hits > (ZSTR_MAX_LEN - orig_len) / 5)) {
-        return dw_fail_too_large();
+        return dw_fail_too_large(ctx);
     }
 
     /* Pass 2: rewrite over a temp copy of the region. Reserve exact
@@ -363,7 +389,7 @@ static bool dw_emit_string_ex(fastjson_dw_ctx *ctx, const char *s, size_t len,
              * fail, but if yyjson rejects our output we still need a
              * graceful exit. */
         }
-        fastjson_set_error_code(FASTJSON_ERROR_UTF8,
+        dw_set_error(ctx, FASTJSON_ERROR_UTF8,
             "Malformed UTF-8 characters, possibly incorrectly encoded");
         if (ctx->partial_output) {
             if (is_key) {
@@ -399,7 +425,7 @@ static void dw_emit_long(fastjson_dw_ctx *ctx, zend_long n)
 static bool dw_emit_double(fastjson_dw_ctx *ctx, double d)
 {
     if (!isfinite(d)) {
-        fastjson_set_error_code(FASTJSON_ERROR_INF_OR_NAN,
+        dw_set_error(ctx, FASTJSON_ERROR_INF_OR_NAN,
             "Inf and NaN cannot be JSON encoded");
         if (ctx->partial_output) {
             /* ext/json's substitution for INF/NaN is JSON `0` per
@@ -471,7 +497,7 @@ static bool dw_emit_double(fastjson_dw_ctx *ctx, double d)
     char *end = yyjson_write_number(&v, cur);
     if (UNEXPECTED(end == NULL)) {
         /* Should be unreachable since we filtered !isfinite above. */
-        fastjson_set_error_code(FASTJSON_ERROR_INF_OR_NAN,
+        dw_set_error(ctx, FASTJSON_ERROR_INF_OR_NAN,
             "Inf and NaN cannot be JSON encoded");
         if (ctx->partial_output) {
             smart_str_appendc(&ctx->buf, '0');
@@ -491,7 +517,7 @@ static bool dw_partial_or_fail(fastjson_dw_ctx *ctx,
                                const char *error_msg,
                                bool emit_zero_not_null)
 {
-    fastjson_set_error_code(error_code, error_msg);
+    dw_set_error(ctx, error_code, error_msg);
     if (ctx->partial_output) {
         if (emit_zero_not_null) {
             smart_str_appendc(&ctx->buf, '0');
@@ -620,16 +646,10 @@ static bool dw_emit_array(fastjson_dw_ctx *ctx, HashTable *ht,
 static bool dw_emit_jsonserializable(fastjson_dw_ctx *ctx, zval *zv,
                                      zend_long remaining_depth)
 {
-    /* zv may be an interior pointer into ctx->retval_stash: when a
-     * JsonSerializable's jsonSerialize() result is itself a
-     * JsonSerializable object, dw_emit_object forwards the stashed slot
-     * down to here. The insert below -- and any deeper insert during the
-     * recursion -- can rehash and relocate the stash's arData, dangling
-     * zv. The zend_object never moves, so capture it up front and drive
-     * the recursion guard through obj, never re-dereferencing zv after
-     * the insert. Mirrors the fix in dw_emit_object. */
+    /* Capture the stable object pointer before entering userland. */
     zend_object *obj = Z_OBJ_P(zv);
-    if (GC_IS_RECURSIVE(obj)) {
+    fastjson_dw_json_guard guard;
+    if (dw_json_guard_is_recursive(&guard, zv)) {
         return dw_partial_or_fail(ctx, FASTJSON_ERROR_RECURSION,
             "Recursion detected", false);
     }
@@ -640,7 +660,7 @@ static bool dw_emit_jsonserializable(fastjson_dw_ctx *ctx, zval *zv,
      * keeps obj alive until we release it below, after which the object
      * is destroyed if we held the last reference. */
     GC_ADDREF(obj);
-    GC_PROTECT_RECURSION(obj);
+    dw_json_guard_protect(&guard);
 
     zval retval;
     ZVAL_UNDEF(&retval);
@@ -648,7 +668,7 @@ static bool dw_emit_jsonserializable(fastjson_dw_ctx *ctx, zval *zv,
                                    "jsonserialize", &retval);
     if (EG(exception)) {
         zval_ptr_dtor(&retval);
-        GC_UNPROTECT_RECURSION(obj);
+        dw_json_guard_unprotect(&guard);
         OBJ_RELEASE(obj);
         return false;
     }
@@ -663,30 +683,19 @@ static bool dw_emit_jsonserializable(fastjson_dw_ctx *ctx, zval *zv,
     /* jsonSerialize() returning $this: ext/json encodes the object's own
      * properties rather than re-entering jsonSerialize() (which would trip
      * the recursion guard). Mirror json_encoder.c's `Z_OBJ(retval) == obj`
-     * special case by encoding the property view directly. The recursion
-     * guard on obj stays set so a genuine self-referential property cycle
-     * is still caught. */
+     * special case by dropping the callback guard and encoding the property
+     * view directly. The property walker applies its own cycle guard. */
     if (Z_TYPE(retval) == IS_OBJECT && Z_OBJ(retval) == obj) {
+        dw_json_guard_unprotect(&guard);
         bool ok = dw_emit_object_props(ctx, &retval, remaining_depth);
         zval_ptr_dtor(&retval);
-        GC_UNPROTECT_RECURSION(obj);
         OBJ_RELEASE(obj);
         return ok;
     }
 
-    /* Stash the retval so its zend_strings outlive any uses below.
-     * Same lifetime mechanism as the legacy encoder. Lazy-init keeps
-     * the no-JsonSerializable-anywhere path cheap. */
-    zval *stashed = dw_stash_zval(ctx, &retval);
-    if (stashed == NULL) {
-        zval_ptr_dtor(&retval);
-        GC_UNPROTECT_RECURSION(obj);
-        OBJ_RELEASE(obj);
-        return false;
-    }
-
-    bool ok = dw_encode_zval(ctx, stashed, remaining_depth);
-    GC_UNPROTECT_RECURSION(obj);
+    bool ok = dw_encode_zval(ctx, &retval, remaining_depth);
+    zval_ptr_dtor(&retval);
+    dw_json_guard_unprotect(&guard);
     OBJ_RELEASE(obj);
     return ok;
 }
@@ -698,13 +707,6 @@ static bool dw_emit_object(fastjson_dw_ctx *ctx, zval *zv,
         return dw_partial_or_fail(ctx, FASTJSON_ERROR_DEPTH,
             "Maximum stack depth exceeded", false);
     }
-    /* See dw_emit_array: a $depth above INT_MAX wraps non-positive in
-     * ext/json and trips JSON_ERROR_DEPTH on every container; match it. */
-    if (remaining_depth <= 0 || remaining_depth > INT_MAX) {
-        return dw_partial_or_fail(ctx, FASTJSON_ERROR_DEPTH,
-            "Maximum stack depth exceeded", false);
-    }
-
     if (fastjson_json_serializable_ce != NULL
             && instanceof_function(Z_OBJCE_P(zv),
                                    fastjson_json_serializable_ce)) {
@@ -725,6 +727,15 @@ static bool dw_emit_object(fastjson_dw_ctx *ctx, zval *zv,
         return dw_encode_zval(ctx, backing, remaining_depth);
     }
 
+    /* See dw_emit_array: a $depth above INT_MAX wraps non-positive in
+     * ext/json and trips JSON_ERROR_DEPTH on every container; match it.
+     * JsonSerializable and backed enums dispatch first because scalar
+     * results do not add a container level. */
+    if (remaining_depth <= 0 || remaining_depth > INT_MAX) {
+        return dw_partial_or_fail(ctx, FASTJSON_ERROR_DEPTH,
+            "Maximum stack depth exceeded", false);
+    }
+
     return dw_emit_object_props(ctx, zv, remaining_depth);
 }
 
@@ -735,6 +746,7 @@ static bool dw_emit_object(fastjson_dw_ctx *ctx, zval *zv,
 static bool dw_emit_object_props(fastjson_dw_ctx *ctx, zval *zv,
                                  zend_long remaining_depth)
 {
+    zend_object *obj = Z_OBJ_P(zv);
     /* Use the JSON-purpose property view so engine objects (DateTime,
      * ArrayObject, etc.) get the same property set ext/json sees, and
      * stdClass's protected/private members get filtered out at the
@@ -746,14 +758,20 @@ static bool dw_emit_object_props(fastjson_dw_ctx *ctx, zval *zv,
             "Object has no properties", false);
     }
 
-    bool need_recursion_guard = !(GC_FLAGS(props) & GC_IMMUTABLE);
+    zend_refcounted *recursion_rc = (zend_refcounted *)props;
+#if PHP_VERSION_ID >= 80400
+    if (obj->ce->num_hooked_props != 0) {
+        recursion_rc = (zend_refcounted *)obj;
+    }
+#endif
+    bool need_recursion_guard = !(GC_FLAGS(recursion_rc) & GC_IMMUTABLE);
     if (need_recursion_guard) {
-        if (GC_IS_RECURSIVE(props)) {
+        if (GC_IS_RECURSIVE(recursion_rc)) {
             zend_release_properties(props);
             return dw_partial_or_fail(ctx, FASTJSON_ERROR_RECURSION,
                 "Recursion detected", false);
         }
-        GC_PROTECT_RECURSION(props);
+        GC_PROTECT_RECURSION(recursion_rc);
     }
 
     bool pretty = ctx->pretty_print;
@@ -770,14 +788,7 @@ static bool dw_emit_object_props(fastjson_dw_ctx *ctx, zval *zv,
     zend_string *key;
     zend_ulong index;
     zval *item;
-    /* Capture the object up front: zv may be an interior pointer into
-     * ctx->retval_stash (when this object came from a JsonSerializable
-     * return, dw_emit_jsonserializable passes the stashed slot down).
-     * The hooked-property branch below inserts into that same stash,
-     * which can rehash and relocate arData mid-loop, dangling zv. The
-     * zend_object never moves, so read it once here and never deref zv
-     * again inside the loop. */
-    zend_object *obj = Z_OBJ_P(zv);
+    /* Capture the object before any property read enters userland. */
     ZEND_HASH_FOREACH_KEY_VAL(props, index, key, item) {
         /* Skip protected/private members. zend_get_properties_for with
          * PURPOSE_JSON already filters these for stdClass, but custom
@@ -796,10 +807,10 @@ static bool dw_emit_object_props(fastjson_dw_ctx *ctx, zval *zv,
         /* PHP 8.4 hooked properties: zend_get_properties_for(JSON)
          * delivers them as IS_PTR pointing at a zend_property_info.
          * ext/json invokes the get hook via zend_read_property_ex and
-         * serializes the returned zval; we mirror that. The returned
-         * zval lives on our stack (rv); stash it so the zend_string
-         * inside survives until the encode finishes. */
+         * serializes the returned zval; we mirror that. Keep the returned
+         * zval alive until its value has been encoded. */
         zval hook_rv;
+        bool release_hook_rv = false;
         if (Z_TYPE_P(item) == IS_PTR) {
             zend_property_info *info = Z_PTR_P(item);
 #if PHP_VERSION_ID >= 80400
@@ -814,42 +825,38 @@ static bool dw_emit_object_props(fastjson_dw_ctx *ctx, zval *zv,
 #endif
             ZVAL_UNDEF(&hook_rv);
             zval *hooked = zend_read_property_ex(info->ce, obj,
-                                                 info->name, false, &hook_rv);
+                                                 info->name, true, &hook_rv);
             if (EG(exception)) {
                 /* A partial get hook may have written a refcounted value
                  * into hook_rv before throwing; release it. No-op when
                  * the engine returned a borrowed pointer (hook_rv stayed
                  * IS_UNDEF). */
                 zval_ptr_dtor(&hook_rv);
-                if (need_recursion_guard) GC_UNPROTECT_RECURSION(props);
+                if (need_recursion_guard) GC_UNPROTECT_RECURSION(recursion_rc);
                 if (body_open) ctx->indent_level--;
                 zend_release_properties(props);
                 return false;
             }
-            zval stash_copy;
-            ZVAL_COPY(&stash_copy, hooked);
-            zval_ptr_dtor(&hook_rv);
-            item = dw_stash_zval(ctx, &stash_copy);
-            if (item == NULL) {
-                zval_ptr_dtor(&stash_copy);
-                if (need_recursion_guard) GC_UNPROTECT_RECURSION(props);
-                if (body_open) ctx->indent_level--;
-                zend_release_properties(props);
-                return false;
-            }
+            item = hooked;
+            release_hook_rv = true;
         }
-        if (Z_ISUNDEF_P(item)) continue;
+        if (Z_ISUNDEF_P(item)) {
+            if (release_hook_rv) zval_ptr_dtor(&hook_rv);
+            continue;
+        }
         ZVAL_DEREF(item);
         if (pretty && !body_open) { ctx->indent_level++; body_open = true; }
         if (!first) smart_str_appendc(&ctx->buf, ',');
         if (pretty) dw_emit_newline_indent(ctx, ctx->indent_level);
         if (!dw_emit_object_key(ctx, key, index)
                 || !dw_encode_zval(ctx, item, remaining_depth - 1)) {
-            if (need_recursion_guard) GC_UNPROTECT_RECURSION(props);
+            if (release_hook_rv) zval_ptr_dtor(&hook_rv);
+            if (need_recursion_guard) GC_UNPROTECT_RECURSION(recursion_rc);
             if (body_open) ctx->indent_level--;
             zend_release_properties(props);
             return false;
         }
+        if (release_hook_rv) zval_ptr_dtor(&hook_rv);
         first = false;
     } ZEND_HASH_FOREACH_END();
     if (body_open) {
@@ -858,13 +865,13 @@ static bool dw_emit_object_props(fastjson_dw_ctx *ctx, zval *zv,
     }
     smart_str_appendc(&ctx->buf, '}');
 
-    if (need_recursion_guard) GC_UNPROTECT_RECURSION(props);
+    if (need_recursion_guard) GC_UNPROTECT_RECURSION(recursion_rc);
     zend_release_properties(props);
     return true;
 }
 
-static bool dw_encode_zval(fastjson_dw_ctx *ctx, zval *zv,
-                           zend_long remaining_depth)
+static bool dw_encode_zval_inner(fastjson_dw_ctx *ctx, zval *zv,
+                                 zend_long remaining_depth)
 {
     switch (Z_TYPE_P(zv)) {
     case IS_NULL:
@@ -942,12 +949,32 @@ emit_string:
     }
 }
 
-/* Public entry: drives the encode. Caller (PHP_FUNCTION) takes the
- * resulting zend_string from the smart_str buffer. Returns NULL on
- * unrecoverable error (error code set in FASTJSON_G); caller decides
- * whether to throw or return false. */
+static bool dw_encode_zval(fastjson_dw_ctx *ctx, zval *zv,
+                           zend_long remaining_depth)
+{
+#if !FASTJSON_HAVE_NATIVE_STACK_LIMIT
+    /* JsonSerializable and reference chains can recurse without consuming
+     * JSON container depth. Keep those paths bounded on PHP/platforms where
+     * Zend cannot report the native stack limit. */
+    if (ctx->call_depth >= 1024) {
+        return dw_partial_or_fail(ctx, FASTJSON_ERROR_DEPTH,
+            "Maximum stack depth exceeded", false);
+    }
+    ctx->call_depth++;
+    bool ok = dw_encode_zval_inner(ctx, zv, remaining_depth);
+    ctx->call_depth--;
+    return ok;
+#else
+    return dw_encode_zval_inner(ctx, zv, remaining_depth);
+#endif
+}
+
+/* Public entry: drives the encode. Caller takes the resulting zend_string
+ * and publishes `error_state` according to its own throw contract. Returns
+ * NULL on unrecoverable error. */
 zend_string *fastjson_directwrite_encode(zval *value, zend_long flags,
-                                         zend_long depth)
+                                         zend_long depth,
+                                         fastjson_error_state *error_state)
 {
     fastjson_dw_ctx ctx;
     memset(&ctx, 0, sizeof(ctx));
@@ -955,7 +982,7 @@ zend_string *fastjson_directwrite_encode(zval *value, zend_long flags,
     ctx.yflags = fastjson_translate_write_flags(flags, false);
     ctx.partial_output = (flags & FASTJSON_ENCODE_PARTIAL_OUTPUT_ON_ERROR) != 0;
     ctx.pretty_print = (flags & FASTJSON_ENCODE_PRETTY_PRINT) != 0;
-    ctx.retval_stash_inited = false;
+    fastjson_error_state_clear(&ctx.error);
 
     /* Reserve a sensible starting buffer. Real overflow growth via
      * smart_str_alloc; this just avoids the first 2-3 growth doublings
@@ -963,13 +990,7 @@ zend_string *fastjson_directwrite_encode(zval *value, zend_long flags,
     smart_str_alloc(&ctx.buf, 256, 0);
 
     bool ok = dw_encode_zval(&ctx, value, depth);
-
-    while (ctx.stash_stack_top > 0) {
-        zval_ptr_dtor(&ctx.stash_stack[--ctx.stash_stack_top]);
-    }
-    if (ctx.retval_stash_inited) {
-        zend_hash_destroy(&ctx.retval_stash);
-    }
+    *error_state = ctx.error;
 
     if (!ok) {
         smart_str_free(&ctx.buf);

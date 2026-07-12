@@ -83,12 +83,6 @@ extern zend_module_entry fastjson_module_entry;
 extern zend_class_entry *fastjson_json_exception_ce;
 extern zend_class_entry *fastjson_json_serializable_ce;
 
-/* Direct-write encoder entry point (fastjson_directwrite.c).
- * Returns the encoded zend_string on success (caller owns it), or
- * NULL on unrecoverable error (FASTJSON_G(last_err_code) set). */
-zend_string *fastjson_directwrite_encode(zval *value, zend_long flags,
-                                         zend_long depth);
-
 ZEND_BEGIN_MODULE_GLOBALS(fastjson)
     zend_long last_err_code;
     /* yyjson's err.msg is a string literal owned by yyjson.c; we store
@@ -119,6 +113,34 @@ typedef struct {
     zend_long line;
     zend_long col;
 } fastjson_error_state;
+
+static zend_always_inline void fastjson_error_state_clear(
+    fastjson_error_state *state)
+{
+    state->code = FASTJSON_ERROR_NONE;
+    state->msg = NULL;
+    state->pos = -1;
+    state->line = 0;
+    state->col = 0;
+}
+
+static zend_always_inline void fastjson_error_state_set(
+    fastjson_error_state *state, zend_long code, const char *msg)
+{
+    state->code = code;
+    state->msg = msg;
+    state->pos = -1;
+    state->line = 0;
+    state->col = 0;
+}
+
+/* Direct-write encoder entry point (fastjson_directwrite.c).
+ * Returns the encoded zend_string on success (caller owns it), or NULL on
+ * unrecoverable error. `error_state` receives this invocation's outcome so
+ * nested callbacks cannot replace the outer operation's final error. */
+zend_string *fastjson_directwrite_encode(zval *value, zend_long flags,
+                                         zend_long depth,
+                                         fastjson_error_state *error_state);
 
 /* Translate a yyjson read code into the matching ext/json JSON_ERROR_*
  * int. SUCCESS -> NONE; INVALID_STRING -> UTF8 (yyjson's signal for bad
@@ -247,7 +269,8 @@ typedef struct {
 
 bool fastjson_pointer_build_replacement(zval *value, zend_long value_flags,
                                         zend_long depth,
-                                        fastjson_pointer_repl *out);
+                                        fastjson_pointer_repl *out,
+                                        fastjson_error_state *error_state);
 
 /* Count RFC 6901 segments in a pointer ("" -> 0, "/a" -> 1, "/a/b" -> 2).
  * The replacement in a non-root set nests under this many path containers,

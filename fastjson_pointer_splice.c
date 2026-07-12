@@ -741,9 +741,11 @@ static bool fj_pointer_fill_segments(const char *ptr, size_t len,
  * reuse direct-write + parse into a small side doc. */
 bool fastjson_pointer_build_replacement(zval *value, zend_long value_flags,
                                         zend_long depth,
-                                        fastjson_pointer_repl *out)
+                                        fastjson_pointer_repl *out,
+                                        fastjson_error_state *error_state)
 {
     memset(out, 0, sizeof(*out));
+    fastjson_error_state_clear(error_state);
     ZVAL_DEREF(value);
 
     if (value_flags & (FASTJSON_ENCODE_FORCE_OBJECT
@@ -777,6 +779,8 @@ bool fastjson_pointer_build_replacement(zval *value, zend_long value_flags,
         size_t slen = ZSTR_LEN(str);
         if (!fastjson_utf8_well_formed(bytes, slen)) {
             if (!FASTJSON_HAS_UTF8_HANDLING_FLAG(value_flags)) {
+                fastjson_error_state_set(error_state, FASTJSON_ERROR_UTF8,
+                    "Malformed UTF-8 characters, possibly incorrectly encoded");
                 fastjson_set_error_code(FASTJSON_ERROR_UTF8,
                     "Malformed UTF-8 characters, possibly incorrectly encoded");
                 return false;
@@ -802,7 +806,8 @@ bool fastjson_pointer_build_replacement(zval *value, zend_long value_flags,
 
 encode_value:
     ;
-    zend_string *vstr = fastjson_directwrite_encode(value, value_flags, depth);
+    zend_string *vstr = fastjson_directwrite_encode(value, value_flags, depth,
+                                                     error_state);
     if (vstr == NULL) {
         return false;
     }
@@ -811,6 +816,7 @@ encode_value:
                                 &fastjson_php_alc, &verr);
     if (out->doc == NULL) {
         fastjson_set_read_error(ZSTR_VAL(vstr), ZSTR_LEN(vstr), &verr);
+        fastjson_save_error_state(error_state);
     }
     zend_string_release(vstr);
     if (out->doc == NULL) {
