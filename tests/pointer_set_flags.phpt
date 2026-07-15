@@ -13,6 +13,11 @@ var_dump(fastjson_last_error() === JSON_ERROR_INF_OR_NAN);
 
 $hexFlags = JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT;
 echo fastjson_pointer_set('{"a":"<>&\'\""}', '/b', '<>&\'"', 512, $hexFlags), "\n";
+
+// Value-transforming flags apply only to the replacement. Untouched parsed
+// values retain their JSON type and numeric representation.
+echo fastjson_pointer_set('{"s":"123","n":1.0,"a":[1]}', '/x', '456', 512, JSON_NUMERIC_CHECK), "\n";
+echo fastjson_pointer_set('{"s":"123","n":1.0,"a":[1]}', '/x', '456', 512, JSON_FORCE_OBJECT), "\n";
 ?>
 --EXPECT--
 {"x":{"0":1,"1":2}}
@@ -21,3 +26,5 @@ echo fastjson_pointer_set('{"a":"<>&\'\""}', '/b', '<>&\'"', 512, $hexFlags), "\
 {"x":0}
 bool(true)
 {"a":"\u003C\u003E\u0026\u0027\u0022","b":"\u003C\u003E\u0026\u0027\u0022"}
+{"s":"123","n":1.0,"a":[1],"x":456}
+{"s":"123","n":1.0,"a":[1],"x":"456"}

@@ -155,9 +155,10 @@ static bool dw_reserve(fastjson_dw_ctx *ctx, size_t add_len)
     return true;
 }
 
-/* Worst-case yyjson string output size for `len` source bytes:
- * \uXXXX expansion = 6 bytes per source byte (non-ASCII chars with
- * ESCAPE_UNICODE), plus the surrounding quotes. */
+/* Small strings keep yyjson's single-pass writer. Large strings are
+ * preflighted for their exact output size by dw_emit_string_ex. */
+#define DW_EXACT_STRING_THRESHOLD (1024 * 1024)
+
 static bool dw_reserve_string(fastjson_dw_ctx *ctx, size_t len)
 {
     if (UNEXPECTED(len > (ZSTR_MAX_LEN - 2) / 6)) {
@@ -357,12 +358,29 @@ static bool dw_emit_string_ex(fastjson_dw_ctx *ctx, const char *s, size_t len,
                               bool is_key)
 {
     size_t start_pos = ctx->buf.s ? ZSTR_LEN(ctx->buf.s) : 0;
+    if (UNEXPECTED(len >= DW_EXACT_STRING_THRESHOLD)) {
+        fj_string_size_status status = fastjson_write_large_json_string(
+            &ctx->buf, s, len, ctx->yflags);
+        if (status == FJ_STRING_SIZE_OK) {
+            return dw_apply_hex_escapes(ctx, start_pos);
+        }
+        if (status == FJ_STRING_SIZE_TOO_LARGE) {
+            return dw_fail_too_large(ctx);
+        }
+        goto invalid_utf8;
+    }
     if (!dw_reserve_string(ctx, len)) {
         return false;
     }
     char *cur = ZSTR_VAL(ctx->buf.s) + ZSTR_LEN(ctx->buf.s);
     char *end = yyjson_write_string_to_buf(cur, s, len, ctx->yflags);
-    if (UNEXPECTED(end == NULL)) {
+    if (EXPECTED(end != NULL)) {
+        ZSTR_LEN(ctx->buf.s) = (size_t)(end - ZSTR_VAL(ctx->buf.s));
+        return dw_apply_hex_escapes(ctx, start_pos);
+    }
+
+invalid_utf8:
+    {
         /* yyjson rejected the string as invalid UTF-8. Under IGNORE /
          * SUBSTITUTE, sanitize and retry; the sanitizer's output is
          * always valid UTF-8 so the second yyjson call succeeds. We
@@ -374,16 +392,30 @@ static bool dw_emit_string_ex(fastjson_dw_ctx *ctx, const char *s, size_t len,
              * SUBSTITUTE follows the maximal-subpart advance rule. */
             char *sane = fastjson_sanitize_utf8(s, len, ctx->flags,
                                                 FJ_SAN_ENCODE, &sane_len);
-            if (!dw_reserve_string(ctx, sane_len)) {
-                efree(sane);
-                return false;
+            fj_string_size_status sane_status = FJ_STRING_SIZE_OK;
+            if (sane_len >= DW_EXACT_STRING_THRESHOLD) {
+                sane_status = fastjson_write_large_json_string(
+                    &ctx->buf, sane, sane_len, ctx->yflags);
+                end = sane_status == FJ_STRING_SIZE_OK
+                    ? ZSTR_VAL(ctx->buf.s) + ZSTR_LEN(ctx->buf.s) : NULL;
+            } else if (dw_reserve_string(ctx, sane_len)) {
+                cur = ZSTR_VAL(ctx->buf.s) + ZSTR_LEN(ctx->buf.s);
+                end = yyjson_write_string_to_buf(
+                    cur, sane, sane_len, ctx->yflags);
+            } else {
+                sane_status = FJ_STRING_SIZE_TOO_LARGE;
+                end = NULL;
             }
-            cur = ZSTR_VAL(ctx->buf.s) + ZSTR_LEN(ctx->buf.s);
-            end = yyjson_write_string_to_buf(cur, sane, sane_len, ctx->yflags);
             efree(sane);
             if (EXPECTED(end != NULL)) {
-                ZSTR_LEN(ctx->buf.s) = (size_t)(end - ZSTR_VAL(ctx->buf.s));
+                if (sane_len < DW_EXACT_STRING_THRESHOLD) {
+                    ZSTR_LEN(ctx->buf.s) = (size_t)(end
+                        - ZSTR_VAL(ctx->buf.s));
+                }
                 return dw_apply_hex_escapes(ctx, start_pos);
+            }
+            if (sane_status == FJ_STRING_SIZE_TOO_LARGE) {
+                return dw_fail_too_large(ctx);
             }
             /* Fall through to the error path; sanitization shouldn't
              * fail, but if yyjson rejects our output we still need a
@@ -402,8 +434,6 @@ static bool dw_emit_string_ex(fastjson_dw_ctx *ctx, const char *s, size_t len,
         }
         return false;
     }
-    ZSTR_LEN(ctx->buf.s) = (size_t)(end - ZSTR_VAL(ctx->buf.s));
-    return dw_apply_hex_escapes(ctx, start_pos);
 }
 
 static inline bool dw_emit_string(fastjson_dw_ctx *ctx, const char *s, size_t len)
@@ -687,7 +717,13 @@ static bool dw_emit_jsonserializable(fastjson_dw_ctx *ctx, zval *zv,
      * view directly. The property walker applies its own cycle guard. */
     if (Z_TYPE(retval) == IS_OBJECT && Z_OBJ(retval) == obj) {
         dw_json_guard_unprotect(&guard);
-        bool ok = dw_emit_object_props(ctx, &retval, remaining_depth);
+        bool ok;
+        if (remaining_depth <= 0 || remaining_depth > INT_MAX) {
+            ok = dw_partial_or_fail(ctx, FASTJSON_ERROR_DEPTH,
+                "Maximum stack depth exceeded", false);
+        } else {
+            ok = dw_emit_object_props(ctx, &retval, remaining_depth);
+        }
         zval_ptr_dtor(&retval);
         OBJ_RELEASE(obj);
         return ok;
@@ -754,8 +790,11 @@ static bool dw_emit_object_props(fastjson_dw_ctx *ctx, zval *zv,
      * exit path. */
     HashTable *props = zend_get_properties_for(zv, ZEND_PROP_PURPOSE_JSON);
     if (props == NULL) {
-        return dw_partial_or_fail(ctx, FASTJSON_ERROR_UNSUPPORTED_TYPE,
-            "Object has no properties", false);
+        if (EG(exception)) {
+            return false;
+        }
+        smart_str_appendl(&ctx->buf, "{}", 2);
+        return true;
     }
 
     zend_refcounted *recursion_rc = (zend_refcounted *)props;

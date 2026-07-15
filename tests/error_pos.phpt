@@ -25,6 +25,11 @@ echo "pos=", fastjson_last_error_pos(), "\n";
 fastjson_validate('[1,2,');
 echo "validate pos=", fastjson_last_error_pos(), "\n";
 
+// The empty-input fast path has the same coordinates as decode.
+fastjson_validate('');
+$i = fastjson_last_error_info();
+echo "empty pos={$i['pos']} line={$i['line']} col={$i['col']}\n";
+
 // Encode errors carry no source offset.
 fastjson_encode(fopen('php://memory', 'r'));
 echo "encode pos=", fastjson_last_error_pos(), "\n";
@@ -42,5 +47,6 @@ line=1 col=7
 pos=19 line=3 col=8
 pos=-1
 validate pos=5
+empty pos=0 line=1 col=1
 encode pos=-1
 utf8 code=UTF8 pos>=0=yes

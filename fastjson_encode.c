@@ -74,6 +74,15 @@ PHP_FUNCTION(fastjson_encode)
     fastjson_error_state encode_err;
     zend_string *zs = fastjson_directwrite_encode(value, flags, depth,
                                                    &encode_err);
+    if (UNEXPECTED(EG(exception))) {
+        if (zs != NULL) {
+            zend_string_release(zs);
+        }
+        if (!throw_mode) {
+            fastjson_restore_error_state(&encode_err);
+        }
+        RETURN_THROWS();
+    }
     if (!throw_mode) {
         /* User callbacks and temporary destructors may call fastjson again.
          * Publish this invocation's outcome after they have all returned. */
@@ -130,6 +139,15 @@ PHP_FUNCTION(fastjson_file_encode)
     fastjson_error_state encode_err;
     zend_string *zs = fastjson_directwrite_encode(value, flags, depth,
                                                    &encode_err);
+    if (UNEXPECTED(EG(exception))) {
+        if (zs != NULL) {
+            zend_string_release(zs);
+        }
+        if (!throw_mode) {
+            fastjson_restore_error_state(&encode_err);
+        }
+        RETURN_THROWS();
+    }
     if (!throw_mode) {
         /* See fastjson_encode: nested calls must not become the file
          * operation's final encode result. */

@@ -7,6 +7,8 @@ name: Release Windows binaries
 # (php_fastjson-<version>-<php_x.y>-<ts|nts>-vs17-<arch>.zip).
 
 on:
+  pull_request:
+    branches: [master]
   release:
     types: [published]
   # Manual build-only validation before tagging. On workflow_dispatch the
@@ -26,7 +28,9 @@ jobs:
       - id: matrix
         uses: php/php-windows-builder/extension-matrix@v1
         with:
-          php-version-list: '8.1, 8.2, 8.3, 8.4, 8.5'
+          # Pull requests run a TS/NTS PHP 8.4 canary. Releases and manual
+          # dispatches keep the full supported-version matrix.
+          php-version-list: ${{ github.event_name == 'pull_request' && '8.4' || '8.1, 8.2, 8.3, 8.4, 8.5' }}
           # 64-bit only. fastjson's integer-valued-double encoding diverges
           # from ext/json on 32-bit (ILP32) for values above 2^31; 32-bit
           # Windows is not a supported target.

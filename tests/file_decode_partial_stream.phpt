@@ -15,10 +15,10 @@ class FastjsonPartialRead
         return true;
     }
 
-    public function stream_read($count): string
+    public function stream_read($count): string|false
     {
         $this->reads++;
-        return $this->reads === 1 ? '1' : '';
+        return $this->reads === 1 ? '{}' : false;
     }
 
     public function stream_eof(): bool

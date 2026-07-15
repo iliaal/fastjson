@@ -355,6 +355,171 @@ bool fastjson_utf8_well_formed(const char *s, size_t len)
     return true;
 }
 
+static zend_always_inline bool fastjson_ascii_word_needs_escape(
+    uint64_t word, yyjson_write_flag flags)
+{
+    const uint64_t ones = UINT64_C(0x0101010101010101);
+    const uint64_t highs = UINT64_C(0x8080808080808080);
+    uint64_t quote = word ^ (ones * (unsigned char)'"');
+    uint64_t slash = word ^ (ones * (unsigned char)'\\');
+    uint64_t forward = word ^ (ones * (unsigned char)'/');
+    bool has_control = ((word - ones * 0x20) & ~word & highs) != 0;
+    bool has_quote = ((quote - ones) & ~quote & highs) != 0;
+    bool has_slash = ((slash - ones) & ~slash & highs) != 0;
+    bool has_forward = (flags & YYJSON_WRITE_ESCAPE_SLASHES)
+        && ((forward - ones) & ~forward & highs) != 0;
+    return (word & highs) || has_control || has_quote || has_slash
+        || has_forward;
+}
+
+static zend_always_inline bool fastjson_ascii_byte_needs_escape(
+    unsigned char c, yyjson_write_flag flags)
+{
+    return c < 0x20 || c >= 0x80 || c == '"' || c == '\\'
+        || (c == '/' && (flags & YYJSON_WRITE_ESCAPE_SLASHES));
+}
+
+fj_string_size_status fastjson_json_string_size(const char *s, size_t len,
+                                                 yyjson_write_flag flags,
+                                                 size_t *out_len,
+                                                 bool *copyable_ascii)
+{
+    /* yyjson's common large-string case is printable ASCII without escape
+     * candidates. Detect it eight bytes at a time so the exact-size path
+     * remains memory-bandwidth-bound instead of adding a branch per byte. */
+    size_t ascii_pos = 0;
+    for (; ascii_pos + sizeof(uint64_t) <= len;
+         ascii_pos += sizeof(uint64_t)) {
+        uint64_t word;
+        memcpy(&word, s + ascii_pos, sizeof(word));
+        if (fastjson_ascii_word_needs_escape(word, flags)) {
+            break;
+        }
+    }
+    for (; ascii_pos < len; ascii_pos++) {
+        if (fastjson_ascii_byte_needs_escape(
+                (unsigned char)s[ascii_pos], flags)) {
+            break;
+        }
+    }
+    if (ascii_pos == len) {
+        if (UNEXPECTED(len > ZSTR_MAX_LEN - 2)) {
+            return FJ_STRING_SIZE_TOO_LARGE;
+        }
+        *out_len = len + 2;
+        *copyable_ascii = true;
+        return FJ_STRING_SIZE_OK;
+    }
+
+    size_t size = 2; /* surrounding quotes */
+    bool copyable = true;
+    size_t i = 0;
+    while (i < len) {
+        unsigned char c = (unsigned char)s[i];
+        size_t add;
+        size_t advance = 1;
+
+        if (c < 0x20) {
+            copyable = false;
+            add = (c == '\b' || c == '\t' || c == '\n'
+                || c == '\f' || c == '\r') ? 2 : 6;
+        } else if (c == '"' || c == '\\') {
+            copyable = false;
+            add = 2;
+        } else if (c == '/' && (flags & YYJSON_WRITE_ESCAPE_SLASHES)) {
+            copyable = false;
+            add = 2;
+        } else if (c < 0x80) {
+            add = 1;
+        } else {
+            copyable = false;
+            if (!fastjson_byte_is_valid_utf8_start(s, len, i)) {
+                return FJ_STRING_SIZE_INVALID_UTF8;
+            }
+            advance = c < 0xE0 ? 2 : (c < 0xF0 ? 3 : 4);
+            if (flags & YYJSON_WRITE_ESCAPE_UNICODE) {
+                add = advance == 4 ? 12 : 6;
+            } else {
+                add = advance;
+            }
+        }
+
+        if (UNEXPECTED(add > ZSTR_MAX_LEN - size)) {
+            return FJ_STRING_SIZE_TOO_LARGE;
+        }
+        size += add;
+        i += advance;
+    }
+    *out_len = size;
+    *copyable_ascii = copyable;
+    return FJ_STRING_SIZE_OK;
+}
+
+fj_string_size_status fastjson_write_large_json_string(
+    smart_str *buf, const char *s, size_t len, yyjson_write_flag flags)
+{
+    size_t current = buf->s ? ZSTR_LEN(buf->s) : 0;
+    if (UNEXPECTED(current > ZSTR_MAX_LEN - 2
+            || len > ZSTR_MAX_LEN - current - 2)) {
+        return FJ_STRING_SIZE_TOO_LARGE;
+    }
+
+    /* Fuse validation and copying for the dominant printable-ASCII case.
+     * The buffer length remains unchanged until the whole value is known to
+     * be copyable, so the slow path can safely overwrite this scratch data. */
+    smart_str_alloc(buf, len + 2, 0);
+    char *cur = ZSTR_VAL(buf->s) + current;
+    cur[0] = '"';
+    size_t pos = 0;
+    for (; pos + sizeof(uint64_t) <= len; pos += sizeof(uint64_t)) {
+        uint64_t word;
+        memcpy(&word, s + pos, sizeof(word));
+        if (fastjson_ascii_word_needs_escape(word, flags)) {
+            break;
+        }
+        memcpy(cur + pos + 1, &word, sizeof(word));
+    }
+    for (; pos < len; pos++) {
+        unsigned char c = (unsigned char)s[pos];
+        if (fastjson_ascii_byte_needs_escape(c, flags)) {
+            break;
+        }
+        cur[pos + 1] = (char)c;
+    }
+    if (pos == len) {
+        cur[len + 1] = '"';
+        ZSTR_LEN(buf->s) = current + len + 2;
+        return FJ_STRING_SIZE_OK;
+    }
+
+    size_t exact_len;
+    bool copyable_ascii;
+    fj_string_size_status status = fastjson_json_string_size(
+        s, len, flags, &exact_len, &copyable_ascii);
+    if (status != FJ_STRING_SIZE_OK) {
+        return status;
+    }
+    if (UNEXPECTED(exact_len > ZSTR_MAX_LEN - current)) {
+        return FJ_STRING_SIZE_TOO_LARGE;
+    }
+    smart_str_alloc(buf, exact_len, 0);
+    cur = ZSTR_VAL(buf->s) + current;
+    char *end;
+    if (copyable_ascii) {
+        cur[0] = '"';
+        memcpy(cur + 1, s, len);
+        cur[len + 1] = '"';
+        end = cur + len + 2;
+    } else {
+        end = yyjson_write_string_to_buf(cur, s, len, flags);
+        if (UNEXPECTED(end == NULL)) {
+            return FJ_STRING_SIZE_INVALID_UTF8;
+        }
+    }
+    ZSTR_LEN(buf->s) = (size_t)(end - ZSTR_VAL(buf->s));
+    return FJ_STRING_SIZE_OK;
+}
+
 bool fastjson_input_has_inf_nan_literal(const char *s, size_t len,
                                         bool allow_comments)
 {
@@ -453,8 +618,12 @@ PHP_FUNCTION(fastjson_validate)
         /* Use the same message yyjson would have produced so the
          * fast-path return is observationally identical to the parse-
          * path return for empty input. */
-        fastjson_set_error(YYJSON_READ_ERROR_INVALID_PARAMETER,
-                           "input length is 0");
+        yyjson_read_err err = {
+            YYJSON_READ_ERROR_INVALID_PARAMETER,
+            "input length is 0",
+            0
+        };
+        fastjson_set_read_error(json, json_len, &err);
         RETURN_FALSE;
     }
 

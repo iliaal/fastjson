@@ -14,6 +14,10 @@ var_dump(fastjson_encode($o));
 // Empty stdClass.
 var_dump(fastjson_encode(new stdClass()));
 
+// Internal objects whose JSON property view is NULL are empty objects, not
+// unsupported types.
+var_dump(fastjson_encode(new WeakMap()));
+
 // (object) cast of an array.
 var_dump(fastjson_encode((object)["a" => 1, "b" => 2]));
 
@@ -32,6 +36,7 @@ var_dump(fastjson_encode([], JSON_FORCE_OBJECT));
 ?>
 --EXPECT--
 string(21) "{"name":"ilia","n":7}"
+string(2) "{}"
 string(2) "{}"
 string(13) "{"a":1,"b":2}"
 ---

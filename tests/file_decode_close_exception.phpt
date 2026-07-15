@@ -25,6 +25,7 @@ final class ThrowingCloseStream {
     }
 
     public function stream_close(): void {
+        fastjson_decode('{');
         throw new RuntimeException('close-boom');
     }
 

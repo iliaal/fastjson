@@ -113,6 +113,7 @@ echo
 
 echo "---- 7. Functional smoke test ----"
 php <<'PHP'
+<?php
 $v = fastjson_version();
 if (!is_string($v) || $v === "") { echo "version FAIL: ", var_export($v, true), "\n"; exit(1); }
 if ($v !== phpversion("fastjson")) { echo "version mismatch: ", $v, " vs ", phpversion("fastjson"), "\n"; exit(1); }

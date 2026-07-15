@@ -192,11 +192,24 @@ static inline void fj_splice_newline_indent(fj_splice_ctx *ctx, int level)
 
 static bool fj_splice_write_string(fj_splice_ctx *ctx, const char *s, size_t len)
 {
+    size_t start_pos = ctx->buf.s ? ZSTR_LEN(ctx->buf.s) : 0;
+    if (len >= 1024 * 1024) {
+        fj_string_size_status size_status = fastjson_write_large_json_string(
+            &ctx->buf, s, len, ctx->yflags);
+        if (size_status == FJ_STRING_SIZE_TOO_LARGE) {
+            ctx->status = FJ_SPLICE_TOO_LARGE;
+            return false;
+        }
+        if (size_status == FJ_STRING_SIZE_INVALID_UTF8) {
+            return false;
+        }
+        return fj_splice_apply_hex_escapes(ctx, start_pos);
+    }
+
     if (UNEXPECTED(len > (ZSTR_MAX_LEN - 2) / 6)) {
         ctx->status = FJ_SPLICE_TOO_LARGE;
         return false;
     }
-    size_t start_pos = ctx->buf.s ? ZSTR_LEN(ctx->buf.s) : 0;
     if (!fj_splice_reserve(ctx, len * 6 + 2)) {
         return false;
     }
@@ -516,6 +529,11 @@ static bool fj_splice_write_object(fj_splice_ctx *ctx, const yyjson_val *obj,
         bool is_target = fj_seg_key_eq(key, target);
 
         if (is_target) {
+            if (matched) {
+                ctx->status = FJ_SPLICE_AMBIGUOUS;
+                ctx->settable = false;
+                return false;
+            }
             matched = true;
             if (seg_idx == ctx->nsegs - 1) {
                 if (pretty && !body_open) {
@@ -808,6 +826,12 @@ encode_value:
     ;
     zend_string *vstr = fastjson_directwrite_encode(value, value_flags, depth,
                                                      error_state);
+    if (UNEXPECTED(EG(exception))) {
+        if (vstr != NULL) {
+            zend_string_release(vstr);
+        }
+        return false;
+    }
     if (vstr == NULL) {
         return false;
     }

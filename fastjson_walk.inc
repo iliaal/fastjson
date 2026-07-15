@@ -171,6 +171,14 @@ static bool FJ_WALK_NAME(yyjson_val *val, bool assoc,
                 key_owned = true;
             }
 #endif
+            if (!assoc && use_klen > 0 && use_key[0] == '\0') {
+#if FJ_WALK_SANITIZE
+                if (key_owned) efree((char *)use_key);
+#endif
+                fastjson_set_error_code(FASTJSON_ERROR_INVALID_PROPERTY_NAME,
+                    "The decoded property name is invalid");
+                return false;
+            }
             zval child;
             if (!FJ_WALK_NAME(vval, assoc, remaining_depth - 1, flags,
                               &child)) {

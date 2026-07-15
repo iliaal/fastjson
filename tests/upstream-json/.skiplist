@@ -46,6 +46,8 @@ json_last_error_msg_error_location_008.phpt # ext-json-internals # error-locatio
 json_last_error_msg_error_location_009.phpt # ext-json-internals # error-location format
 json_last_error_msg_error_location_010.phpt # ext-json-internals # error-location format
 gh22420.phpt # ext-json-internals # error-message text divergence; error-position clearing is covered natively
+gh22514.phpt # ext-json-internals # exact error-location message/column wording is owned by ext/json
+gh22527.phpt # ext-json-internals # exact error-message text and raw-control-character code divergence
 
 # === JSON_HEX_TAG / HEX_AMP / HEX_APOS / HEX_QUOT (honored) ===
 # 006 implemented via output post-processing (yyjson's writer has no
@@ -57,10 +59,6 @@ gh22420.phpt # ext-json-internals # error-message text divergence; error-positio
 # === JSON_NUMERIC_CHECK (honored) ===
 # json_encode_numeric: passes via is_numeric_string + scalar conversion
 # in the IS_STRING branch.
-
-# === JSON_PRESERVE_ZERO_FRACTION (not honored) ===
-json_encode_basic.phpt          # ext-json-internals # PRESERVE_ZERO_FRACTION (1230 vs 1230.0)
-json_encode_pretty_print2.phpt  # ext-json-internals # PRESERVE_ZERO_FRACTION knock-on
 
 # === JSON_PARTIAL_OUTPUT_ON_ERROR (now honored) ===
 # 003, 004, inf_nan_error, unsupported_type_error: all unskipped after
@@ -98,7 +96,7 @@ json_encode_recursion_02.phpt # ext-json-internals # version-dependent recursion
 # bug73991). The entries below still fail for orthogonal reasons:
 #  - ext/json's specific "Malformed UTF-8 characters" wording,
 #  - JSON_ERROR_CTRL_CHAR (code 3) which yyjson doesn't surface,
-#  - NUL-byte filtering in stdClass property names.
+#  - ext/json's source-location suffix on invalid property names.
 # bug77843's use-after-free (both the object-lifetime and the array-storage
 # / arData-realloc variants) is fixed and natively covered under ASAN by
 # encode_jsonserializable_unset_self.phpt and
@@ -107,12 +105,9 @@ json_encode_recursion_02.phpt # ext-json-internals # version-dependent recursion
 bug54484.phpt # ext-json-internals # error code numbering for UTF-8 within JSON
 bug61537.phpt # ext-json-internals # ext/json UTF-8 message text
 bug62010.phpt # ext-json-internals # ext/json UTF-8 message text
-bug68546.phpt # ext-json-internals # NUL bytes in property names
+bug68546.phpt # ext-json-internals # invalid-property-name message lacks ext/json's location suffix
 bug69187.phpt # ext-json-internals # JSON_ERROR_CTRL_CHAR code numbering
 bug77843.phpt # ext-json-internals # version-dependent recursion guard diagnostic on PHP 8.1/8.2; UAF fixed + natively covered
-
-# === Object property keys with embedded NUL (ext/json strips them) ===
-bug66021.phpt # ext-json-internals # NUL bytes in property names
 
 # === U+2028 / U+2029 line separator escaping ===
 # ext/json always escapes U+2028 and U+2029 (even with UNESCAPED_UNICODE)

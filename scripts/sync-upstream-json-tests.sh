@@ -14,6 +14,9 @@
 # - tests/upstream-json/.skiplist documents tests intentionally skipped
 #   (with one-line reasons). The script does NOT auto-modify the
 #   skiplist; it's authored by hand based on harness output.
+# - .source-revision and .manifest pin the exact php-src snapshot and its
+#   complete test-name set so additions/removals cannot cancel out in a
+#   count-only metadata check.
 
 set -euo pipefail
 
@@ -31,10 +34,17 @@ PHP_VERSION=$(grep -oP 'PHP_(MAJOR|MINOR|RELEASE)_VERSION\s+\K\d+' \
                   "$PHP_SRC/main/php_version.h" 2>/dev/null \
               | paste -sd.)
 PHP_VERSION="${PHP_VERSION:-unknown}"
+PHP_SOURCE_COMMIT=$(git -C "$PHP_SRC" rev-parse HEAD 2>/dev/null || true)
+PHP_SOURCE_COMMIT="${PHP_SOURCE_COMMIT:-unknown}"
 
 mkdir -p "$DEST_DIR"
 # Wipe existing entries -- they're all regenerable, no manual edits.
 find "$DEST_DIR" -maxdepth 1 -name '*.phpt' -delete
+
+printf '%s\n' "$SRC_DIR"/*.phpt | while IFS= read -r src; do
+    basename "$src"
+done | sort > "$DEST_DIR/.manifest"
+printf '%s\n' "$PHP_SOURCE_COMMIT" > "$DEST_DIR/.source-revision"
 
 count_total=0
 count_skipped_by_skiplist=0
@@ -124,6 +134,7 @@ scripts/sync-upstream-json-tests.sh [\$HOME/php-src]
 \`\`\`
 
 | Source PHP version | $PHP_VERSION |
+| Source php-src commit | $PHP_SOURCE_COMMIT |
 | Synced count       | $count_total |
 | Skipped            | $count_skipped_by_skiplist (per .skiplist) |
 
@@ -138,6 +149,7 @@ upstream-json sync complete:
   source:       $SRC_DIR
   destination:  $DEST_DIR
   PHP version:  $PHP_VERSION
+  source commit: $PHP_SOURCE_COMMIT
   total tests:  $count_total
   synced:       $count_synced
   skipped:      $count_skipped_by_skiplist (per .skiplist)

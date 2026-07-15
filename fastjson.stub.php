@@ -16,6 +16,18 @@ const FASTJSON_ERROR_DEPTH = UNKNOWN;
 
 /**
  * @var int
+ * @cvalue FASTJSON_ERROR_STATE_MISMATCH
+ */
+const FASTJSON_ERROR_STATE_MISMATCH = UNKNOWN;
+
+/**
+ * @var int
+ * @cvalue FASTJSON_ERROR_CTRL_CHAR
+ */
+const FASTJSON_ERROR_CTRL_CHAR = UNKNOWN;
+
+/**
+ * @var int
  * @cvalue FASTJSON_ERROR_SYNTAX
  */
 const FASTJSON_ERROR_SYNTAX = UNKNOWN;
@@ -43,6 +55,18 @@ const FASTJSON_ERROR_INF_OR_NAN = UNKNOWN;
  * @cvalue FASTJSON_ERROR_UNSUPPORTED_TYPE
  */
 const FASTJSON_ERROR_UNSUPPORTED_TYPE = UNKNOWN;
+
+/**
+ * @var int
+ * @cvalue FASTJSON_ERROR_INVALID_PROPERTY_NAME
+ */
+const FASTJSON_ERROR_INVALID_PROPERTY_NAME = UNKNOWN;
+
+/**
+ * @var int
+ * @cvalue FASTJSON_ERROR_UTF16
+ */
+const FASTJSON_ERROR_UTF16 = UNKNOWN;
 
 /**
  * @var int
@@ -112,9 +136,10 @@ function fastjson_encode(mixed $value, int $flags = 0, int $depth = 512): string
  * fastjson_encode().
  *
  * Returns true on success, false on failure (encode error or I/O
- * error). On failure fastjson_last_error() is set; a failed open/write
- * is silent (no warning), except an open_basedir denial, which emits the
- * stream layer's open_basedir warning like file_put_contents() does.
+ * error). On failure fastjson_last_error() is set. Fastjson does not ask
+ * the streams layer to report open errors, but open_basedir, individual
+ * wrappers, and write callbacks may emit their own warnings, as they do
+ * under file_put_contents().
  * I/O failures use FASTJSON_ERROR_SYNTAX because
  * fastjson intentionally stays inside the JSON_ERROR_* code range; use
  * fastjson_last_error_msg() ("Failed to open file for writing" or
@@ -174,10 +199,11 @@ function fastjson_decode(string $json, ?bool $associative = null, int $depth = 5
  * Returns the decoded value on success, or null on failure -- the same
  * contract as fastjson_decode(): callers check fastjson_last_error() to
  * distinguish a decoded-null from a failure. Failure covers both a
- * file that cannot be read (silent: no warning -- except an open_basedir
- * denial, which emits the stream layer's open_basedir warning as
- * file_get_contents() does -- with fastjson_last_error() set to a
- * non-zero code and a descriptive message) and a JSON parse
+ * file that cannot be read and a JSON parse error. Fastjson does not ask
+ * the streams layer to report open errors, but open_basedir, individual
+ * wrappers, and read callbacks may emit their own warnings, as they do
+ * under file_get_contents(). I/O failure sets a non-zero code and a
+ * descriptive message; a JSON parse
  * error (translated code as usual). I/O failures use
  * FASTJSON_ERROR_SYNTAX because fastjson intentionally stays inside
  * the JSON_ERROR_* code range; use fastjson_last_error_msg()
@@ -230,22 +256,25 @@ function fastjson_pointer_exists(string $json, string $pointer, int $flags = 0):
  * Sets the value at the RFC 6901 JSON Pointer $pointer in $json to $value
  * and returns the re-serialized JSON document.
  *
- * The document is edited in place in a yyjson mutable doc -- only $value is
- * materialized from PHP, not the whole input -- so this avoids a full
+ * The parsed document is re-emitted by an immutable splice writer -- only
+ * $value is materialized from PHP, not the whole input -- so this avoids a full
  * decode/re-encode round-trip for a single edit on a large document. Missing
  * parent objects are created; the empty pointer "" replaces the whole
  * document. Returns false (or throws under JSON_THROW_ON_ERROR) when $json
  * fails to parse, when $value cannot be encoded, or when the pointer cannot
  * resolve to a settable location (e.g. an array index gap or a scalar
- * mid-path).
+ * mid-path). If an object on the pointer path contains the target member more
+ * than once, the location is ambiguous and the operation fails instead of
+ * replacing every duplicate.
  *
  * $depth is argument #4, matching fastjson_decode() and
- * fastjson_pointer_get(). Output formatting follows the encode bits of
- * $flags, including JSON_PRETTY_PRINT, JSON_UNESCAPED_SLASHES,
- * JSON_UNESCAPED_UNICODE, JSON_HEX_*, JSON_NUMERIC_CHECK,
- * JSON_PRESERVE_ZERO_FRACTION, JSON_FORCE_OBJECT, and
- * JSON_PARTIAL_OUTPUT_ON_ERROR. JSON_INVALID_UTF8_IGNORE/SUBSTITUTE apply
- * to $value. The parse bits FASTJSON_DECODE_RELAXED and JSON_THROW_ON_ERROR
+ * fastjson_pointer_get(). JSON_PRETTY_PRINT, JSON_UNESCAPED_SLASHES,
+ * JSON_UNESCAPED_UNICODE, and JSON_HEX_* format the whole output.
+ * Value-transforming flags (JSON_NUMERIC_CHECK,
+ * JSON_PRESERVE_ZERO_FRACTION, JSON_FORCE_OBJECT,
+ * JSON_PARTIAL_OUTPUT_ON_ERROR, and JSON_INVALID_UTF8_IGNORE/SUBSTITUTE)
+ * apply to $value only; untouched parsed values retain their JSON types and
+ * numeric representation. FASTJSON_DECODE_RELAXED and JSON_THROW_ON_ERROR
  * apply to $json.
  *
  * Note: the untouched portion of the document is re-emitted by yyjson's
@@ -264,6 +293,9 @@ function fastjson_pointer_set(string $json, string $pointer, mixed $value, int $
  * corresponding key from the target. Returns a PHP value rather than a
  * JSON string so the result flows through the same single encoder -- pass
  * it to fastjson_encode() for byte-consistent output.
+ * RFC 7386 does not define duplicate member handling. Fastjson canonicalizes
+ * objects it merges using the last member's value and the first member's
+ * insertion position, matching PHP's decoded-object model.
  *
  * On a JSON parse error in either operand, returns null with
  * fastjson_last_error() set (or throws under JSON_THROW_ON_ERROR).
@@ -294,7 +326,10 @@ function fastjson_validate(string $json, int $depth = 512, int $flags = 0): bool
 /**
  * Returns the JSON_ERROR_* code for the most recent fastjson_*
  * call in this request, or JSON_ERROR_NONE (0) if the last call
- * succeeded. Values match ext/json's constants by design.
+ * succeeded. Values and FASTJSON_ERROR_* aliases match ext/json's constants.
+ * yyjson does not distinguish every ext/json parse category: raw control
+ * characters and invalid UTF-16 surrogate escapes are currently reported as
+ * FASTJSON_ERROR_UTF8 rather than CTRL_CHAR or UTF16.
  */
 function fastjson_last_error(): int {}
 

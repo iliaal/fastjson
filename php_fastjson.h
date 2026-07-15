@@ -19,6 +19,7 @@ extern zend_module_entry fastjson_module_entry;
 #define phpext_fastjson_ptr &fastjson_module_entry
 
 #include "php.h"
+#include "Zend/zend_smart_str.h"
 
 /* ext/json compatibility: JSON_ERROR_* values are stable ints. fastjson
  * sets the same numeric codes so callers can use either ext/json's
@@ -29,11 +30,15 @@ extern zend_module_entry fastjson_module_entry;
  * constant names; fastjson reuses the values internally. */
 #define FASTJSON_ERROR_NONE              0
 #define FASTJSON_ERROR_DEPTH             1
+#define FASTJSON_ERROR_STATE_MISMATCH    2
+#define FASTJSON_ERROR_CTRL_CHAR         3
 #define FASTJSON_ERROR_SYNTAX            4
 #define FASTJSON_ERROR_UTF8              5
 #define FASTJSON_ERROR_RECURSION         6
 #define FASTJSON_ERROR_INF_OR_NAN        7
 #define FASTJSON_ERROR_UNSUPPORTED_TYPE  8
+#define FASTJSON_ERROR_INVALID_PROPERTY_NAME 9
+#define FASTJSON_ERROR_UTF16             10
 #define FASTJSON_ERROR_NON_BACKED_ENUM   11
 
 /* JSON_INVALID_UTF8_IGNORE / _SUBSTITUTE occupy the same two bit
@@ -243,6 +248,25 @@ char *fastjson_sanitize_utf8(const char *s, size_t len, zend_long flags,
  * flag. */
 bool fastjson_utf8_well_formed(const char *s, size_t len);
 
+typedef enum {
+    FJ_STRING_SIZE_OK = 0,
+    FJ_STRING_SIZE_INVALID_UTF8,
+    FJ_STRING_SIZE_TOO_LARGE,
+} fj_string_size_status;
+
+/* Compute yyjson_write_string_to_buf()'s exact output length, including
+ * quotes, while validating UTF-8. Used only for large strings so the writer
+ * does not reserve its 6x worst case when the actual output is much smaller. */
+fj_string_size_status fastjson_json_string_size(const char *s, size_t len,
+                                                 yyjson_write_flag flags,
+                                                 size_t *out_len,
+                                                 bool *copyable_ascii);
+
+/* Append one large JSON string to `buf` with exact capacity. On OK the
+ * smart-string length is advanced; other statuses leave it unchanged. */
+fj_string_size_status fastjson_write_large_json_string(
+    smart_str *buf, const char *s, size_t len, yyjson_write_flag flags);
+
 /* Returns true if the value of either UTF-8-handling flag bit is set
  * in `flags`. Folds the two-bit check the encoder/decoder do many
  * times into one named test so the IS_STRING hot path stays a
@@ -258,6 +282,7 @@ typedef enum {
     FJ_SPLICE_DEPTH_FAIL,
     FJ_SPLICE_TOO_LARGE,
     FJ_SPLICE_INF_OR_NAN,
+    FJ_SPLICE_AMBIGUOUS,
 } fj_splice_status;
 
 typedef struct {

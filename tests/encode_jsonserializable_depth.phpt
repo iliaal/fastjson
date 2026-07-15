@@ -37,6 +37,11 @@ foreach ([new RetThis(), new RetNestedArr(), new RetNestedObj()] as $o) {
 var_dump(fastjson_encode(new RetNestedArr(), 0, 1));
 var_dump(fastjson_last_error() === JSON_ERROR_DEPTH);
 var_dump(json_encode(new RetNestedArr(), 0, 1));
+
+// Returning $this still exposes an object container and must honor depth 0.
+var_dump(fastjson_encode(new RetThis(), 0, 0));
+var_dump(fastjson_last_error() === JSON_ERROR_DEPTH);
+var_dump(json_encode(new RetThis(), 0, 0));
 ?>
 --EXPECT--
 bool(true)
@@ -45,6 +50,9 @@ bool(true)
 [[2]]
 bool(true)
 {"b":[2]}
+bool(false)
+bool(true)
+bool(false)
 bool(false)
 bool(true)
 bool(false)

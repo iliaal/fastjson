@@ -26,26 +26,8 @@ jobs:
     needs: validate
     steps:
       - uses: actions/checkout@v6
-      - uses: shivammathur/setup-php@v2
-        with:
-          php-version: '8.4'
-          tools: phpize, php-config
-          coverage: none
-      - name: Install PIE build prerequisites
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends bison libtool-bin
-      - name: Download PIE
-        env:
-          PIE_VERSION: '1.4.8'
-        run: |
-          curl -fsSL -o /tmp/pie.phar "https://github.com/php/pie/releases/download/${PIE_VERSION}/pie.phar"
-          chmod +x /tmp/pie.phar
-          php /tmp/pie.phar --version | grep -F "${PIE_VERSION}"
-      - name: PIE build smoke
-        run: |
-          php /tmp/pie.phar repository:add path .
-          php /tmp/pie.phar build iliaal/fastjson:*@dev --enable-fastjson
+      - name: PIE install, load, and function smoke
+        run: docker run --rm -v "$PWD:/fastjson:ro" php:8.4-cli bash /fastjson/scripts/pie-smoke.sh
 
   linux:
     name: PHP ${{ matrix.php }} - Linux

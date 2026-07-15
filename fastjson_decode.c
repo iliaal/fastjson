@@ -368,7 +368,6 @@ PHP_FUNCTION(fastjson_decode)
     if (!throw_mode) {
         fastjson_clear_error();
     }
-
     /* Match ext/json's argument validation contract verbatim:
      *   depth <= 0          -> ValueError "must be greater than 0"
      *   depth > INT_MAX     -> ValueError "must be less than %d"
@@ -411,6 +410,8 @@ PHP_FUNCTION(fastjson_file_decode)
     if (!throw_mode) {
         fastjson_clear_error();
     }
+    fastjson_error_state operation_err;
+    fastjson_save_error_state(&operation_err);
 
     /* $depth is arg #3 here too ($filename, $associative, $depth). */
     FASTJSON_VALIDATE_DEPTH(depth, 3);
@@ -444,24 +445,33 @@ PHP_FUNCTION(fastjson_file_decode)
          * that exception rather than masking it with our own SYNTAX error
          * (and never RETURN_NULL with an exception still pending). */
         if (EG(exception)) {
-            if (throw_mode) fastjson_restore_error_state(&saved_err);
+            fastjson_restore_error_state(throw_mode ? &saved_err : &operation_err);
             RETURN_THROWS();
         }
         fastjson_set_error_code(FASTJSON_ERROR_SYNTAX,
                                 "Failed to open file for reading");
         RETURN_NULL();
     }
-    zend_string *contents = php_stream_copy_to_mem(stream,
-                                                   PHP_STREAM_COPY_ALL, 0);
-    bool reached_eof = php_stream_eof(stream);
-    /* php_stream_copy_to_mem returns NULL for a zero-byte stream, not an
-     * empty zend_string. An empty file is not an I/O failure -- it must
-     * decode exactly like fastjson_decode(""): yyjson rejects empty input
-     * as a syntax error and JSON_THROW_ON_ERROR throws. Distinguish it
-     * from a genuine read error by the stream's EOF state (checked before
-     * close). */
-    if (contents == NULL && reached_eof) {
+    smart_str read_buf = {0};
+    char chunk[8192];
+    bool read_failed = false;
+    while (true) {
+        ssize_t got = php_stream_read(stream, chunk, sizeof(chunk));
+        if (got > 0) {
+            smart_str_appendl(&read_buf, chunk, (size_t)got);
+            continue;
+        }
+        if (got < 0 || !php_stream_eof(stream)) {
+            read_failed = true;
+        }
+        break;
+    }
+    zend_string *contents;
+    if (read_buf.s == NULL) {
         contents = ZSTR_EMPTY_ALLOC();
+    } else {
+        smart_str_0(&read_buf);
+        contents = read_buf.s;
     }
     php_stream_close(stream);
     /* A userspace wrapper may throw from stream_close() after a successful
@@ -470,17 +480,15 @@ PHP_FUNCTION(fastjson_file_decode)
         if (contents != NULL) {
             zend_string_release(contents);
         }
-        if (throw_mode) fastjson_restore_error_state(&saved_err);
+        fastjson_restore_error_state(throw_mode ? &saved_err : &operation_err);
         RETURN_THROWS();
     }
-    if (contents == NULL || !reached_eof) {
+    if (read_failed) {
         /* A userspace wrapper's read() may have thrown mid-copy; propagate
          * it rather than clobbering it with a SYNTAX error. */
-        if (contents != NULL) {
-            zend_string_release(contents);
-        }
+        zend_string_release(contents);
         if (EG(exception)) {
-            if (throw_mode) fastjson_restore_error_state(&saved_err);
+            fastjson_restore_error_state(throw_mode ? &saved_err : &operation_err);
             RETURN_THROWS();
         }
         fastjson_set_error_code(FASTJSON_ERROR_SYNTAX,
@@ -685,6 +693,213 @@ static bool fastjson_val_depth_reaches(yyjson_val *root, size_t limit)
     return reached;
 }
 
+typedef struct {
+    yyjson_val *key;
+    yyjson_val *value;
+} fj_merge_member;
+
+typedef struct {
+    HashTable by_key;
+    fj_merge_member *members;
+    size_t count;
+} fj_merge_index;
+
+static yyjson_mut_val *fastjson_merge_patch_bounded(yyjson_mut_doc *doc,
+                                                    yyjson_val *orig,
+                                                    yyjson_val *patch);
+
+static yyjson_mut_val *fastjson_merge_patch_indexed(yyjson_mut_doc *doc,
+                                                    yyjson_val *orig,
+                                                    yyjson_val *patch);
+
+static zend_always_inline bool fj_merge_key_seen(
+    yyjson_val **seen, size_t *seen_count, yyjson_val *key)
+{
+    for (size_t i = 0; i < *seen_count; i++) {
+        if (yyjson_get_len(seen[i]) == yyjson_get_len(key)
+                && memcmp(yyjson_get_str(seen[i]), yyjson_get_str(key),
+                          yyjson_get_len(key)) == 0) {
+            return true;
+        }
+    }
+    seen[(*seen_count)++] = key;
+    return false;
+}
+
+static yyjson_mut_val *fastjson_merge_patch_linear(yyjson_mut_doc *doc,
+                                                   yyjson_val *orig,
+                                                   yyjson_val *patch)
+{
+    yyjson_mut_val *builder = yyjson_mut_obj(doc);
+    if (builder == NULL) {
+        return NULL;
+    }
+
+    if (yyjson_is_obj(orig)) {
+        yyjson_val *seen[16];
+        size_t seen_count = 0;
+        yyjson_val *key;
+        yyjson_obj_iter iter;
+        yyjson_obj_iter_init(orig, &iter);
+        while ((key = yyjson_obj_iter_next(&iter))) {
+            if (fj_merge_key_seen(seen, &seen_count, key)) {
+                return fastjson_merge_patch_indexed(doc, orig, patch);
+            }
+            yyjson_val *orig_value = yyjson_obj_iter_get_val(key);
+            yyjson_val *patch_value = yyjson_obj_getn(
+                patch, yyjson_get_str(key), yyjson_get_len(key));
+            if (patch_value == NULL) {
+                yyjson_mut_val *mut_key = yyjson_val_mut_copy(doc, key);
+                yyjson_mut_val *mut_value = yyjson_val_mut_copy(doc, orig_value);
+                if (mut_key == NULL || mut_value == NULL
+                        || !yyjson_mut_obj_add(builder, mut_key, mut_value)) {
+                    return NULL;
+                }
+            }
+        }
+    }
+
+    yyjson_val *seen[16];
+    size_t seen_count = 0;
+    yyjson_val *key;
+    yyjson_obj_iter iter;
+    yyjson_obj_iter_init(patch, &iter);
+    while ((key = yyjson_obj_iter_next(&iter))) {
+        if (fj_merge_key_seen(seen, &seen_count, key)) {
+            return fastjson_merge_patch_indexed(doc, orig, patch);
+        }
+        yyjson_val *patch_value = yyjson_obj_iter_get_val(key);
+        if (yyjson_is_null(patch_value)) {
+            continue;
+        }
+        yyjson_val *orig_value = yyjson_is_obj(orig)
+            ? yyjson_obj_getn(orig, yyjson_get_str(key), yyjson_get_len(key))
+            : NULL;
+        yyjson_mut_val *mut_key = yyjson_val_mut_copy(doc, key);
+        yyjson_mut_val *mut_value = fastjson_merge_patch_bounded(
+            doc, orig_value, patch_value);
+        if (mut_key == NULL || mut_value == NULL
+                || !yyjson_mut_obj_add(builder, mut_key, mut_value)) {
+            return NULL;
+        }
+    }
+    return builder;
+}
+
+static void fj_merge_index_init(fj_merge_index *index, yyjson_val *object)
+{
+    size_t capacity = yyjson_is_obj(object) ? yyjson_obj_size(object) : 0;
+    zend_hash_init(&index->by_key, capacity, NULL, NULL, 0);
+    index->members = capacity
+        ? safe_emalloc(capacity, sizeof(*index->members), 0) : NULL;
+    index->count = 0;
+
+    if (!yyjson_is_obj(object)) {
+        return;
+    }
+
+    yyjson_val *key;
+    yyjson_obj_iter iter;
+    yyjson_obj_iter_init(object, &iter);
+    while ((key = yyjson_obj_iter_next(&iter))) {
+        const char *str = yyjson_get_str(key);
+        size_t len = yyjson_get_len(key);
+        fj_merge_member *member = zend_hash_str_find_ptr(
+            &index->by_key, str, len);
+        if (member == NULL) {
+            member = &index->members[index->count++];
+            member->key = key;
+            zend_hash_str_add_ptr(&index->by_key, str, len, member);
+        }
+        member->value = yyjson_obj_iter_get_val(key);
+    }
+}
+
+static void fj_merge_index_destroy(fj_merge_index *index)
+{
+    zend_hash_destroy(&index->by_key);
+    if (index->members != NULL) {
+        efree(index->members);
+    }
+}
+
+/* RFC 7396 leaves duplicate member handling undefined. Canonicalize each
+ * object at the merge boundary with last-member-wins values and first-member
+ * insertion order, matching PHP's decoded object model. Hash indexes replace
+ * yyjson_merge_patch()'s repeated linear object lookups. */
+static yyjson_mut_val *fastjson_merge_patch_indexed(yyjson_mut_doc *doc,
+                                                    yyjson_val *orig,
+                                                    yyjson_val *patch)
+{
+    if (!yyjson_is_obj(patch)) {
+        return yyjson_val_mut_copy(doc, patch);
+    }
+
+    yyjson_mut_val *builder = yyjson_mut_obj(doc);
+    if (builder == NULL) {
+        return NULL;
+    }
+
+    fj_merge_index orig_index, patch_index;
+    fj_merge_index_init(&orig_index, orig);
+    fj_merge_index_init(&patch_index, patch);
+    bool ok = true;
+
+    for (size_t i = 0; i < orig_index.count; i++) {
+        fj_merge_member *member = &orig_index.members[i];
+        const char *key_str = yyjson_get_str(member->key);
+        size_t key_len = yyjson_get_len(member->key);
+        if (zend_hash_str_exists(&patch_index.by_key, key_str, key_len)) {
+            continue;
+        }
+        yyjson_mut_val *key = yyjson_val_mut_copy(doc, member->key);
+        yyjson_mut_val *value = yyjson_val_mut_copy(doc, member->value);
+        if (key == NULL || value == NULL
+                || !yyjson_mut_obj_add(builder, key, value)) {
+            ok = false;
+            break;
+        }
+    }
+
+    for (size_t i = 0; ok && i < patch_index.count; i++) {
+        fj_merge_member *member = &patch_index.members[i];
+        if (yyjson_is_null(member->value)) {
+            continue;
+        }
+        const char *key_str = yyjson_get_str(member->key);
+        size_t key_len = yyjson_get_len(member->key);
+        fj_merge_member *orig_member = zend_hash_str_find_ptr(
+            &orig_index.by_key, key_str, key_len);
+        yyjson_mut_val *key = yyjson_val_mut_copy(doc, member->key);
+        yyjson_mut_val *value = fastjson_merge_patch_bounded(
+            doc, orig_member ? orig_member->value : NULL, member->value);
+        if (key == NULL || value == NULL
+                || !yyjson_mut_obj_add(builder, key, value)) {
+            ok = false;
+        }
+    }
+
+    fj_merge_index_destroy(&patch_index);
+    fj_merge_index_destroy(&orig_index);
+    return ok ? builder : NULL;
+}
+
+static yyjson_mut_val *fastjson_merge_patch_bounded(yyjson_mut_doc *doc,
+                                                    yyjson_val *orig,
+                                                    yyjson_val *patch)
+{
+    if (!yyjson_is_obj(patch)) {
+        return yyjson_val_mut_copy(doc, patch);
+    }
+
+    size_t patch_size = yyjson_obj_size(patch);
+    size_t orig_size = yyjson_is_obj(orig) ? yyjson_obj_size(orig) : 0;
+    if (patch_size <= 16 && orig_size <= 16) {
+        return fastjson_merge_patch_linear(doc, orig, patch);
+    }
+    return fastjson_merge_patch_indexed(doc, orig, patch);
+}
+
 PHP_FUNCTION(fastjson_merge_patch)
 {
     char *target, *patch;
@@ -775,7 +990,7 @@ PHP_FUNCTION(fastjson_merge_patch)
     yyjson_doc *idoc = NULL;
     yyjson_mut_doc *mdoc = yyjson_mut_doc_new(&fastjson_php_alc);
     if (mdoc != NULL) {
-        yyjson_mut_val *merged = yyjson_merge_patch(
+        yyjson_mut_val *merged = fastjson_merge_patch_bounded(
             mdoc, target_root, patch_root);
         if (merged != NULL) {
             yyjson_mut_doc_set_root(mdoc, merged);
@@ -851,14 +1066,15 @@ PHP_FUNCTION(fastjson_pointer_exists)
      * error set means the JSON itself was malformed. */
     yyjson_val *target = yyjson_ptr_getn(yyjson_doc_get_root(doc),
                                          pointer, pointer_len);
+    bool exists = target != NULL;
     yyjson_doc_free(doc);
-    if (target == NULL) {
+    if (!exists) {
         /* Absent/malformed pointer is the documented false + NONE signal
          * (fastjson.stub.php); clear even under THROW_ON_ERROR so a prior
          * error doesn't masquerade as "the JSON was malformed". */
         fastjson_clear_error();
     }
-    RETURN_BOOL(target != NULL);
+    RETURN_BOOL(exists);
 }
 
 PHP_FUNCTION(fastjson_pointer_set)
@@ -1004,6 +1220,17 @@ PHP_FUNCTION(fastjson_pointer_set)
             }
             fastjson_set_error_code(FASTJSON_ERROR_INF_OR_NAN,
                                     "Inf and NaN cannot be JSON encoded");
+            RETURN_FALSE;
+        }
+        if (splice_status == FJ_SPLICE_AMBIGUOUS) {
+            if (throw_mode) {
+                fastjson_throw_error(FASTJSON_ERROR_SYNTAX,
+                    "JSON pointer target is ambiguous because the object contains duplicate members",
+                    NULL, &saved_err);
+                RETURN_THROWS();
+            }
+            fastjson_set_error_code(FASTJSON_ERROR_SYNTAX,
+                "JSON pointer target is ambiguous because the object contains duplicate members");
             RETURN_FALSE;
         }
         if (splice_status == FJ_SPLICE_SETTABLE_FAIL) {
