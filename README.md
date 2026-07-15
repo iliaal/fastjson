@@ -49,7 +49,7 @@ Pre-built 64-bit DLLs for PHP 8.1 through 8.5 (TS/NTS) are attached to each [Git
 
 ```php
 $json = fastjson_encode(['hello' => 'world']);     // string|false
-$data = fastjson_decode($json, assoc: true);        // mixed
+$data = fastjson_decode($json, associative: true);  // mixed
 $ok   = fastjson_validate($json);                   // bool
 
 if ($data === null && fastjson_last_error() !== 0) {
