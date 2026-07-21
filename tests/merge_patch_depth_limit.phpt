@@ -37,9 +37,10 @@ try {
     echo "threw: ", $e->getMessage(), "\n";
 }
 
-// PHP 8.3+ honors a caller depth above the legacy fallback cap.
+// Builds with native stack-limit support honor a caller depth above the
+// conservative fallback cap.
 $r = fastjson_merge_patch('{}', $cap, true, 100000);
-if (PHP_VERSION_ID >= 80300) {
+if (ini_get('zend.max_allowed_stack_size') !== false) {
     var_dump(is_array($r));
     var_dump(fastjson_last_error() === FASTJSON_ERROR_NONE);
 } else {

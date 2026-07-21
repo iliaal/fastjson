@@ -19,7 +19,7 @@ try {
 
 $deepTarget = str_repeat('{"a":', 1100) . '1' . str_repeat('}', 1100);
 $deepOut = fastjson_pointer_set($deepTarget, '/x', 1, 100000);
-if (PHP_VERSION_ID >= 80300) {
+if (ini_get('zend.max_allowed_stack_size') !== false) {
     var_dump(is_string($deepOut));
     var_dump(fastjson_last_error() === JSON_ERROR_NONE);
 } else {
