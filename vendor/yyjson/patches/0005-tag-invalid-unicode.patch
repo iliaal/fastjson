@@ -1,0 +1,68 @@
+diff --git a/vendor/yyjson/yyjson.c b/vendor/yyjson/yyjson.c
+index 0215e49..3ed1114 100644
+--- a/vendor/yyjson/yyjson.c
++++ b/vendor/yyjson/yyjson.c
+@@ -4744,6 +4744,7 @@ static_inline bool read_str_opt(u8 quo, u8 **ptr, u8 *eof, yyjson_read_flag flg,
+     u8 *src = hdr, *dst = NULL, *pos;
+     u16 hi, lo;
+     u32 uni, tmp;
++    bool invalid_unicode = false;
+ 
+     /* Resume incremental parsing. */
+     if (con && unlikely(con[0])) {
+@@ -4806,7 +4807,8 @@ skip_ascii_end:
+     gcc_store_barrier(*src);
+     if (likely(*src == quo)) {
+         val->tag = ((u64)(src - hdr) << YYJSON_TAG_BIT) | YYJSON_TYPE_STR |
+-                        (quo == '"' ? YYJSON_SUBTYPE_NOESC : 0);
++                        (quo == '"' ? YYJSON_SUBTYPE_NOESC : 0) |
++                        (invalid_unicode ? YYJSON_RESERVED_INVALID_UNICODE : 0);
+         val->uni.str = (const char *)hdr;
+         *src = '\0';
+         *end = src + 1;
+@@ -4855,7 +4857,10 @@ skip_utf8:
+         }
+ #endif
+         if (unlikely(pos == src)) {
+-            if (has_allow(INVALID_UNICODE)) ++src;
++            if (has_allow(INVALID_UNICODE)) {
++                invalid_unicode = true;
++                ++src;
++            }
+             else return_err(src, "invalid UTF-8 encoding in string");
+         }
+         goto skip_ascii;
+@@ -4928,7 +4933,8 @@ copy_escape:
+             }
+         }
+     } else if (likely(*src == quo)) {
+-        val->tag = ((u64)(dst - hdr) << YYJSON_TAG_BIT) | YYJSON_TYPE_STR;
++        val->tag = ((u64)(dst - hdr) << YYJSON_TAG_BIT) | YYJSON_TYPE_STR |
++                   (invalid_unicode ? YYJSON_RESERVED_INVALID_UNICODE : 0);
+         val->uni.str = (const char *)hdr;
+         *dst = '\0';
+         *end = src + 1;
+@@ -5035,6 +5041,7 @@ copy_utf8:
+             if (!has_allow(INVALID_UNICODE)) {
+                 return_err(src, MSG_ERR_UTF8);
+             }
++            invalid_unicode = true;
+             goto copy_ascii_stop_1;
+         }
+         goto copy_ascii;
+diff --git a/vendor/yyjson/yyjson.h b/vendor/yyjson/yyjson.h
+index 82c9413..4cb84eb 100644
+--- a/vendor/yyjson/yyjson.h
++++ b/vendor/yyjson/yyjson.h
+@@ -561,6 +561,11 @@ typedef uint8_t yyjson_subtype;
+ #define YYJSON_SUBTYPE_BIT      ((uint8_t)2)
+ /** The mask used to extract the reserved bits of a JSON value. */
+ #define YYJSON_RESERVED_MASK    ((uint8_t)0xE0)     /* 111_____ */
++/** [Vendor patch P-005: fastjson] String contained invalid UTF-8 accepted by
++    `YYJSON_READ_ALLOW_INVALID_UNICODE`. Stored in a reserved tag bit so a
++    consumer can sanitize only affected strings without rescanning every
++    parsed string. */
++#define YYJSON_RESERVED_INVALID_UNICODE ((uint8_t)(1 << 5))
+ /** The number of reserved bits. */
+ #define YYJSON_RESERVED_BIT     ((uint8_t)3)
+ /** The mask used to extract the tag of a JSON value. */

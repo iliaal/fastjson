@@ -82,6 +82,7 @@ typedef struct fastjson_dw_ctx {
                                  * call to yyjson_write_string_to_buf */
     bool            partial_output;
     bool            pretty_print;
+    bool            hard_error;
     fastjson_error_state error;
     uint32_t        call_depth;
     int             indent_level;  /* current pretty-print depth; 0 at
@@ -155,10 +156,10 @@ static bool dw_reserve(fastjson_dw_ctx *ctx, size_t add_len)
     return true;
 }
 
-/* Small strings keep yyjson's single-pass writer. Large strings are
- * preflighted for their exact output size by dw_emit_string_ex. */
-#define DW_EXACT_STRING_THRESHOLD (1024 * 1024)
-
+/* Small strings keep yyjson's single-pass writer. At the shared threshold,
+ * the large-string helper fuses printable-ASCII validation and copying; for
+ * special/non-ASCII bytes below 1 MiB it falls back to yyjson's single pass,
+ * while larger strings get exact-size preflight to avoid 6x reservations. */
 static bool dw_reserve_string(fastjson_dw_ctx *ctx, size_t len)
 {
     if (UNEXPECTED(len > (ZSTR_MAX_LEN - 2) / 6)) {
@@ -211,22 +212,7 @@ yyjson_write_flag fastjson_translate_write_flags(zend_long php_flags,
  * ({} and []) -- no inner whitespace. */
 static inline void dw_emit_newline_indent(fastjson_dw_ctx *ctx, int level)
 {
-    if (UNEXPECTED(level > 8
-            && (size_t)level <= (ZSTR_MAX_LEN - 1) / 4)) {
-        size_t spaces = (size_t)level * 4;
-        smart_str_alloc(&ctx->buf, spaces + 1, 0);
-        smart_str_appendc(&ctx->buf, '\n');
-        if (spaces != 0) {
-            memset(ZSTR_VAL(ctx->buf.s) + ZSTR_LEN(ctx->buf.s), ' ', spaces);
-            ZSTR_LEN(ctx->buf.s) += spaces;
-        }
-        return;
-    }
-
-    smart_str_appendc(&ctx->buf, '\n');
-    for (int i = 0; i < level; i++) {
-        smart_str_appendl(&ctx->buf, "    ", 4);
-    }
+    fastjson_append_newline_indent(&ctx->buf, level);
 }
 
 /* Apply the JSON_HEX_TAG / HEX_AMP / HEX_APOS / HEX_QUOT substitutions
@@ -243,99 +229,13 @@ static inline void dw_emit_newline_indent(fastjson_dw_ctx *ctx, int level)
 static bool dw_apply_hex_escapes(fastjson_dw_ctx *ctx,
                                  size_t start_pos)
 {
-    zend_long flags = ctx->flags;
-    bool tag  = flags & FASTJSON_ENCODE_HEX_TAG;
-    bool amp  = flags & FASTJSON_ENCODE_HEX_AMP;
-    bool apos = flags & FASTJSON_ENCODE_HEX_APOS;
-    bool quot = flags & FASTJSON_ENCODE_HEX_QUOT;
-    if (!(tag || amp || apos || quot)) return true;
-
-    size_t orig_len = ZSTR_LEN(ctx->buf.s) - start_pos;
-    if (orig_len == 0) return true;
-
-    /* Pass 1: scan in place for replacement candidates and count them.
-     * Skips the alloc / copy / rewrite work entirely when the string
-     * carries none (the common case: HEX flags asserted defensively on
-     * payloads that don't include the substituted characters). Each
-     * replacement adds exactly 5 bytes (one source byte expands to a
-     * six-byte \uXXXX), so the growth bound is precise. */
-    const char *src = ZSTR_VAL(ctx->buf.s) + start_pos;
-    size_t hits = 0;
-    for (size_t i = 0; i < orig_len; i++) {
-        unsigned char c = (unsigned char)src[i];
-        if (c == '\\' && i + 1 < orig_len) {
-            unsigned char next = (unsigned char)src[i + 1];
-            if (quot && next == '"') {
-                hits++;
-                i++;
-                continue;
-            }
-            /* Skip past the JSON escape body so its trailing hex digits
-             * (in \uXXXX) aren't misread as content candidates. */
-            if (next == 'u' && i + 5 < orig_len) {
-                i += 5;
-            } else {
-                i += 1;
-            }
-            continue;
-        }
-        if (tag  && (c == '<' || c == '>')) { hits++; continue; }
-        if (amp  && c == '&')               { hits++; continue; }
-        if (apos && c == '\'')              { hits++; continue; }
+    if (EXPECTED((ctx->flags & FASTJSON_ENCODE_HEX_MASK) == 0)) {
+        return true;
     }
-    if (hits == 0) return true;
-
-    if (UNEXPECTED(hits > (ZSTR_MAX_LEN - orig_len) / 5)) {
+    if (UNEXPECTED(!fastjson_apply_hex_escapes(
+            &ctx->buf, ctx->flags, start_pos))) {
         return dw_fail_too_large(ctx);
     }
-
-    /* Pass 2: rewrite over a temp copy of the region. Reserve exact
-     * growth (5 extra bytes per hit) rather than the worst-case 6x. */
-    char *orig = emalloc(orig_len);
-    memcpy(orig, ZSTR_VAL(ctx->buf.s) + start_pos, orig_len);
-
-    ZSTR_LEN(ctx->buf.s) = start_pos;
-    if (!dw_reserve(ctx, orig_len + hits * 5)) {
-        efree(orig);
-        return false;
-    }
-    for (size_t i = 0; i < orig_len; i++) {
-        unsigned char c = (unsigned char)orig[i];
-        if (c == '\\' && i + 1 < orig_len) {
-            unsigned char next = (unsigned char)orig[i + 1];
-            if (quot && next == '"') {
-                smart_str_appendl(&ctx->buf, "\\u0022", 6);
-                i++;
-                continue;
-            }
-            /* Some other JSON escape (\\, \/, \b, \f, \n, \r, \t, \uXXXX).
-             * Copy it verbatim and advance past the escape body so the
-             * scanner doesn't reinterpret its trailing bytes as content. */
-            smart_str_appendc(&ctx->buf, '\\');
-            smart_str_appendc(&ctx->buf, (char)next);
-            if (next == 'u' && i + 5 < orig_len) {
-                smart_str_appendl(&ctx->buf, &orig[i + 2], 4);
-                i += 5;
-            } else {
-                i += 1;
-            }
-            continue;
-        }
-        if (tag && c == '<') {
-            smart_str_appendl(&ctx->buf, "\\u003C", 6); continue;
-        }
-        if (tag && c == '>') {
-            smart_str_appendl(&ctx->buf, "\\u003E", 6); continue;
-        }
-        if (amp && c == '&') {
-            smart_str_appendl(&ctx->buf, "\\u0026", 6); continue;
-        }
-        if (apos && c == '\'') {
-            smart_str_appendl(&ctx->buf, "\\u0027", 6); continue;
-        }
-        smart_str_appendc(&ctx->buf, (char)c);
-    }
-    efree(orig);
     return true;
 }
 
@@ -345,9 +245,6 @@ static bool dw_apply_hex_escapes(fastjson_dw_ctx *ctx,
  * than a blanket 64 -- a tighter per-value reservation means smart_str
  * carries less transient headroom between scalars. Do NOT shrink below
  * these; yyjson writes directly into the buffer. */
-#define DW_NUM_INT_WORST  24
-#define DW_NUM_REAL_WORST 40
-
 /* Returns true on success, false if the caller should abort the encode.
  * On invalid UTF-8 with PARTIAL_OUTPUT, emits "null" (value site) and
  * returns true so the caller continues; without PARTIAL_OUTPUT the
@@ -358,7 +255,7 @@ static bool dw_emit_string_ex(fastjson_dw_ctx *ctx, const char *s, size_t len,
                               bool is_key)
 {
     size_t start_pos = ctx->buf.s ? ZSTR_LEN(ctx->buf.s) : 0;
-    if (UNEXPECTED(len >= DW_EXACT_STRING_THRESHOLD)) {
+    if (UNEXPECTED(len >= FASTJSON_EXACT_STRING_THRESHOLD)) {
         fj_string_size_status status = fastjson_write_large_json_string(
             &ctx->buf, s, len, ctx->yflags);
         if (status == FJ_STRING_SIZE_OK) {
@@ -393,7 +290,7 @@ invalid_utf8:
             char *sane = fastjson_sanitize_utf8(s, len, ctx->flags,
                                                 FJ_SAN_ENCODE, &sane_len);
             fj_string_size_status sane_status = FJ_STRING_SIZE_OK;
-            if (sane_len >= DW_EXACT_STRING_THRESHOLD) {
+            if (sane_len >= FASTJSON_EXACT_STRING_THRESHOLD) {
                 sane_status = fastjson_write_large_json_string(
                     &ctx->buf, sane, sane_len, ctx->yflags);
                 end = sane_status == FJ_STRING_SIZE_OK
@@ -408,7 +305,7 @@ invalid_utf8:
             }
             efree(sane);
             if (EXPECTED(end != NULL)) {
-                if (sane_len < DW_EXACT_STRING_THRESHOLD) {
+                if (sane_len < FASTJSON_EXACT_STRING_THRESHOLD) {
                     ZSTR_LEN(ctx->buf.s) = (size_t)(end
                         - ZSTR_VAL(ctx->buf.s));
                 }
@@ -443,7 +340,7 @@ static inline bool dw_emit_string(fastjson_dw_ctx *ctx, const char *s, size_t le
 
 static void dw_emit_long(fastjson_dw_ctx *ctx, zend_long n)
 {
-    smart_str_alloc(&ctx->buf, DW_NUM_INT_WORST, 0);
+    smart_str_alloc(&ctx->buf, FASTJSON_NUM_INT_WORST, 0);
     yyjson_val v;
     v.tag = (uint64_t)(YYJSON_TYPE_NUM | YYJSON_SUBTYPE_SINT);
     v.uni.i64 = (int64_t)n;
@@ -463,7 +360,9 @@ static bool dw_emit_double(fastjson_dw_ctx *ctx, double d)
             smart_str_appendc(&ctx->buf, '0');
             return true;
         }
-        return false;
+        smart_str_appendc(&ctx->buf, '0');
+        ctx->hard_error = true;
+        return true;
     }
     /* Negative zero: ext/json emits "-0" (without PRESERVE_ZERO_FRACTION)
      * or "-0.0" (with). The long-path shortcut would cast (zend_long)-0.0
@@ -519,7 +418,7 @@ static bool dw_emit_double(fastjson_dw_ctx *ctx, double d)
             return true;
         }
     }
-    smart_str_alloc(&ctx->buf, DW_NUM_REAL_WORST, 0);
+    smart_str_alloc(&ctx->buf, FASTJSON_NUM_REAL_WORST, 0);
     yyjson_val v;
     v.tag = (uint64_t)(YYJSON_TYPE_NUM | YYJSON_SUBTYPE_REAL);
     v.uni.f64 = d;
@@ -576,7 +475,7 @@ static bool dw_emit_object_key(fastjson_dw_ctx *ctx, zend_string *key,
          * reuse yyjson's digit writer (as dw_emit_long does) instead of
          * snprintf, avoiding its locale/format-string overhead, and wrap
          * the written digits in quotes. */
-        if (!dw_reserve(ctx, DW_NUM_INT_WORST + 2)) {
+        if (!dw_reserve(ctx, FASTJSON_NUM_INT_WORST + 2)) {
             return false;
         }
         smart_str_appendc(&ctx->buf, '"');
@@ -697,8 +596,8 @@ static bool dw_emit_jsonserializable(fastjson_dw_ctx *ctx, zval *zv,
     zend_call_method_with_0_params(obj, obj->ce, NULL,
                                    "jsonserialize", &retval);
     if (EG(exception)) {
-        zval_ptr_dtor(&retval);
         dw_json_guard_unprotect(&guard);
+        zval_ptr_dtor(&retval);
         OBJ_RELEASE(obj);
         return false;
     }
@@ -730,8 +629,8 @@ static bool dw_emit_jsonserializable(fastjson_dw_ctx *ctx, zval *zv,
     }
 
     bool ok = dw_encode_zval(ctx, &retval, remaining_depth);
-    zval_ptr_dtor(&retval);
     dw_json_guard_unprotect(&guard);
+    zval_ptr_dtor(&retval);
     OBJ_RELEASE(obj);
     return ok;
 }
@@ -1015,6 +914,23 @@ zend_string *fastjson_directwrite_encode(zval *value, zend_long flags,
                                          zend_long depth,
                                          fastjson_error_state *error_state)
 {
+    switch (Z_TYPE_P(value)) {
+    case IS_NULL:
+        fastjson_error_state_clear(error_state);
+        return zend_string_init("null", 4, 0);
+    case IS_FALSE:
+        fastjson_error_state_clear(error_state);
+        return zend_string_init("false", 5, 0);
+    case IS_TRUE:
+        fastjson_error_state_clear(error_state);
+        return zend_string_init("true", 4, 0);
+    case IS_LONG:
+        fastjson_error_state_clear(error_state);
+        return zend_long_to_str(Z_LVAL_P(value));
+    default:
+        break;
+    }
+
     fastjson_dw_ctx ctx;
     memset(&ctx, 0, sizeof(ctx));
     ctx.flags = flags;
@@ -1031,7 +947,7 @@ zend_string *fastjson_directwrite_encode(zval *value, zend_long flags,
     bool ok = dw_encode_zval(&ctx, value, depth);
     *error_state = ctx.error;
 
-    if (!ok) {
+    if (!ok || ctx.hard_error) {
         smart_str_free(&ctx.buf);
         return NULL;
     }

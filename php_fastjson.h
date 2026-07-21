@@ -266,6 +266,8 @@ fj_string_size_status fastjson_json_string_size(const char *s, size_t len,
  * smart-string length is advanced; other statuses leave it unchanged. */
 fj_string_size_status fastjson_write_large_json_string(
     smart_str *buf, const char *s, size_t len, yyjson_write_flag flags);
+bool fastjson_apply_hex_escapes(smart_str *buf, zend_long flags,
+                                size_t start_pos);
 
 /* Returns true if the value of either UTF-8-handling flag bit is set
  * in `flags`. Folds the two-bit check the encoder/decoder do many
@@ -275,6 +277,34 @@ fj_string_size_status fastjson_write_large_json_string(
     (((flags) & (FASTJSON_INVALID_UTF8_IGNORE \
                  | FASTJSON_INVALID_UTF8_SUBSTITUTE)) != 0)
 
+#define FASTJSON_EXACT_STRING_THRESHOLD (256 * 1024)
+#define FASTJSON_EXACT_NONASCII_THRESHOLD (1024 * 1024)
+#define FASTJSON_ENCODE_HEX_MASK (FASTJSON_ENCODE_HEX_TAG \
+    | FASTJSON_ENCODE_HEX_AMP | FASTJSON_ENCODE_HEX_APOS \
+    | FASTJSON_ENCODE_HEX_QUOT)
+#define FASTJSON_NUM_INT_WORST 24
+#define FASTJSON_NUM_REAL_WORST 40
+
+static zend_always_inline void fastjson_append_newline_indent(
+    smart_str *buf, int level)
+{
+    if (UNEXPECTED(level > 8
+            && (size_t)level <= (ZSTR_MAX_LEN - 1) / 4)) {
+        size_t spaces = (size_t)level * 4;
+        smart_str_alloc(buf, spaces + 1, 0);
+        smart_str_appendc(buf, '\n');
+        if (spaces != 0) {
+            memset(ZSTR_VAL(buf->s) + ZSTR_LEN(buf->s), ' ', spaces);
+            ZSTR_LEN(buf->s) += spaces;
+        }
+        return;
+    }
+    smart_str_appendc(buf, '\n');
+    for (int i = 0; i < level; i++) {
+        smart_str_appendl(buf, "    ", 4);
+    }
+}
+
 typedef enum {
     FJ_SPLICE_OK = 0,
     FJ_SPLICE_SETTABLE_FAIL,
@@ -282,12 +312,24 @@ typedef enum {
     FJ_SPLICE_DEPTH_FAIL,
     FJ_SPLICE_TOO_LARGE,
     FJ_SPLICE_INF_OR_NAN,
+    FJ_SPLICE_INVALID_UTF8,
     FJ_SPLICE_AMBIGUOUS,
 } fj_splice_status;
 
 typedef struct {
-    yyjson_doc *doc;
+    const char *str;
+    size_t len;
+} fj_ptr_seg;
+
+typedef struct {
+    fj_ptr_seg *segs;
+    char *storage;
+    size_t nsegs;
+} fastjson_pointer_plan;
+
+typedef struct {
     char *owned_str;
+    zend_string *encoded;
     yyjson_val stack_val;
     const yyjson_val *repl;
 } fastjson_pointer_repl;
@@ -302,10 +344,19 @@ bool fastjson_pointer_build_replacement(zval *value, zend_long value_flags,
  * so the caller subtracts it from the value's depth budget. */
 size_t fastjson_pointer_count_segments(const char *ptr, size_t len);
 
+bool fastjson_pointer_plan_init(yyjson_val *root, const char *pointer,
+                                size_t pointer_len, size_t depth_limit,
+                                fastjson_pointer_plan *plan,
+                                fj_splice_status *status);
+void fastjson_pointer_plan_destroy(fastjson_pointer_plan *plan);
+fj_splice_status fastjson_pointer_resolve(yyjson_val *root,
+                                          const char *pointer,
+                                          size_t pointer_len,
+                                          yyjson_val **target);
+
 zend_string *fastjson_imut_pointer_set_write(yyjson_val *root,
-                                             const char *pointer,
-                                             size_t pointer_len,
-                                             const yyjson_val *replacement,
+                                             const fastjson_pointer_plan *plan,
+                                             const fastjson_pointer_repl *replacement,
                                              zend_long flags,
                                              size_t depth_limit,
                                              fj_splice_status *status);

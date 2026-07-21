@@ -12,8 +12,9 @@
 
 /*
  * Template body for the recursive yyjson_val -> zval decode walker.
- * #included twice from fastjson_decode.c with FJ_WALK_NAME set to the
- * function name and FJ_WALK_SANITIZE set to a literal 0 or 1. Because
+ * #included for immutable and mutable yyjson values with FJ_WALK_NAME set
+ * to the function name, FJ_WALK_MUTABLE selecting the representation, and
+ * FJ_WALK_SANITIZE set to a literal 0 or 1. Because
  * FJ_WALK_SANITIZE is a preprocessor constant, the sanitize-only code is
  * physically absent from the fast (0) instantiation -- the two stamped
  * functions are as branch-free and specialized as hand-written copies,
@@ -24,10 +25,10 @@
  * FJ_WALK_SANITIZE selects the string/key emit strategy only:
  *   0 -> yyjson's bytes go straight into the zval (fast path).
  *   1 -> fastjson_sanitize_utf8 runs on any string value or object key
- *        that isn't already well-formed UTF-8 (decode-side semantics:
- *        SUBSTITUTE wins on BOTH-bits, per-byte advance on invalid);
- *        a well-formed string still takes the borrowed pointer, so a
- *        clean payload pays only the well-formed scan.
+ *        tagged by yyjson's P-005 parser hook as containing malformed
+ *        UTF-8 (decode-side semantics: SUBSTITUTE wins on BOTH-bits,
+ *        per-byte advance on invalid). Clean strings take the borrowed
+ *        pointer without a second validation scan.
  *
  * Ownership / depth notes (identical for both instantiations):
  *  - Every refcounted zval written into `out` is owned by `out`; callers
@@ -40,7 +41,45 @@
  *    each recurse. A top-level scalar at depth 1 is allowed; a container
  *    needs depth >= 2 (json_decode("[]", true, 1) -> NULL).
  */
-static bool FJ_WALK_NAME(yyjson_val *val, bool assoc,
+#if FJ_WALK_MUTABLE
+# define FJ_WALK_VAL yyjson_mut_val
+# define FJ_GET_TYPE yyjson_mut_get_type
+# define FJ_GET_BOOL yyjson_mut_get_bool
+# define FJ_GET_STR yyjson_mut_get_str
+# define FJ_GET_LEN yyjson_mut_get_len
+# define FJ_GET_TAG yyjson_mut_get_tag
+# define FJ_ARR_SIZE yyjson_mut_arr_size
+# define FJ_ARR_ITER yyjson_mut_arr_iter
+# define FJ_ARR_ITER_INIT yyjson_mut_arr_iter_init
+# define FJ_ARR_ITER_NEXT yyjson_mut_arr_iter_next
+# define FJ_OBJ_SIZE yyjson_mut_obj_size
+# define FJ_OBJ_ITER yyjson_mut_obj_iter
+# define FJ_OBJ_ITER_INIT yyjson_mut_obj_iter_init
+# define FJ_OBJ_ITER_NEXT yyjson_mut_obj_iter_next
+# define FJ_OBJ_ITER_VAL yyjson_mut_obj_iter_get_val
+# define FJ_NUM_TO_ZVAL fj_mut_num_to_zval
+# define FJ_RAW_TO_ZVAL fj_mut_raw_to_zval
+#else
+# define FJ_WALK_VAL yyjson_val
+# define FJ_GET_TYPE yyjson_get_type
+# define FJ_GET_BOOL yyjson_get_bool
+# define FJ_GET_STR yyjson_get_str
+# define FJ_GET_LEN yyjson_get_len
+# define FJ_GET_TAG yyjson_get_tag
+# define FJ_ARR_SIZE yyjson_arr_size
+# define FJ_ARR_ITER yyjson_arr_iter
+# define FJ_ARR_ITER_INIT yyjson_arr_iter_init
+# define FJ_ARR_ITER_NEXT yyjson_arr_iter_next
+# define FJ_OBJ_SIZE yyjson_obj_size
+# define FJ_OBJ_ITER yyjson_obj_iter
+# define FJ_OBJ_ITER_INIT yyjson_obj_iter_init
+# define FJ_OBJ_ITER_NEXT yyjson_obj_iter_next
+# define FJ_OBJ_ITER_VAL yyjson_obj_iter_get_val
+# define FJ_NUM_TO_ZVAL fj_num_to_zval
+# define FJ_RAW_TO_ZVAL fj_raw_to_zval
+#endif
+
+static bool FJ_WALK_NAME(FJ_WALK_VAL *val, bool assoc,
                          zend_long remaining_depth,
                          zend_long flags, zval *out)
 {
@@ -51,7 +90,7 @@ static bool FJ_WALK_NAME(yyjson_val *val, bool assoc,
         return false;
     }
 
-    yyjson_type t = yyjson_get_type(val);
+    yyjson_type t = FJ_GET_TYPE(val);
 
     switch (t) {
     case YYJSON_TYPE_NULL:
@@ -59,25 +98,22 @@ static bool FJ_WALK_NAME(yyjson_val *val, bool assoc,
         return true;
 
     case YYJSON_TYPE_BOOL:
-        ZVAL_BOOL(out, yyjson_get_bool(val));
+        ZVAL_BOOL(out, FJ_GET_BOOL(val));
         return true;
 
     case YYJSON_TYPE_NUM:
-        fj_num_to_zval(val, flags, out);
+        FJ_NUM_TO_ZVAL(val, flags, out);
         return true;
 
     case YYJSON_TYPE_RAW:
-        fj_raw_to_zval(val, out);
+        FJ_RAW_TO_ZVAL(val, out);
         return true;
 
     case YYJSON_TYPE_STR: {
-        const char *raw = yyjson_get_str(val);
-        size_t raw_len = yyjson_get_len(val);
+        const char *raw = FJ_GET_STR(val);
+        size_t raw_len = FJ_GET_LEN(val);
 #if FJ_WALK_SANITIZE
-        /* Defensive callers often set IGNORE / SUBSTITUTE on every decode
-         * even when the payload is clean UTF-8; scan first so a
-         * well-formed string skips the sanitize alloc + copy. */
-        if (!fastjson_utf8_well_formed(raw, raw_len)) {
+        if (FJ_GET_TAG(val) & YYJSON_RESERVED_INVALID_UNICODE) {
             size_t sane_len;
             char *sane = fastjson_sanitize_utf8(raw, raw_len, flags,
                                                 FJ_SAN_DECODE, &sane_len);
@@ -108,19 +144,30 @@ static bool FJ_WALK_NAME(yyjson_val *val, bool assoc,
             ZVAL_NULL(out);
             return false;
         }
-        size_t n = yyjson_arr_size(val);
+        size_t n = FJ_ARR_SIZE(val);
         array_init_size(out, (uint32_t)n);
-        yyjson_val *item;
-        yyjson_arr_iter iter;
-        yyjson_arr_iter_init(val, &iter);
-        while ((item = yyjson_arr_iter_next(&iter))) {
-            zval child;
-            if (!FJ_WALK_NAME(item, assoc, remaining_depth - 1, flags,
-                              &child)) {
-                zval_ptr_dtor(&child);
-                return false;
+        if (n == 0) {
+            return true;
+        }
+        zend_hash_real_init_packed(Z_ARRVAL_P(out));
+        FJ_WALK_VAL *item;
+        FJ_ARR_ITER iter;
+        FJ_ARR_ITER_INIT(val, &iter);
+        bool fill_ok = true;
+        ZEND_HASH_FILL_PACKED(Z_ARRVAL_P(out)) {
+            while ((item = FJ_ARR_ITER_NEXT(&iter))) {
+                zval child;
+                if (!FJ_WALK_NAME(item, assoc, remaining_depth - 1, flags,
+                                  &child)) {
+                    zval_ptr_dtor(&child);
+                    fill_ok = false;
+                    break;
+                }
+                ZEND_HASH_FILL_ADD(&child);
             }
-            zend_hash_next_index_insert(Z_ARRVAL_P(out), &child);
+        } ZEND_HASH_FILL_END();
+        if (!fill_ok) {
+            return false;
         }
         return true;
     }
@@ -138,7 +185,7 @@ static bool FJ_WALK_NAME(yyjson_val *val, bool assoc,
             ZVAL_NULL(out);
             return false;
         }
-        size_t n = yyjson_obj_size(val);
+        size_t n = FJ_OBJ_SIZE(val);
         HashTable *ht;
         if (assoc) {
             array_init_size(out, (uint32_t)n);
@@ -150,22 +197,22 @@ static bool FJ_WALK_NAME(yyjson_val *val, bool assoc,
              * directly avoids the write_property handler dispatch +
              * zval copy that add_property_zval_ex would impose. */
             ht = Z_OBJPROP_P(out);
+            if (n != 0) {
+                zend_hash_extend(ht, (uint32_t)n, false);
+            }
         }
-        yyjson_val *key;
-        yyjson_obj_iter iter;
-        yyjson_obj_iter_init(val, &iter);
-        while ((key = yyjson_obj_iter_next(&iter))) {
-            yyjson_val *vval = yyjson_obj_iter_get_val(key);
-            const char *kstr = yyjson_get_str(key);
-            size_t klen = yyjson_get_len(key);
+        FJ_WALK_VAL *key;
+        FJ_OBJ_ITER iter;
+        FJ_OBJ_ITER_INIT(val, &iter);
+        while ((key = FJ_OBJ_ITER_NEXT(&iter))) {
+            FJ_WALK_VAL *vval = FJ_OBJ_ITER_VAL(key);
+            const char *kstr = FJ_GET_STR(key);
+            size_t klen = FJ_GET_LEN(key);
             const char *use_key = kstr;
             size_t use_klen = klen;
 #if FJ_WALK_SANITIZE
-            /* Same fast path as the string-value case: a well-formed key
-             * uses yyjson's borrowed pointer; only a malformed key is
-             * rewritten (owned, efree'd below). */
             bool key_owned = false;
-            if (!fastjson_utf8_well_formed(kstr, klen)) {
+            if (FJ_GET_TAG(key) & YYJSON_RESERVED_INVALID_UNICODE) {
                 use_key = fastjson_sanitize_utf8(kstr, klen, flags,
                                                  FJ_SAN_DECODE, &use_klen);
                 key_owned = true;
@@ -214,3 +261,21 @@ static bool FJ_WALK_NAME(yyjson_val *val, bool assoc,
         return true;
     }
 }
+
+#undef FJ_WALK_VAL
+#undef FJ_GET_TYPE
+#undef FJ_GET_BOOL
+#undef FJ_GET_STR
+#undef FJ_GET_LEN
+#undef FJ_GET_TAG
+#undef FJ_ARR_SIZE
+#undef FJ_ARR_ITER
+#undef FJ_ARR_ITER_INIT
+#undef FJ_ARR_ITER_NEXT
+#undef FJ_OBJ_SIZE
+#undef FJ_OBJ_ITER
+#undef FJ_OBJ_ITER_INIT
+#undef FJ_OBJ_ITER_NEXT
+#undef FJ_OBJ_ITER_VAL
+#undef FJ_NUM_TO_ZVAL
+#undef FJ_RAW_TO_ZVAL

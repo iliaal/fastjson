@@ -1,0 +1,126 @@
+From 0551b211269cd5410ac9f664ff5bf448228a4ad3 Mon Sep 17 00:00:00 2001
+From: Ilia Alshanetsky <ilia@ilia.ws>
+Date: Sun, 10 May 2026 18:38:29 -0400
+Subject: [PATCH] Encode: direct-write one-stage walker (5.87x vs ext/json)
+
+The legacy two-stage encoder built a yyjson_mut_doc intermediate,
+then called yyjson_mut_write_opts on the doc. That model hit a
+structural ceiling on workloads where per-value work is small
+(citm_catalog's thousands of integer-keyed objects, random's short
+mixed strings, truenull's primitive arrays) -- the per-value
+yyjson_mut_val allocation cost wasn't recovered by yyjson's faster
+per-byte writer.
+
+The new encoder (fastjson_directwrite.c) walks PHP zvals straight
+into a smart_str buffer, emitting JSON tokens inline:
+  - Containers: bracket/brace, commas, colons inline
+  - Pretty-print: indent_level tracked in walker context
+  - JsonSerializable + retval_stash mechanism preserved
+  - PARTIAL_OUTPUT_ON_ERROR substitutions inline (cycle/INF-NaN/
+    unsupported)
+  - HEX_* substitutions inline (no more output post-pass)
+  - NUMERIC_CHECK, PRESERVE_ZERO_FRACTION, FORCE_OBJECT,
+    UNESCAPED_*, THROW_ON_ERROR all preserved
+  - Stack-overflow guard, depth check at container entry
+
+yyjson primitives are reused for the actually-fast parts via:
+  - yyjson_write_number (upstream public API) for int/double via
+    stack-allocated yyjson_val
+  - yyjson_write_string_to_buf (new vendor patch P-003) for string
+    escape-table writing
+
+Bench delta on the 14.81 MB / 15-file corpus (both PHP and fastjson
+release-built):
+  Encode aggregate MB/s:     581 -> 1,006   (+73%)
+  Encode speedup vs ext/json: 3.43x -> 5.87x (+71%)
+  Encode peak memory:        62.7 MB -> 11.9 MB (-81%, near ext/json parity)
+
+Per-file (regression cases flip; already-winning cases improve):
+  citm_catalog 1,624 -> 3,289 MB/s (+103%, 0.65x -> 1.29x ext/json)
+  random         443 ->   862 MB/s ( +95%, 0.72x -> 1.32x ext/json)
+  mesh.pretty    879 -> 1,674 MB/s ( +90%)
+  marine_ik      336 ->   666 MB/s ( +98%)
+  canada         330 ->   695 MB/s (+111%)
+  gsoc-2018      818 -> 1,237 MB/s ( +51%)
+
+No file regresses. Tests: 74/74 pass; same fastjson + upstream-json
+suites as before the rewrite.
+
+Decode and validate paths are untouched (still on yyjson's reader).
+
+Vendor patch P-003: adds public yyjson_write_string_to_buf as a thin
+wrapper around the existing static_inline write_str. Documented in
+vendor/yyjson/PATCHES.md with the re-apply recipe.
+
+Legacy two-stage code (fastjson_encode_zval, fastjson_encode_array,
+fastjson_encode_object, fastjson_encode_jsonserializable,
+fastjson_partial_or_fail, fastjson_apply_hex_escapes,
+fastjson_translate_write_flags) removed from fastjson_encode.c;
+PHP_FUNCTION(fastjson_encode) is now ~50 lines (just ZPP +
+THROW_ON_ERROR state-preservation + dispatch into direct-write).
+---
+ vendor/yyjson/yyjson.c | 15 +++++++++++++++
+ vendor/yyjson/yyjson.h | 21 +++++++++++++++++++++
+ 2 files changed, 36 insertions(+)
+
+diff --git a/vendor/yyjson/yyjson.c b/vendor/yyjson/yyjson.c
+index 300e075..c9d272e 100644
+--- a/vendor/yyjson/yyjson.c
++++ b/vendor/yyjson/yyjson.c
+@@ -10479,6 +10479,21 @@ bool yyjson_mut_write_fp(FILE *fp,
+     return yyjson_mut_val_write_fp(fp, root, flg, alc_ptr, err);
+ }
+ 
++/*==============================================================================
++ * MARK: - Vendor patch P-003 (fastjson): public single-string writer
++ *============================================================================*/
++/* Thin public wrapper around the internal static_inline write_str()
++ * so callers building JSON one-stage (without going through mut_doc)
++ * can reuse yyjson's escape-table writer. See PATCHES.md P-003. */
++char *yyjson_write_string_to_buf(char *cur, const char *str, size_t str_len,
++                                 yyjson_write_flag flg) {
++    bool esc = has_flg(ESCAPE_UNICODE);
++    bool inv = has_flg(ALLOW_INVALID_UNICODE);
++    const char_enc_type *enc_table = get_enc_table_with_flag(flg);
++    return (char *)write_str((u8 *)cur, esc, inv,
++                             (const u8 *)str, (usize)str_len, enc_table);
++}
++
+ #undef has_flg
+ #undef has_allow
+ #endif /* YYJSON_DISABLE_WRITER */
+diff --git a/vendor/yyjson/yyjson.h b/vendor/yyjson/yyjson.h
+index 99fb6ad..82c9413 100644
+--- a/vendor/yyjson/yyjson.h
++++ b/vendor/yyjson/yyjson.h
+@@ -1712,6 +1712,27 @@ yyjson_api_inline char *yyjson_mut_write_number(const yyjson_mut_val *val,
+     return yyjson_write_number((const yyjson_val *)val, buf);
+ }
+ 
++/** [Vendor patch P-003: fastjson] Write a JSON-quoted, escaped string
++    into a caller-provided buffer. The destination MUST have capacity
++    of at least `str_len * 6 + 2` bytes to accommodate worst-case
++    \uXXXX expansion plus surrounding quotes.
++
++    `flg` honors:
++        YYJSON_WRITE_ESCAPE_UNICODE      - emit \uXXXX for >0x7E
++        YYJSON_WRITE_ESCAPE_SLASHES      - emit \/ for forward slash
++        YYJSON_WRITE_ALLOW_INVALID_UNICODE - don't fail on bad UTF-8
++
++    Returns the buffer cursor advanced past the closing quote, or
++    NULL on invalid UTF-8 when ALLOW_INVALID_UNICODE is unset.
++
++    Lets a caller (e.g. a PHP extension building JSON one-stage from
++    its own value tree) reuse yyjson's escape-table writer without
++    going through the mut_doc construction overhead. */
++yyjson_api char *yyjson_write_string_to_buf(char *cur,
++                                            const char *str,
++                                            size_t str_len,
++                                            yyjson_write_flag flg);
++
+ #endif /* YYJSON_DISABLE_WRITER */
+ 
+ 
+-- 
+2.34.1
+

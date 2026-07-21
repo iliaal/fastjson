@@ -1,0 +1,75 @@
+From e4e8fd77e0cf6e98c1b30663fdc37c8ac3617f91 Mon Sep 17 00:00:00 2001
+From: Ilia Alshanetsky <ilia@ilia.ws>
+Date: Thu, 9 Jul 2026 14:15:18 -0400
+Subject: [PATCH] Fix encode UAF, JsonSerializable semantics, pointer_set
+ edges, CI masking
+
+Correctness:
+- Fix an encode use-after-free when a nested JsonSerializable mutates the
+  array being encoded through an aliasing &-reference (append reallocates
+  arData mid-iteration). Hold a reference across the array descent so the
+  mutation copies-on-write away, mirroring ext/json's json_encode_zval
+  IS_ARRAY guard. Confirmed under valgrind with USE_ZEND_ALLOC=0.
+- JsonSerializable::jsonSerialize() returning $this now encodes the
+  object's public properties instead of a false JSON_ERROR_RECURSION.
+- JsonSerializable no longer charges the serialize call an extra depth
+  level: a jsonSerialize() returning an M-deep value needs $depth >= M,
+  matching ext/json. Fixes both the returns-$this and returns-a-fresh-value
+  paths.
+- Reject raw control characters in strings under JSON_INVALID_UTF8_IGNORE/
+  SUBSTITUTE in both fastjson_decode() and fastjson_validate(); those flags
+  relax UTF-8 validity only. Fixed in the yyjson reader (vendor patch
+  P-004) so every decode path is covered and RELAXED comments are handled
+  correctly. Invalid UTF-8 stays tolerated.
+- pointer_set(): reject re-emitting a non-finite number (an untouched
+  1e309 that decoded to INF) as invalid Infinity; fail with
+  JSON_ERROR_INF_OR_NAN instead.
+- pointer_set(): count the pointer path against the replacement depth
+  budget so it cannot emit a document deeper than $depth.
+- pointer_set(): guard the array-index parser against 32-bit size_t
+  overflow.
+
+Compat harness:
+- The returns-$this handling and the array-copy guard make
+  json_encode_recursion_01/02 and bug77843 pass byte-for-byte; un-skipped
+  (rewritten set 62 -> 65).
+
+For contributors (CI/build):
+- The Linux build step propagates a failing make via pipefail instead of
+  swallowing it behind a warning grep; the test steps assert the extension
+  actually loaded; the ASAN step keeps the runner exit status and checks
+  leaked/borked/no-summary, not just "Tests failed".
+- scripts/pie-smoke.sh reports and exits non-zero when PIE itself fails,
+  instead of printing PASSED after the manual phpize fallback.
+---
+ vendor/yyjson/yyjson.c | 13 +++++++++----
+ 1 file changed, 9 insertions(+), 4 deletions(-)
+
+diff --git a/vendor/yyjson/yyjson.c b/vendor/yyjson/yyjson.c
+index c9d272e..0215e49 100644
+--- a/vendor/yyjson/yyjson.c
++++ b/vendor/yyjson/yyjson.c
+@@ -4935,11 +4935,16 @@ copy_escape:
+         if (con) con[0] = con[1] = NULL;
+         return true;
+     } else {
+-        if (!has_allow(INVALID_UNICODE)) {
+-            return_err(src, "unexpected control character in string");
+-        }
++        /* fastjson patch P-004: reject raw control characters in strings
++         * even under ALLOW_INVALID_UNICODE. That flag is meant to relax
++         * UTF-8 validity only (handled on the high-byte path above); a
++         * literal control byte (< 0x20) is a JSON-grammar violation that
++         * ext/json always rejects (JSON_ERROR_CTRL_CHAR) regardless of its
++         * JSON_INVALID_UTF8_* flags. Unclosed strings are caught earlier as
++         * "unexpected end of data", so only genuine control chars reach here.
++         * Original upstream tolerated them here under the flag. */
+         if (src >= eof) return_err(src, "unclosed string");
+-        *dst++ = *src++;
++        return_err(src, "unexpected control character in string");
+     }
+ 
+ copy_ascii:
+-- 
+2.34.1
+

@@ -1,0 +1,456 @@
+From 516868316b5c0e8f9477e88b203515569106f6b3 Mon Sep 17 00:00:00 2001
+From: Ilia Alshanetsky <ilia@ilia.ws>
+Date: Sun, 10 May 2026 14:47:13 -0400
+Subject: [PATCH] Vendor patch P-002: yyjson validate-only mode (no-tree, lower
+ memory)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Adds YYJSON_READ_VALIDATE_ONLY flag and a new read_root_validate
+function to vendor/yyjson/yyjson.c. The new function mirrors
+read_root_minify's state machine but uses an auxiliary stack for
+container-type tracking instead of yyjson's slot-based parent-offset
+trick. The val_hdr O(N values) buffer is eliminated; all scalar reads
+share one stack-allocated yyjson_val "dummy" sink that gets clobbered
+repeatedly (we only care about the boolean return).
+
+On success the parser returns a stub yyjson_doc (~64 bytes total)
+with doc->alc and doc->str_pool seeded so yyjson_doc_free() cleans up
+correctly. Caller must NOT walk the returned doc (no values).
+
+fastjson_validate now passes the flag.
+
+Effect on the corpus aggregate (14.81 MB total input):
+  Validate throughput:    525 MB/s   -> 1,312 MB/s   (2.5x faster)
+  Validate memory peak:    40.85 MB  ->    14.91 MB  (2.7x reduction)
+  Validate vs ext/json memory ratio: 277x -> 101x
+
+The 2.5x throughput gain comes from removing the val_hdr alloc +
+realloc-growth path and the per-value writes; the 2.7x memory
+reduction comes from eliminating the val_hdr buffer entirely. The
+remaining 101x memory ratio is yyjson's input-buffer copy (made when
+INSITU is not set) — that's the next ceiling, requiring either safe
+INSITU on PHP zend_strings or further yyjson surgery.
+
+Two debugging passes during the patch:
+  1. First version segfaulted on '[]'/'{}' because the stub doc had
+     NULL doc->alc; yyjson_doc_free reads doc->alc and dispatches the
+     free through it. Fix: doc->alc = alc.
+  2. Second version leaked input-buffer-copy memory on every
+     successful validate (caused bench to OOM at 134 MB after a few
+     hundred iterations). yyjson_read_opts stashes hdr in
+     doc->str_pool on the success path of read_root_minify; doc_free
+     frees that. My stub had str_pool = NULL. Fix: doc->str_pool =
+     has_flg(INSITU) ? NULL : (char *)hdr.
+
+Both bugs are caught by running validate in a tight loop now.
+
+Patch design + reproduction recipe documented in
+vendor/yyjson/PATCHES.md (P-002). The function structure tracks
+read_root_minify 1:1 (same labels: arr_val_begin, arr_val_end,
+arr_end, obj_*, doc_end, fail_*) so a side-by-side diff is the
+easiest re-port path on yyjson upgrades.
+
+Tests: 64/65 pass on release PHP. The 1 failing test
+(upstream-json/bug66025) is a pre-existing release-build
+re-entrancy bug in fastjson_encode-inside-jsonSerialize — verified
+by running that test on the unpatched HEAD before P-002 (still
+fails). Tracked separately; not introduced by this patch.
+
+bench/baseline.md, README.md, CHANGELOG.md, bench/README.md updated
+with the new validate numbers.
+---
+ vendor/yyjson/yyjson.c | 346 ++++++++++++++++++++++++++++++++++++++++-
+ vendor/yyjson/yyjson.h |  11 ++
+ 2 files changed, 356 insertions(+), 1 deletion(-)
+
+diff --git a/vendor/yyjson/yyjson.c b/vendor/yyjson/yyjson.c
+index bdd9365..300e075 100644
+--- a/vendor/yyjson/yyjson.c
++++ b/vendor/yyjson/yyjson.c
+@@ -6161,6 +6161,347 @@ fail_garbage:           return_err(cur, UNEXPECTED_CONTENT, MSG_GARBAGE);
+ 
+ 
+ 
++/*==============================================================================
++ * MARK: - JSON Reader (fastjson patch P-002: validate-only mode)
++ *
++ * Forks the read_root_minify state machine but uses an auxiliary stack
++ * for container-type tracking instead of slot-based parent-offset
++ * tracking, eliminating the O(N values) val_hdr buffer. Memory peak
++ * drops from ~3x input size to ~1x input size (the input copy yyjson
++ * already makes when YYJSON_READ_INSITU is not set, plus a ~256 B
++ * inline depth stack that grows on demand).
++ *
++ * The shared `dummy` yyjson_val is the sink for read_str / read_num /
++ * read_true / read_false / read_null / read_inf_or_nan. Their writes
++ * to `val->tag` and `val->uni.*` get clobbered repeatedly; we only
++ * care about their boolean return value (well-formed or not).
++ *
++ * Caller passes YYJSON_READ_VALIDATE_ONLY. The returned doc is a stub
++ * sentinel; do not walk it. yyjson_doc_free() works normally.
++ *============================================================================*/
++
++static yyjson_doc *read_root_validate(u8 *hdr, u8 *cur, u8 *eof,
++                                      yyjson_alc alc,
++                                      yyjson_read_flag flg,
++                                      yyjson_read_err *err) {
++#define return_err_v(_pos, _code, _msg) do { \
++    if (is_truncated_end(hdr, _pos, eof, YYJSON_READ_ERROR_##_code, flg)) { \
++        err->pos = (usize)(eof - hdr); \
++        err->code = YYJSON_READ_ERROR_UNEXPECTED_END; \
++        err->msg = MSG_NOT_END; \
++    } else { \
++        err->pos = (usize)(_pos - hdr); \
++        err->code = YYJSON_READ_ERROR_##_code; \
++        err->msg = _msg; \
++    } \
++    if (stack_buf != stack_inline) alc.free(alc.ctx, stack_buf); \
++    return NULL; \
++} while (false)
++
++#define push_ctn(_is_obj) do { \
++    if (unlikely(depth >= stack_cap)) { \
++        usize new_cap = stack_cap * 2; \
++        u64 *new_buf; \
++        if (stack_buf == stack_inline) { \
++            new_buf = (u64 *)alc.malloc(alc.ctx, new_cap * sizeof(u64)); \
++            if (!new_buf) goto fail_alloc; \
++            memcpy(new_buf, stack_inline, stack_cap * sizeof(u64)); \
++        } else { \
++            new_buf = (u64 *)alc.realloc(alc.ctx, stack_buf, \
++                stack_cap * sizeof(u64), new_cap * sizeof(u64)); \
++            if (!new_buf) goto fail_alloc; \
++        } \
++        stack_buf = new_buf; \
++        stack_cap = new_cap; \
++    } \
++    stack_buf[depth++] = ((u64)ctn_len << 1) | (is_obj & 1); \
++    ctn_len = 0; \
++    is_obj = (_is_obj); \
++} while (false)
++
++#define pop_ctn() do { \
++    u64 _saved = stack_buf[--depth]; \
++    ctn_len = (usize)(_saved >> 1); \
++    is_obj = (u8)(_saved & 1); \
++} while (false)
++
++    enum { INLINE_DEPTH = 32 };
++    u64 stack_inline[INLINE_DEPTH];
++    u64 *stack_buf = stack_inline;
++    usize stack_cap = INLINE_DEPTH;
++    usize depth = 0;
++    u8 is_obj = 0;
++    usize ctn_len = 0;
++    yyjson_val dummy;
++    yyjson_val *val = &dummy;
++    yyjson_doc *doc;
++    const char *msg;
++
++    u8 raw_end[1];
++    u8 *raw_ptr = raw_end;
++    u8 **pre = &raw_ptr;
++
++    /* Top-level: dispatch on '{' / '[' / scalar. */
++    if (*cur == '{') {
++        cur++;
++        is_obj = 1;
++        goto obj_key_begin;
++    } else if (*cur == '[') {
++        cur++;
++        is_obj = 0;
++        goto arr_val_begin;
++    } else {
++        /* Top-level scalar — defer to read_root_single. It allocates a
++         * small (alc_num=2) val_hdr which is the doc itself. Tiny. */
++        if (stack_buf != stack_inline) alc.free(alc.ctx, stack_buf);
++        return read_root_single(hdr, cur, eof, alc, flg, err);
++    }
++
++arr_val_begin:
++    if (*cur == '{') { cur++; push_ctn(1); goto obj_key_begin; }
++    if (*cur == '[') { cur++; push_ctn(0); goto arr_val_begin; }
++    if (char_is_num(*cur)) {
++        ctn_len++;
++        if (likely(read_num(&cur, pre, flg, val, &msg))) goto arr_val_end;
++        goto fail_number;
++    }
++    if (*cur == '"') {
++        ctn_len++;
++        if (likely(read_str(&cur, eof, flg, val, &msg))) goto arr_val_end;
++        goto fail_string;
++    }
++    if (*cur == 't') {
++        ctn_len++;
++        if (likely(read_true(&cur, val))) goto arr_val_end;
++        goto fail_literal_true;
++    }
++    if (*cur == 'f') {
++        ctn_len++;
++        if (likely(read_false(&cur, val))) goto arr_val_end;
++        goto fail_literal_false;
++    }
++    if (*cur == 'n') {
++        ctn_len++;
++        if (likely(read_null(&cur, val))) goto arr_val_end;
++        if (has_allow(INF_AND_NAN)) {
++            if (read_nan(&cur, pre, flg, val)) goto arr_val_end;
++        }
++        goto fail_literal_null;
++    }
++    if (*cur == ']') {
++        cur++;
++        if (likely(ctn_len == 0)) goto arr_end;
++        if (has_allow(TRAILING_COMMAS)) goto arr_end;
++        while (*cur != ',') cur--;
++        goto fail_trailing_comma;
++    }
++    if (char_is_space(*cur)) {
++        while (char_is_space(*++cur));
++        goto arr_val_begin;
++    }
++    if (has_allow(INF_AND_NAN) &&
++        (*cur == 'i' || *cur == 'I' || *cur == 'N')) {
++        ctn_len++;
++        if (read_inf_or_nan(&cur, pre, flg, val)) goto arr_val_end;
++        goto fail_character_val;
++    }
++    if (has_allow(SINGLE_QUOTED_STR) && *cur == '\'') {
++        ctn_len++;
++        if (likely(read_str_sq(&cur, eof, flg, val, &msg))) goto arr_val_end;
++        goto fail_string;
++    }
++    if (has_allow(TRIVIA) && char_is_trivia(*cur)) {
++        if (skip_trivia(&cur, eof, flg)) goto arr_val_begin;
++        if (cur == eof) goto fail_comment;
++    }
++    goto fail_character_val;
++
++arr_val_end:
++    if (*cur == ',') { cur++; goto arr_val_begin; }
++    if (*cur == ']') { cur++; goto arr_end; }
++    if (char_is_space(*cur)) {
++        while (char_is_space(*++cur));
++        goto arr_val_end;
++    }
++    if (has_allow(TRIVIA) && char_is_trivia(*cur)) {
++        if (skip_trivia(&cur, eof, flg)) goto arr_val_end;
++        if (cur == eof) goto fail_comment;
++    }
++    goto fail_character_arr_end;
++
++arr_end:
++    if (depth == 0) goto doc_end;
++    pop_ctn();
++    if (is_obj) goto obj_val_end;
++    else goto arr_val_end;
++
++obj_key_begin:
++    if (likely(*cur == '"')) {
++        ctn_len++;
++        if (likely(read_str(&cur, eof, flg, val, &msg))) goto obj_key_end;
++        goto fail_string;
++    }
++    if (likely(*cur == '}')) {
++        cur++;
++        if (likely(ctn_len == 0)) goto obj_end;
++        if (has_allow(TRAILING_COMMAS)) goto obj_end;
++        while (*cur != ',') cur--;
++        goto fail_trailing_comma;
++    }
++    if (char_is_space(*cur)) {
++        while (char_is_space(*++cur));
++        goto obj_key_begin;
++    }
++    if (has_allow(SINGLE_QUOTED_STR) && *cur == '\'') {
++        ctn_len++;
++        if (likely(read_str_sq(&cur, eof, flg, val, &msg))) goto obj_key_end;
++        goto fail_string;
++    }
++    if (has_allow(UNQUOTED_KEY) && char_is_id_start(*cur)) {
++        ctn_len++;
++        if (read_str_id(&cur, eof, flg, pre, val, &msg)) goto obj_key_end;
++        goto fail_string;
++    }
++    if (has_allow(TRIVIA) && char_is_trivia(*cur)) {
++        if (skip_trivia(&cur, eof, flg)) goto obj_key_begin;
++        if (cur == eof) goto fail_comment;
++    }
++    goto fail_character_obj_key;
++
++obj_key_end:
++    if (*cur == ':') { cur++; goto obj_val_begin; }
++    if (char_is_space(*cur)) {
++        while (char_is_space(*++cur));
++        goto obj_key_end;
++    }
++    if (has_allow(TRIVIA) && char_is_trivia(*cur)) {
++        if (skip_trivia(&cur, eof, flg)) goto obj_key_end;
++        if (cur == eof) goto fail_comment;
++    }
++    goto fail_character_obj_sep;
++
++obj_val_begin:
++    if (*cur == '"') {
++        if (likely(read_str(&cur, eof, flg, val, &msg))) goto obj_val_end;
++        goto fail_string;
++    }
++    if (char_is_num(*cur)) {
++        if (likely(read_num(&cur, pre, flg, val, &msg))) goto obj_val_end;
++        goto fail_number;
++    }
++    if (*cur == '{') { cur++; push_ctn(1); goto obj_key_begin; }
++    if (*cur == '[') { cur++; push_ctn(0); goto arr_val_begin; }
++    if (*cur == 't') {
++        if (likely(read_true(&cur, val))) goto obj_val_end;
++        goto fail_literal_true;
++    }
++    if (*cur == 'f') {
++        if (likely(read_false(&cur, val))) goto obj_val_end;
++        goto fail_literal_false;
++    }
++    if (*cur == 'n') {
++        if (likely(read_null(&cur, val))) goto obj_val_end;
++        if (has_allow(INF_AND_NAN)) {
++            if (read_nan(&cur, pre, flg, val)) goto obj_val_end;
++        }
++        goto fail_literal_null;
++    }
++    if (char_is_space(*cur)) {
++        while (char_is_space(*++cur));
++        goto obj_val_begin;
++    }
++    if (has_allow(INF_AND_NAN) &&
++        (*cur == 'i' || *cur == 'I' || *cur == 'N')) {
++        if (read_inf_or_nan(&cur, pre, flg, val)) goto obj_val_end;
++        goto fail_character_val;
++    }
++    if (has_allow(SINGLE_QUOTED_STR) && *cur == '\'') {
++        if (likely(read_str_sq(&cur, eof, flg, val, &msg))) goto obj_val_end;
++        goto fail_string;
++    }
++    if (has_allow(TRIVIA) && char_is_trivia(*cur)) {
++        if (skip_trivia(&cur, eof, flg)) goto obj_val_begin;
++        if (cur == eof) goto fail_comment;
++    }
++    goto fail_character_val;
++
++obj_val_end:
++    if (likely(*cur == ',')) { cur++; goto obj_key_begin; }
++    if (likely(*cur == '}')) { cur++; goto obj_end; }
++    if (char_is_space(*cur)) {
++        while (char_is_space(*++cur));
++        goto obj_val_end;
++    }
++    if (has_allow(TRIVIA) && char_is_trivia(*cur)) {
++        if (skip_trivia(&cur, eof, flg)) goto obj_val_end;
++        if (cur == eof) goto fail_comment;
++    }
++    goto fail_character_obj_end;
++
++obj_end:
++    if (depth == 0) goto doc_end;
++    pop_ctn();
++    if (is_obj) goto obj_val_end;
++    else goto arr_val_end;
++
++doc_end:
++    if (unlikely(cur < eof) && !has_flg(STOP_WHEN_DONE)) {
++        while (char_is_space(*cur)) cur++;
++        if (has_allow(TRIVIA) && char_is_trivia(*cur)) {
++            if (!skip_trivia(&cur, eof, flg) && cur != eof) {
++                goto fail_comment;
++            }
++        }
++        if (cur < eof) goto fail_garbage;
++    }
++    /* Successful validation. Allocate a stub doc (~64 bytes total).
++     * yyjson_doc_free() needs:
++     *   - doc->alc (set to the alc used to malloc this stub)
++     *   - doc->str_pool (set to hdr, the input copy yyjson_read_opts
++     *     malloc'd when INSITU was not set; doc_free will alc.free it
++     *     and otherwise we'd leak ~input-size bytes per validate call). */
++    doc = (yyjson_doc *)alc.malloc(alc.ctx, sizeof(yyjson_doc));
++    if (unlikely(!doc)) goto fail_alloc;
++    memset(doc, 0, sizeof(yyjson_doc));
++    doc->alc = alc;
++    doc->str_pool = has_flg(INSITU) ? NULL : (char *)hdr;
++    if (stack_buf != stack_inline) alc.free(alc.ctx, stack_buf);
++    return doc;
++
++fail_string:
++    return_err_v(cur, INVALID_STRING, msg);
++fail_number:
++    return_err_v(cur, INVALID_NUMBER, msg);
++fail_alloc:
++    return_err_v(cur, MEMORY_ALLOCATION, MSG_MALLOC);
++fail_trailing_comma:
++    return_err_v(cur, JSON_STRUCTURE, "trailing comma is not allowed");
++fail_literal_true:
++    return_err_v(cur, LITERAL, "invalid literal, expected 'true'");
++fail_literal_false:
++    return_err_v(cur, LITERAL, "invalid literal, expected 'false'");
++fail_literal_null:
++    return_err_v(cur, LITERAL, "invalid literal, expected 'null'");
++fail_character_val:
++    return_err_v(cur, UNEXPECTED_CHARACTER, "unexpected character, expected a JSON value");
++fail_character_arr_end:
++    return_err_v(cur, UNEXPECTED_CHARACTER, "unexpected character, expected ',' or ']'");
++fail_character_obj_key:
++    return_err_v(cur, UNEXPECTED_CHARACTER, "unexpected character, expected a string");
++fail_character_obj_sep:
++    return_err_v(cur, UNEXPECTED_CHARACTER, "unexpected character, expected ':'");
++fail_character_obj_end:
++    return_err_v(cur, UNEXPECTED_CHARACTER, "unexpected character, expected ',' or '}'");
++fail_comment:
++    return_err_v(cur, INVALID_COMMENT, "unclosed multiline comment");
++fail_garbage:
++    return_err_v(cur, UNEXPECTED_CONTENT, "unexpected content after document");
++
++#undef push_ctn
++#undef pop_ctn
++#undef return_err_v
++}
++
+ /*==============================================================================
+  * MARK: - JSON Reader (Public)
+  *============================================================================*/
+@@ -6226,7 +6567,10 @@ yyjson_doc *yyjson_read_opts(char *dat, usize len,
+     }
+ 
+     /* read json document */
+-    if (likely(char_is_ctn(*cur))) {
++    if (has_flg(VALIDATE_ONLY)) {
++        /* fastjson patch P-002: bypass tree construction. */
++        doc = read_root_validate(hdr, cur, eof, alc, flg, err);
++    } else if (likely(char_is_ctn(*cur))) {
+         if (char_is_space(cur[1]) && char_is_space(cur[2])) {
+             doc = read_root_pretty(hdr, cur, eof, alc, flg, err);
+         } else {
+diff --git a/vendor/yyjson/yyjson.h b/vendor/yyjson/yyjson.h
+index 5eb6d46..99fb6ad 100644
+--- a/vendor/yyjson/yyjson.h
++++ b/vendor/yyjson/yyjson.h
+@@ -825,6 +825,17 @@ static const yyjson_read_flag YYJSON_READ_JSON5 =
+     (1 << 12) | /* YYJSON_READ_ALLOW_SINGLE_QUOTED_STR */
+     (1 << 13);  /* YYJSON_READ_ALLOW_UNQUOTED_KEY */
+ 
++/** [fastjson local patch P-002, see vendor/yyjson/PATCHES.md]
++    Validate-only mode: parse for well-formedness without building a
++    yyjson_val tree. Reduces memory usage from O(N values) to
++    O(input copy + max-depth stack). The returned `yyjson_doc *` is a
++    stub sentinel: the caller must NOT walk it; it carries no values.
++    `yyjson_doc_free()` works normally (frees ~32 bytes).
++    Combine with other YYJSON_READ_* flags as desired (TRAILING_COMMAS,
++    COMMENTS, etc. are honored). NUMBER_AS_RAW / BIGNUM_AS_RAW have no
++    effect in validate mode. */
++static const yyjson_read_flag YYJSON_READ_VALIDATE_ONLY            = 1 << 14;
++
+ 
+ 
+ /** Result code for JSON reader. */
+-- 
+2.34.1
+

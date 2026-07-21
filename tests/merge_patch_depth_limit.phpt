@@ -1,15 +1,13 @@
 --TEST--
-fastjson_merge_patch: deep operand hits the depth cap instead of crashing
+fastjson_merge_patch: effective-result depth is bounded without crashing
 --EXTENSIONS--
 fastjson
 --FILE--
 <?php
 
-/* Regression: yyjson_merge_patch and yyjson_mut_doc_imut_copy recurse
- * once per nesting level on the C stack, BEFORE the depth-capped zval
- * walker runs. A deeply nested patch therefore overflowed the stack
- * (SIGSEGV) before the $depth guard could fire. The fix bounds the structural
- * nesting of every operand that the merge/copy path still has to traverse. */
+/* Deep effective results must fail at the requested depth without overflowing
+ * the C stack. PHP 8.3+ provides a native stack guard and can honor a caller
+ * depth above the conservative fallback used on older runtimes. */
 
 $n = 200000;
 $patch = str_repeat('{"a":', $n) . '1' . str_repeat('}', $n);
@@ -39,10 +37,15 @@ try {
     echo "threw: ", $e->getMessage(), "\n";
 }
 
-// User $depth above the stack-safe cap must not bypass the pre-check.
+// PHP 8.3+ honors a caller depth above the legacy fallback cap.
 $r = fastjson_merge_patch('{}', $cap, true, 100000);
-var_dump($r);
-var_dump(fastjson_last_error() === FASTJSON_ERROR_DEPTH);
+if (PHP_VERSION_ID >= 80300) {
+    var_dump(is_array($r));
+    var_dump(fastjson_last_error() === FASTJSON_ERROR_NONE);
+} else {
+    var_dump($r === null);
+    var_dump(fastjson_last_error() === FASTJSON_ERROR_DEPTH);
+}
 
 // A stray quote/brace inside a RELAXED comment must not let a deep
 // operand slip past the guard. The depth is measured on the parsed
@@ -74,7 +77,7 @@ bool(true)
 int(0)
 bool(true)
 threw: Maximum stack depth exceeded
-NULL
+bool(true)
 bool(true)
 NULL
 bool(true)

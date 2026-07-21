@@ -77,10 +77,10 @@ Throughput vs `ext/json` on the full 14.8 MB / 15-file canonical corpus from sim
 
 | Operation | fastjson | ext/json | speedup |
 |---|--:|--:|--:|
-| Decode (stdClass)    | 602 MB/s   | 227 MB/s | **2.66x** |
-| Decode (assoc array) | 628 MB/s   | 237 MB/s | **2.65x** |
-| Encode               | 1,092 MB/s | 180 MB/s | **6.06x** |
-| Validate             | 1,352 MB/s | 265 MB/s | **5.10x** |
+| Decode (stdClass)    | 428 MB/s | 165 MB/s | **2.59x** |
+| Decode (assoc array) | 410 MB/s | 172 MB/s | **2.39x** |
+| Encode               | 748 MB/s | 135 MB/s | **5.56x** |
+| Validate             | 994 MB/s | 197 MB/s | **5.04x** |
 
 A visual side-by-side against `ext/json` on PHP 8.4 is published at [**iliaal.github.io/fastjson**](https://iliaal.github.io/fastjson/baseline.html). Methodology, per-file numbers, small-corpus + per-call latency breakdown, and how to reproduce: [`bench/README.md`](bench/README.md) and [`bench/baseline.md`](bench/baseline.md).
 
@@ -90,7 +90,7 @@ fastjson trades memory for speed on decode (yyjson's two-stage parser holds the 
 
 ## ✨ What's in the box
 
-- Bundled yyjson 0.12.0 (MIT) with four local patches (P-001 through P-004). Full notes in [`vendor/yyjson/PATCHES.md`](vendor/yyjson/PATCHES.md).
+- Bundled yyjson 0.12.0 (MIT) with five local patches (P-001 through P-005). Full notes and the mechanically replayable series are in [`vendor/yyjson/PATCHES.md`](vendor/yyjson/PATCHES.md) and [`vendor/yyjson/patches/`](vendor/yyjson/patches/).
 - yyjson allocator routes every malloc/realloc/free through Zend's `emalloc`/`erealloc`/`efree`. JSON allocations participate in `memory_limit` accounting and request-scoped cleanup.
 - `FASTJSON_ERROR_*` constants intentionally match all `JSON_ERROR_*` numeric values, so callers can use either set. yyjson groups raw control-character and invalid-surrogate parse failures under the UTF-8 code; the aliases exist even where fastjson does not currently emit the more specific ext/json category.
 - 67-test compat harness rewritten from `php-src/ext/json/tests/*.phpt` runs alongside the native phpt suite. `tests/upstream-json/.skiplist` and `tests/upstream-json/STATE.md` track which upstream tests fastjson does not aim to pass byte-for-byte.

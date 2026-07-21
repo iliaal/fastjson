@@ -92,7 +92,7 @@ PHP_FUNCTION(fastjson_encode)
         goto fail;
     }
 
-    RETURN_NEW_STR(zs);
+    RETURN_STR(zs);
 
 fail:
     /* If a user-level exception is already pending (e.g. from a

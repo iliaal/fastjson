@@ -228,9 +228,11 @@ function fastjson_file_decode(string $filename, ?bool $associative = null, int $
  * resolves to a JSON null also returns null; like the rest of the decode
  * family, callers cannot distinguish the two from PHP alone.
  *
- * On a JSON parse error, returns null with fastjson_last_error() set (or
- * throws under JSON_THROW_ON_ERROR). $associative, $depth, and $flags --
- * including FASTJSON_DECODE_RELAXED -- carry the same semantics as
+ * If an object traversed by the pointer contains the selected member more
+ * than once, RFC 6901 evaluation is ambiguous. The function returns null with
+ * FASTJSON_ERROR_SYNTAX, or throws under JSON_THROW_ON_ERROR. JSON parse
+ * errors use the same error path. $associative, $depth, and $flags -- including
+ * FASTJSON_DECODE_RELAXED -- otherwise carry the same semantics as
  * fastjson_decode() and apply to the decoded subtree.
  */
 function fastjson_pointer_get(string $json, string $pointer, ?bool $associative = null, int $depth = 512, int $flags = 0): mixed {}
@@ -245,10 +247,10 @@ function fastjson_pointer_get(string $json, string $pointer, ?bool $associative 
  * pointer is malformed. Nothing is materialized into PHP.
  *
  * A false return with fastjson_last_error() == FASTJSON_ERROR_NONE means
- * the path is absent; on a JSON parse error the function returns false with
- * fastjson_last_error() set (or throws under JSON_THROW_ON_ERROR). $flags
- * carries the parse-affecting bits of fastjson_decode() (e.g.
- * FASTJSON_DECODE_RELAXED, JSON_THROW_ON_ERROR).
+ * the path is absent. A duplicate selected member is ambiguous and sets
+ * FASTJSON_ERROR_SYNTAX; JSON parse errors also set an error. Either error
+ * throws under JSON_THROW_ON_ERROR. $flags carries the parse-affecting bits of
+ * fastjson_decode() (e.g. FASTJSON_DECODE_RELAXED, JSON_THROW_ON_ERROR).
  */
 function fastjson_pointer_exists(string $json, string $pointer, int $flags = 0): bool {}
 
@@ -277,10 +279,9 @@ function fastjson_pointer_exists(string $json, string $pointer, int $flags = 0):
  * numeric representation. FASTJSON_DECODE_RELAXED and JSON_THROW_ON_ERROR
  * apply to $json.
  *
- * Note: the untouched portion of the document is re-emitted by yyjson's
- * writer, so the documented fastjson_encode divergences
- * (large/scientific doubles, U+2028/U+2029) apply to the whole output, not
- * only the edited node.
+ * Untouched number lexemes are preserved exactly. Untouched strings are
+ * re-emitted by yyjson's writer, so documented escaping divergences such as
+ * U+2028/U+2029 still apply to the whole output, not only the edited node.
  */
 function fastjson_pointer_set(string $json, string $pointer, mixed $value, int $depth = 512, int $flags = 0): string|false {}
 

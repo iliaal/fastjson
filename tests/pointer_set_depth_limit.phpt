@@ -18,8 +18,14 @@ try {
 }
 
 $deepTarget = str_repeat('{"a":', 1100) . '1' . str_repeat('}', 1100);
-var_dump(fastjson_pointer_set($deepTarget, '/x', 1, 100000));
-var_dump(fastjson_last_error() === JSON_ERROR_DEPTH);
+$deepOut = fastjson_pointer_set($deepTarget, '/x', 1, 100000);
+if (PHP_VERSION_ID >= 80300) {
+    var_dump(is_string($deepOut));
+    var_dump(fastjson_last_error() === JSON_ERROR_NONE);
+} else {
+    var_dump($deepOut === false);
+    var_dump(fastjson_last_error() === JSON_ERROR_DEPTH);
+}
 
 echo fastjson_pointer_set('{}', '/a/b/c', 1, 10), "\n";
 ?>
@@ -28,6 +34,6 @@ bool(false)
 bool(true)
 string(28) "Maximum stack depth exceeded"
 threw: 1 Maximum stack depth exceeded
-bool(false)
+bool(true)
 bool(true)
 {"a":{"b":{"c":1}}}

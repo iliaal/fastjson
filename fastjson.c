@@ -30,6 +30,55 @@ ZEND_DECLARE_MODULE_GLOBALS(fastjson)
 zend_class_entry *fastjson_json_exception_ce = NULL;
 zend_class_entry *fastjson_json_serializable_ce = NULL;
 
+static bool fastjson_locate_ascii_pos(const char *json, size_t pos,
+                                      size_t *line, size_t *col)
+{
+    size_t start = 0;
+    if (pos >= 3
+            && (unsigned char)json[0] == 0xEF
+            && (unsigned char)json[1] == 0xBB
+            && (unsigned char)json[2] == 0xBF) {
+        start = 3;
+    }
+
+    size_t line_count = 0;
+    size_t line_start = start;
+    size_t i = start;
+    const uint64_t ones = UINT64_C(0x0101010101010101);
+    const uint64_t highs = UINT64_C(0x8080808080808080);
+    const uint64_t newlines = ones * (unsigned char)'\n';
+    for (; i + sizeof(uint64_t) <= pos; i += sizeof(uint64_t)) {
+        uint64_t word;
+        memcpy(&word, json + i, sizeof(word));
+        if (word & highs) {
+            return false;
+        }
+        uint64_t x = word ^ newlines;
+        if (((x - ones) & ~x & highs) != 0) {
+            for (size_t j = 0; j < sizeof(uint64_t); j++) {
+                if (json[i + j] == '\n') {
+                    line_count++;
+                    line_start = i + j + 1;
+                }
+            }
+        }
+    }
+    for (; i < pos; i++) {
+        unsigned char c = (unsigned char)json[i];
+        if (c >= 0x80) {
+            return false;
+        }
+        if (c == '\n') {
+            line_count++;
+            line_start = i + 1;
+        }
+    }
+
+    *line = line_count + 1;
+    *col = pos - line_start + 1;
+    return true;
+}
+
 zend_long fastjson_translate_read_code(yyjson_read_code yy)
 {
     if (yy == YYJSON_READ_SUCCESS) {
@@ -64,7 +113,9 @@ void fastjson_set_read_error(const char *json, size_t json_len,
     if (err->code != YYJSON_READ_SUCCESS && err->pos <= json_len) {
         size_t line = 0, col = 0;
         FASTJSON_G(last_err_pos) = (zend_long)err->pos;
-        if (yyjson_locate_pos(json, json_len, err->pos, &line, &col, NULL)) {
+        if (fastjson_locate_ascii_pos(json, err->pos, &line, &col)
+                || yyjson_locate_pos(json, json_len, err->pos,
+                                     &line, &col, NULL)) {
             FASTJSON_G(last_err_line) = (zend_long)line;
             FASTJSON_G(last_err_col) = (zend_long)col;
         }
@@ -379,6 +430,25 @@ static zend_always_inline bool fastjson_ascii_byte_needs_escape(
         || (c == '/' && (flags & YYJSON_WRITE_ESCAPE_SLASHES));
 }
 
+static bool fastjson_string_is_copyable_ascii(const char *s, size_t len,
+                                              yyjson_write_flag flags)
+{
+    size_t pos = 0;
+    for (; pos + sizeof(uint64_t) <= len; pos += sizeof(uint64_t)) {
+        uint64_t word;
+        memcpy(&word, s + pos, sizeof(word));
+        if (fastjson_ascii_word_needs_escape(word, flags)) {
+            return false;
+        }
+    }
+    for (; pos < len; pos++) {
+        if (fastjson_ascii_byte_needs_escape((unsigned char)s[pos], flags)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 fj_string_size_status fastjson_json_string_size(const char *s, size_t len,
                                                  yyjson_write_flag flags,
                                                  size_t *out_len,
@@ -387,22 +457,7 @@ fj_string_size_status fastjson_json_string_size(const char *s, size_t len,
     /* yyjson's common large-string case is printable ASCII without escape
      * candidates. Detect it eight bytes at a time so the exact-size path
      * remains memory-bandwidth-bound instead of adding a branch per byte. */
-    size_t ascii_pos = 0;
-    for (; ascii_pos + sizeof(uint64_t) <= len;
-         ascii_pos += sizeof(uint64_t)) {
-        uint64_t word;
-        memcpy(&word, s + ascii_pos, sizeof(word));
-        if (fastjson_ascii_word_needs_escape(word, flags)) {
-            break;
-        }
-    }
-    for (; ascii_pos < len; ascii_pos++) {
-        if (fastjson_ascii_byte_needs_escape(
-                (unsigned char)s[ascii_pos], flags)) {
-            break;
-        }
-    }
-    if (ascii_pos == len) {
+    if (fastjson_string_is_copyable_ascii(s, len, flags)) {
         if (UNEXPECTED(len > ZSTR_MAX_LEN - 2)) {
             return FJ_STRING_SIZE_TOO_LARGE;
         }
@@ -464,6 +519,29 @@ fj_string_size_status fastjson_write_large_json_string(
         return FJ_STRING_SIZE_TOO_LARGE;
     }
 
+    if (len < FASTJSON_EXACT_NONASCII_THRESHOLD) {
+        if (fastjson_string_is_copyable_ascii(s, len, flags)) {
+            smart_str_alloc(buf, len + 2, 0);
+            char *cur = ZSTR_VAL(buf->s) + current;
+            cur[0] = '"';
+            memcpy(cur + 1, s, len);
+            cur[len + 1] = '"';
+            ZSTR_LEN(buf->s) = current + len + 2;
+            return FJ_STRING_SIZE_OK;
+        }
+        if (UNEXPECTED(len > (ZSTR_MAX_LEN - current - 2) / 6)) {
+            return FJ_STRING_SIZE_TOO_LARGE;
+        }
+        smart_str_alloc(buf, len * 6 + 2, 0);
+        char *cur = ZSTR_VAL(buf->s) + current;
+        char *end = yyjson_write_string_to_buf(cur, s, len, flags);
+        if (UNEXPECTED(end == NULL)) {
+            return FJ_STRING_SIZE_INVALID_UTF8;
+        }
+        ZSTR_LEN(buf->s) = (size_t)(end - ZSTR_VAL(buf->s));
+        return FJ_STRING_SIZE_OK;
+    }
+
     /* Fuse validation and copying for the dominant printable-ASCII case.
      * The buffer length remains unchanged until the whole value is known to
      * be copyable, so the slow path can safely overwrite this scratch data. */
@@ -518,6 +596,89 @@ fj_string_size_status fastjson_write_large_json_string(
     }
     ZSTR_LEN(buf->s) = (size_t)(end - ZSTR_VAL(buf->s));
     return FJ_STRING_SIZE_OK;
+}
+
+bool fastjson_apply_hex_escapes(smart_str *buf, zend_long flags,
+                                size_t start_pos)
+{
+    bool tag = flags & FASTJSON_ENCODE_HEX_TAG;
+    bool amp = flags & FASTJSON_ENCODE_HEX_AMP;
+    bool apos = flags & FASTJSON_ENCODE_HEX_APOS;
+    bool quot = flags & FASTJSON_ENCODE_HEX_QUOT;
+    size_t orig_len = ZSTR_LEN(buf->s) - start_pos;
+
+    if (orig_len == 0) {
+        return true;
+    }
+
+    const char *src = ZSTR_VAL(buf->s) + start_pos;
+    size_t growth = 0;
+    for (size_t i = 0; i < orig_len; i++) {
+        unsigned char c = (unsigned char)src[i];
+        if (c == '\\' && i + 1 < orig_len) {
+            unsigned char next = (unsigned char)src[i + 1];
+            if (quot && next == '"') {
+                if (UNEXPECTED(growth > ZSTR_MAX_LEN - 4)) {
+                    return false;
+                }
+                growth += 4;
+                i++;
+                continue;
+            }
+            i += next == 'u' && i + 5 < orig_len ? 5 : 1;
+            continue;
+        }
+        if ((tag && (c == '<' || c == '>'))
+                || (amp && c == '&') || (apos && c == '\'')) {
+            if (UNEXPECTED(growth > ZSTR_MAX_LEN - 5)) {
+                return false;
+            }
+            growth += 5;
+        }
+    }
+    if (growth == 0) {
+        return true;
+    }
+    if (UNEXPECTED(growth > ZSTR_MAX_LEN - start_pos - orig_len)) {
+        return false;
+    }
+
+    smart_str_alloc(buf, growth, 0);
+    char *bytes = ZSTR_VAL(buf->s);
+    size_t read = start_pos + orig_len;
+    size_t write = read + growth;
+
+    /* Rewrite backwards so expanding a byte cannot overwrite unread input. */
+    while (read > start_pos) {
+        size_t pos = --read;
+        unsigned char c = (unsigned char)bytes[pos];
+        const char *replacement = NULL;
+
+        if (quot && c == '"' && pos > start_pos
+                && pos + 1 < start_pos + orig_len
+                && bytes[pos - 1] == '\\') {
+            replacement = "\\u0022";
+            read--;
+        } else if (tag && c == '<') {
+            replacement = "\\u003C";
+        } else if (tag && c == '>') {
+            replacement = "\\u003E";
+        } else if (amp && c == '&') {
+            replacement = "\\u0026";
+        } else if (apos && c == '\'') {
+            replacement = "\\u0027";
+        }
+
+        if (replacement != NULL) {
+            write -= 6;
+            memcpy(bytes + write, replacement, 6);
+        } else {
+            bytes[--write] = (char)c;
+        }
+    }
+    ZEND_ASSERT(write == start_pos);
+    ZSTR_LEN(buf->s) = start_pos + orig_len + growth;
+    return true;
 }
 
 bool fastjson_input_has_inf_nan_literal(const char *s, size_t len,

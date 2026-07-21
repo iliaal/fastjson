@@ -19,6 +19,7 @@ jobs:
           coverage: none
       - run: composer validate --strict
       - run: scripts/check-project-metadata.sh
+      - run: scripts/verify-yyjson-patches.sh
 
   pie-smoke:
     name: PIE install smoke

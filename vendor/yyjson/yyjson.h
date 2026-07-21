@@ -561,6 +561,11 @@ typedef uint8_t yyjson_subtype;
 #define YYJSON_SUBTYPE_BIT      ((uint8_t)2)
 /** The mask used to extract the reserved bits of a JSON value. */
 #define YYJSON_RESERVED_MASK    ((uint8_t)0xE0)     /* 111_____ */
+/** [Vendor patch P-005: fastjson] String contained invalid UTF-8 accepted by
+    `YYJSON_READ_ALLOW_INVALID_UNICODE`. Stored in a reserved tag bit so a
+    consumer can sanitize only affected strings without rescanning every
+    parsed string. */
+#define YYJSON_RESERVED_INVALID_UNICODE ((uint8_t)(1 << 5))
 /** The number of reserved bits. */
 #define YYJSON_RESERVED_BIT     ((uint8_t)3)
 /** The mask used to extract the tag of a JSON value. */

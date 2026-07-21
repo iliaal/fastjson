@@ -1,12 +1,15 @@
 # Patches applied to vendored yyjson sources
 
 The bundled yyjson sources at `vendor/yyjson/yyjson.{c,h}` are
-upstream's tag 0.12.0 with four local modifications documented below.
+upstream's tag 0.12.0 with five local modifications documented below.
 The upstream `vendor/yyjson/LICENSE` and `vendor/yyjson/CHANGELOG.md`
 are unchanged.
 
-Re-apply each patch when upgrading the vendored sources via
-`.upstream/yyjson.yml`.
+The patch files under `vendor/yyjson/patches/` are the canonical replayable
+series. `scripts/verify-yyjson-patches.sh` downloads the pinned pristine
+release, checks its archive digest, applies the series in order, and compares
+the result byte-for-byte with the vendored sources. Run it after any patch or
+vendor update. The prose below records rationale and upgrade caveats.
 
 ## P-001: lowercase hex digits in `\uXXXX` escape table
 
@@ -240,6 +243,43 @@ drop the `has_allow(INVALID_UNICODE)` gate as shown. Confirm the
 high-byte path still carries its own separate
 `"invalid UTF-8 encoding in string"` return (that one keeps the flag
 gate).
+
+## P-005: tag strings accepted with invalid UTF-8
+
+**Files:** `vendor/yyjson/yyjson.h`, `vendor/yyjson/yyjson.c`
+**Region:** `read_str_opt()` and the reserved value-tag definitions
+
+**Reason.** With `YYJSON_READ_ALLOW_INVALID_UNICODE`, yyjson still identifies
+each invalid byte while parsing but discards that information. fastjson then
+had to validate every decoded string again to discover which strings needed
+`JSON_INVALID_UTF8_IGNORE` or `JSON_INVALID_UTF8_SUBSTITUTE`. Clean tolerant
+decodes paid for a redundant scan; malformed strings were scanned once to
+detect the fault and again to sanitize it.
+
+**Patch.** Reserve tag bit `1 << 5` as
+`YYJSON_RESERVED_INVALID_UNICODE`. `read_str_opt()` tracks whether it takes
+either invalid-Unicode acceptance branch and includes the bit in the final
+string tag. The bit is metadata only: the existing type, subtype, length, and
+string bytes are unchanged. yyjson's immutable-to-mutable copy preserves the
+full tag, so merge-patch output retains the marker too.
+
+fastjson's sanitizing walkers check this bit. Clean strings go directly to the
+Zend value; tagged strings go directly through the sanitizer without a
+separate well-formedness scan.
+
+**Re-apply recipe on yyjson upgrade.**
+
+1. Add `YYJSON_RESERVED_INVALID_UNICODE` to an unused reserved tag bit.
+2. Add a local `invalid_unicode` boolean to the string reader.
+3. Set it in both branches that accept invalid UTF-8 under
+   `ALLOW_INVALID_UNICODE` (the no-escape and copy/escape paths).
+4. OR the reserved bit into both successful string-tag assignments.
+5. Confirm immutable/mutable value-copy functions still copy the entire tag.
+
+**Verification.** Run the UTF-8 decode, pointer, merge-patch, and upstream
+compatibility PHPTs. Benchmark tolerant decoding with both clean UTF-8 and an
+invalid byte near the end; neither path should retain a redundant full-string
+scan.
 
 ## Build-flag dependencies (not vendor patches)
 
