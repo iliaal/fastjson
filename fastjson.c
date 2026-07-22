@@ -92,16 +92,6 @@ zend_long fastjson_translate_read_code(yyjson_read_code yy)
     return FASTJSON_ERROR_SYNTAX;
 }
 
-void fastjson_set_error(yyjson_read_code code, const char *msg)
-{
-    FASTJSON_G(last_err_code) = fastjson_translate_read_code(code);
-    FASTJSON_G(last_err_msg) = msg;
-    /* No source buffer at this call site; report "location unknown". */
-    FASTJSON_G(last_err_pos) = -1;
-    FASTJSON_G(last_err_line) = 0;
-    FASTJSON_G(last_err_col) = 0;
-}
-
 void fastjson_set_read_error(const char *json, size_t json_len,
                              const yyjson_read_err *err)
 {

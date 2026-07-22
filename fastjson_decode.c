@@ -405,15 +405,8 @@ PHP_FUNCTION(fastjson_decode)
      * failure path persists the error normally. */
     bool throw_mode = (flags & FASTJSON_DECODE_THROW_ON_ERROR) != 0;
     fastjson_error_state saved_err;
-    fastjson_save_error_state(&saved_err);
+    fastjson_throw_mode_init(throw_mode, &saved_err);
 
-    /* In non-throw mode, ext/json clears the error state up front so
-     * any argument-validation ValueError leaves last_error as NONE
-     * rather than whatever a previous call recorded. THROW_ON_ERROR
-     * mode preserves the prior state per its own contract. */
-    if (!throw_mode) {
-        fastjson_clear_error();
-    }
     /* Match ext/json's argument validation contract verbatim:
      *   depth <= 0          -> ValueError "must be greater than 0"
      *   depth > INT_MAX     -> ValueError "must be less than %d"
@@ -451,11 +444,7 @@ PHP_FUNCTION(fastjson_file_decode)
 
     bool throw_mode = (flags & FASTJSON_DECODE_THROW_ON_ERROR) != 0;
     fastjson_error_state saved_err;
-    fastjson_save_error_state(&saved_err);
-
-    if (!throw_mode) {
-        fastjson_clear_error();
-    }
+    fastjson_throw_mode_init(throw_mode, &saved_err);
     fastjson_error_state operation_err;
     fastjson_save_error_state(&operation_err);
 
@@ -608,10 +597,7 @@ PHP_FUNCTION(fastjson_pointer_get)
 
     bool throw_mode = (flags & FASTJSON_DECODE_THROW_ON_ERROR) != 0;
     fastjson_error_state saved_err;
-    fastjson_save_error_state(&saved_err);
-    if (!throw_mode) {
-        fastjson_clear_error();
-    }
+    fastjson_throw_mode_init(throw_mode, &saved_err);
 
     FASTJSON_VALIDATE_DEPTH(depth, 4);
 
@@ -1046,10 +1032,7 @@ PHP_FUNCTION(fastjson_merge_patch)
 
     bool throw_mode = (flags & FASTJSON_DECODE_THROW_ON_ERROR) != 0;
     fastjson_error_state saved_err;
-    fastjson_save_error_state(&saved_err);
-    if (!throw_mode) {
-        fastjson_clear_error();
-    }
+    fastjson_throw_mode_init(throw_mode, &saved_err);
 
     FASTJSON_VALIDATE_DEPTH(depth, 4);
 
@@ -1157,10 +1140,7 @@ PHP_FUNCTION(fastjson_pointer_exists)
 
     bool throw_mode = (flags & FASTJSON_DECODE_THROW_ON_ERROR) != 0;
     fastjson_error_state saved_err;
-    fastjson_save_error_state(&saved_err);
-    if (!throw_mode) {
-        fastjson_clear_error();
-    }
+    fastjson_throw_mode_init(throw_mode, &saved_err);
 
     yyjson_read_err err;
     yyjson_doc *doc = fastjson_read_doc(json, json_len, flags, &err);
@@ -1205,6 +1185,54 @@ PHP_FUNCTION(fastjson_pointer_exists)
     RETURN_BOOL(exists);
 }
 
+/* Splice-status to error-code/message mapping for fastjson_pointer_set. */
+typedef struct {
+    fj_splice_status status;
+    zend_long err_code;
+    const char *err_msg;
+} fj_splice_error_entry;
+
+static const fj_splice_error_entry fj_splice_errors[] = {
+    { FJ_SPLICE_DEPTH_FAIL,    FASTJSON_ERROR_DEPTH,            "Maximum stack depth exceeded" },
+    { FJ_SPLICE_TOO_LARGE,     FASTJSON_ERROR_UNSUPPORTED_TYPE, "Encoded JSON string is too large" },
+    { FJ_SPLICE_INF_OR_NAN,    FASTJSON_ERROR_INF_OR_NAN,       "Inf and NaN cannot be JSON encoded" },
+    { FJ_SPLICE_INVALID_UTF8,  FASTJSON_ERROR_UTF8,             "Malformed UTF-8 characters, possibly incorrectly encoded" },
+    { FJ_SPLICE_AMBIGUOUS,     FASTJSON_ERROR_SYNTAX,           "JSON pointer target is ambiguous because the object contains duplicate members" },
+    { FJ_SPLICE_SETTABLE_FAIL, FASTJSON_ERROR_SYNTAX,           "JSON pointer does not resolve to a settable location" },
+};
+
+/* Dispatch a splice failure: set error state and return (false or
+ * THROW_THROWS) according to throw_mode. Returns true if the caller
+ * should RETURN_THROWS. */
+static bool fj_splice_dispatch_error(fj_splice_status status,
+                                     bool throw_mode,
+                                     const fastjson_error_state *saved_err)
+{
+    for (size_t i = 0; i < sizeof(fj_splice_errors) / sizeof(fj_splice_errors[0]); i++) {
+        if (fj_splice_errors[i].status == status) {
+            if (throw_mode) {
+                fastjson_throw_error(fj_splice_errors[i].err_code,
+                                     fj_splice_errors[i].err_msg, NULL,
+                                     saved_err);
+                return true;
+            }
+            fastjson_set_error_code(fj_splice_errors[i].err_code,
+                                    fj_splice_errors[i].err_msg);
+            return false;
+        }
+    }
+    /* Unknown status: fall through to generic write failure. */
+    if (throw_mode) {
+        fastjson_throw_error(FASTJSON_ERROR_SYNTAX,
+                             "fastjson_pointer_set write failed", NULL,
+                             saved_err);
+        return true;
+    }
+    fastjson_set_error_code(FASTJSON_ERROR_SYNTAX,
+                            "fastjson_pointer_set write failed");
+    return false;
+}
+
 PHP_FUNCTION(fastjson_pointer_set)
 {
     char *json, *pointer;
@@ -1224,10 +1252,7 @@ PHP_FUNCTION(fastjson_pointer_set)
 
     bool throw_mode = (flags & FASTJSON_DECODE_THROW_ON_ERROR) != 0;
     fastjson_error_state saved_err;
-    fastjson_save_error_state(&saved_err);
-    if (!throw_mode) {
-        fastjson_clear_error();
-    }
+    fastjson_throw_mode_init(throw_mode, &saved_err);
 
     FASTJSON_VALIDATE_DEPTH(depth, 4);
     size_t output_depth = (size_t)fastjson_effective_walk_depth(depth);
@@ -1309,80 +1334,9 @@ PHP_FUNCTION(fastjson_pointer_set)
 
     if (out == NULL) {
 pointer_set_failed:
-        if (splice_status == FJ_SPLICE_DEPTH_FAIL) {
-            if (throw_mode) {
-                fastjson_throw_error(FASTJSON_ERROR_DEPTH,
-                                     "Maximum stack depth exceeded", NULL,
-                                     &saved_err);
-                RETURN_THROWS();
-            }
-            fastjson_set_error_code(FASTJSON_ERROR_DEPTH,
-                                    "Maximum stack depth exceeded");
-            RETURN_FALSE;
-        }
-        if (splice_status == FJ_SPLICE_TOO_LARGE) {
-            if (throw_mode) {
-                fastjson_throw_error(FASTJSON_ERROR_UNSUPPORTED_TYPE,
-                                     "Encoded JSON string is too large", NULL,
-                                     &saved_err);
-                RETURN_THROWS();
-            }
-            fastjson_set_error_code(FASTJSON_ERROR_UNSUPPORTED_TYPE,
-                                    "Encoded JSON string is too large");
-            RETURN_FALSE;
-        }
-        if (splice_status == FJ_SPLICE_INF_OR_NAN) {
-            if (throw_mode) {
-                fastjson_throw_error(FASTJSON_ERROR_INF_OR_NAN,
-                                     "Inf and NaN cannot be JSON encoded", NULL,
-                                     &saved_err);
-                RETURN_THROWS();
-            }
-            fastjson_set_error_code(FASTJSON_ERROR_INF_OR_NAN,
-                                    "Inf and NaN cannot be JSON encoded");
-            RETURN_FALSE;
-        }
-        if (splice_status == FJ_SPLICE_INVALID_UTF8) {
-            if (throw_mode) {
-                fastjson_throw_error(FASTJSON_ERROR_UTF8,
-                    "Malformed UTF-8 characters, possibly incorrectly encoded",
-                    NULL, &saved_err);
-                RETURN_THROWS();
-            }
-            fastjson_set_error_code(FASTJSON_ERROR_UTF8,
-                "Malformed UTF-8 characters, possibly incorrectly encoded");
-            RETURN_FALSE;
-        }
-        if (splice_status == FJ_SPLICE_AMBIGUOUS) {
-            if (throw_mode) {
-                fastjson_throw_error(FASTJSON_ERROR_SYNTAX,
-                    "JSON pointer target is ambiguous because the object contains duplicate members",
-                    NULL, &saved_err);
-                RETURN_THROWS();
-            }
-            fastjson_set_error_code(FASTJSON_ERROR_SYNTAX,
-                "JSON pointer target is ambiguous because the object contains duplicate members");
-            RETURN_FALSE;
-        }
-        if (splice_status == FJ_SPLICE_SETTABLE_FAIL) {
-            if (throw_mode) {
-                fastjson_throw_error(FASTJSON_ERROR_SYNTAX,
-                    "JSON pointer does not resolve to a settable location",
-                    NULL, &saved_err);
-                RETURN_THROWS();
-            }
-            fastjson_set_error_code(FASTJSON_ERROR_SYNTAX,
-                "JSON pointer does not resolve to a settable location");
-            RETURN_FALSE;
-        }
-        if (throw_mode) {
-            fastjson_throw_error(FASTJSON_ERROR_SYNTAX,
-                                 "fastjson_pointer_set write failed", NULL,
-                                 &saved_err);
+        if (fj_splice_dispatch_error(splice_status, throw_mode, &saved_err)) {
             RETURN_THROWS();
         }
-        fastjson_set_error_code(FASTJSON_ERROR_SYNTAX,
-                                "fastjson_pointer_set write failed");
         RETURN_FALSE;
     }
 

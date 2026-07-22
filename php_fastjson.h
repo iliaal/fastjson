@@ -161,11 +161,6 @@ zend_long fastjson_translate_read_code(yyjson_read_code yy);
 yyjson_write_flag fastjson_translate_write_flags(zend_long php_flags,
                                                  bool with_pretty);
 
-/* Record the most recent fastjson_* call's failure in module globals.
- * msg may be NULL; pointers are stored verbatim because yyjson's
- * err.msg points into static literals. */
-void fastjson_set_error(yyjson_read_code code, const char *msg);
-
 /* Reset module globals to JSON_ERROR_NONE / NULL. Called on every
  * successful fastjson_* call and on each RINIT. */
 void fastjson_clear_error(void);
@@ -177,6 +172,20 @@ void fastjson_set_error_code(zend_long code, const char *msg);
 
 void fastjson_save_error_state(fastjson_error_state *state);
 void fastjson_restore_error_state(const fastjson_error_state *state);
+
+/* Snapshot global error state and (in non-throw mode) clear it so
+ * argument-validation ValueErrors leave last_error as NONE rather than
+ * whatever a previous call recorded. Used at the top of every PHP_FUNCTION
+ * that participates in the JSON_THROW_ON_ERROR contract. */
+static zend_always_inline void fastjson_throw_mode_init(
+    bool throw_mode, fastjson_error_state *saved)
+{
+    fastjson_save_error_state(saved);
+    if (!throw_mode) {
+        fastjson_clear_error();
+    }
+}
+
 void fastjson_throw_error(zend_long code, const char *msg,
                           const char *fallback_msg,
                           const fastjson_error_state *saved_err);
@@ -186,11 +195,11 @@ void fastjson_throw_read_error(const yyjson_read_err *err,
                                const fastjson_error_state *saved_err);
 
 /* Record a yyjson read error together with its source location. Stores
- * the translated code and (verbatim) message like fastjson_set_error,
- * and additionally captures err->pos plus the 1-based line/column it
- * maps to via yyjson_locate_pos over [json, json_len). Use at any read-
- * error site that still has the source buffer in scope so callers can
- * recover where a parse failed through fastjson_last_error_pos/info. */
+ * the translated code and (verbatim) message, and additionally captures
+ * err->pos plus the 1-based line/column it maps to via yyjson_locate_pos
+ * over [json, json_len). Use at any read-error site that still has the
+ * source buffer in scope so callers can recover where a parse failed
+ * through fastjson_last_error_pos/info. */
 void fastjson_set_read_error(const char *json, size_t json_len,
                              const yyjson_read_err *err);
 

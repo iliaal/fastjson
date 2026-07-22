@@ -66,10 +66,7 @@ PHP_FUNCTION(fastjson_encode)
      * substitutions) persist for fastjson_last_error() to surface. */
     bool throw_mode = (flags & FASTJSON_ENCODE_THROW_ON_ERROR) != 0;
     fastjson_error_state saved_err;
-    fastjson_save_error_state(&saved_err);
-    if (!throw_mode) {
-        fastjson_clear_error();
-    }
+    fastjson_throw_mode_init(throw_mode, &saved_err);
 
     fastjson_error_state encode_err;
     zend_string *zs = fastjson_directwrite_encode(value, flags, depth,
@@ -128,10 +125,7 @@ PHP_FUNCTION(fastjson_file_encode)
      * fastjson_encode: snapshot at entry, restore on the throw path. */
     bool throw_mode = (flags & FASTJSON_ENCODE_THROW_ON_ERROR) != 0;
     fastjson_error_state saved_err;
-    fastjson_save_error_state(&saved_err);
-    if (!throw_mode) {
-        fastjson_clear_error();
-    }
+    fastjson_throw_mode_init(throw_mode, &saved_err);
 
     /* Encode first; only touch the filesystem once we have bytes to
      * write. Reuses the exact encoder + error semantics of
