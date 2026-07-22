@@ -11,21 +11,10 @@
 */
 
 /*
- * fastjson_encode entry point. The actual encoder lives in
- * fastjson_directwrite.c (one-stage walker emitting straight into a
- * smart_str buffer; see that file's header for the architecture
- * rationale). This file owns just the ZPP, the JSON_THROW_ON_ERROR
- * state-preservation contract, and the fail-path dispatch (false vs
- * \JsonException).
- *
- * History note: this used to host a two-stage encoder that walked
- * zvals into a yyjson_mut_doc, then called yyjson_mut_write_opts on
- * the doc. That approach hit a structural ceiling on workloads with
- * many small values (citm_catalog, random, truenull) where the
- * per-value mut_val allocation cost wasn't recovered by yyjson's
- * faster writer. The direct-write rewrite closed that gap (encode
- * aggregate +77%, peak memory -5.3x, citm_catalog flipped from 0.65x
- * to 1.29x vs ext/json).
+ * fastjson_encode / fastjson_file_encode entry points. The encoder itself
+ * lives in fastjson_directwrite.c; this file owns ZPP, the
+ * JSON_THROW_ON_ERROR state-preservation contract, fail-path dispatch
+ * (false vs \JsonException), and the file-write tail for file_encode.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -38,6 +27,44 @@
 #include "Zend/zend_exceptions.h"
 #include "php_fastjson.h"
 #include "fastjson_arginfo.h"
+
+/* Run direct-write encode and publish encode_err under the throw contract.
+ * Returns the encoded string, or NULL on failure. When EG(exception) is
+ * set (userland throw or JsonException in throw_mode), the caller must
+ * RETURN_THROWS(); otherwise RETURN_FALSE. */
+static zend_string *fastjson_do_encode(
+    zval *value, zend_long flags, zend_long depth,
+    bool throw_mode, const fastjson_error_state *saved_err,
+    fastjson_error_state *encode_err, const char *throw_fallback)
+{
+    zend_string *zs = fastjson_directwrite_encode(value, flags, depth,
+                                                   encode_err);
+    if (UNEXPECTED(EG(exception))) {
+        if (zs != NULL) {
+            zend_string_release(zs);
+        }
+        if (!throw_mode) {
+            fastjson_restore_error_state(encode_err);
+        }
+        return NULL;
+    }
+    if (!throw_mode) {
+        /* Nested fastjson calls during callbacks must not replace this
+         * invocation's final error state. */
+        fastjson_restore_error_state(encode_err);
+    }
+    if (zs != NULL) {
+        return zs;
+    }
+    if (EG(exception)) {
+        return NULL;
+    }
+    if (throw_mode) {
+        fastjson_throw_error(encode_err->code, encode_err->msg,
+                             throw_fallback, saved_err);
+    }
+    return NULL;
+}
 
 PHP_FUNCTION(fastjson_encode)
 {
@@ -58,51 +85,21 @@ PHP_FUNCTION(fastjson_encode)
      * That's how `json_encode($x, 0, 0)` returns false instead of
      * raising ValueError (bug81532.phpt). Match the contract. */
 
-    /* JSON_THROW_ON_ERROR contract: on error, throw \JsonException
-     * and leave the global fastjson_last_error state unchanged
-     * (json_exceptions_error_clearing.phpt). Snapshot at entry,
-     * restore on the throw path. Non-throw path follows ext/json:
-     * clear at entry, errors during encode (including PARTIAL_OUTPUT
-     * substitutions) persist for fastjson_last_error() to surface. */
     bool throw_mode = (flags & FASTJSON_ENCODE_THROW_ON_ERROR) != 0;
     fastjson_error_state saved_err;
     fastjson_throw_mode_init(throw_mode, &saved_err);
 
     fastjson_error_state encode_err;
-    zend_string *zs = fastjson_directwrite_encode(value, flags, depth,
-                                                   &encode_err);
-    if (UNEXPECTED(EG(exception))) {
-        if (zs != NULL) {
-            zend_string_release(zs);
-        }
-        if (!throw_mode) {
-            fastjson_restore_error_state(&encode_err);
-        }
-        RETURN_THROWS();
-    }
-    if (!throw_mode) {
-        /* User callbacks and temporary destructors may call fastjson again.
-         * Publish this invocation's outcome after they have all returned. */
-        fastjson_restore_error_state(&encode_err);
-    }
+    zend_string *zs = fastjson_do_encode(value, flags, depth, throw_mode,
+                                         &saved_err, &encode_err,
+                                         "fastjson_encode failed");
     if (zs == NULL) {
-        goto fail;
+        if (EG(exception)) {
+            RETURN_THROWS();
+        }
+        RETURN_FALSE;
     }
-
     RETURN_STR(zs);
-
-fail:
-    /* If a user-level exception is already pending (e.g. from a
-     * jsonSerialize() callback), don't paper over it with our own. */
-    if (EG(exception)) {
-        RETURN_THROWS();
-    }
-    if (throw_mode) {
-        fastjson_throw_error(encode_err.code, encode_err.msg,
-                             "fastjson_encode failed", &saved_err);
-        RETURN_THROWS();
-    }
-    RETURN_FALSE;
 }
 
 PHP_FUNCTION(fastjson_file_encode)
@@ -121,34 +118,20 @@ PHP_FUNCTION(fastjson_file_encode)
         Z_PARAM_LONG(depth)
     ZEND_PARSE_PARAMETERS_END();
 
-    /* Same THROW_ON_ERROR state-preservation contract as
-     * fastjson_encode: snapshot at entry, restore on the throw path. */
     bool throw_mode = (flags & FASTJSON_ENCODE_THROW_ON_ERROR) != 0;
     fastjson_error_state saved_err;
     fastjson_throw_mode_init(throw_mode, &saved_err);
 
-    /* Encode first; only touch the filesystem once we have bytes to
-     * write. Reuses the exact encoder + error semantics of
-     * fastjson_encode. */
+    /* Encode first; only touch the filesystem once we have bytes to write. */
     fastjson_error_state encode_err;
-    zend_string *zs = fastjson_directwrite_encode(value, flags, depth,
-                                                   &encode_err);
-    if (UNEXPECTED(EG(exception))) {
-        if (zs != NULL) {
-            zend_string_release(zs);
-        }
-        if (!throw_mode) {
-            fastjson_restore_error_state(&encode_err);
-        }
-        RETURN_THROWS();
-    }
-    if (!throw_mode) {
-        /* See fastjson_encode: nested calls must not become the file
-         * operation's final encode result. */
-        fastjson_restore_error_state(&encode_err);
-    }
+    zend_string *zs = fastjson_do_encode(value, flags, depth, throw_mode,
+                                         &saved_err, &encode_err,
+                                         "fastjson_file_encode failed");
     if (zs == NULL) {
-        goto encode_fail;
+        if (EG(exception)) {
+            RETURN_THROWS();
+        }
+        RETURN_FALSE;
     }
 
     /* Write through the streams layer (wrappers + open_basedir honored).
@@ -191,17 +174,4 @@ PHP_FUNCTION(fastjson_file_encode)
         fastjson_restore_error_state(&encode_err);
     }
     RETURN_TRUE;
-
-encode_fail:
-    /* If a user-level exception is already pending (e.g. from a
-     * jsonSerialize() callback), don't paper over it with our own. */
-    if (EG(exception)) {
-        RETURN_THROWS();
-    }
-    if (throw_mode) {
-        fastjson_throw_error(encode_err.code, encode_err.msg,
-                             "fastjson_file_encode failed", &saved_err);
-        RETURN_THROWS();
-    }
-    RETURN_FALSE;
 }

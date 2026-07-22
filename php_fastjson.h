@@ -21,6 +21,20 @@ extern zend_module_entry fastjson_module_entry;
 #include "php.h"
 #include "Zend/zend_smart_str.h"
 
+/* zend_call_stack_overflowed() / EG(stack_limit) are 8.3+, and even on
+ * 8.3+ the function is only declared when ZEND_CHECK_STACK_LIMIT is
+ * configured (php-src cannot detect stack bounds on every platform).
+ * Where either is absent, the remaining_depth counter (default 512)
+ * still bounds recursion, so the secondary C-stack check degrades to a
+ * no-op. */
+#if PHP_VERSION_ID >= 80300 && defined(ZEND_CHECK_STACK_LIMIT)
+#include "Zend/zend_call_stack.h"
+#define FASTJSON_HAVE_NATIVE_STACK_LIMIT 1
+#else
+#define zend_call_stack_overflowed(limit) (0)
+#define FASTJSON_HAVE_NATIVE_STACK_LIMIT 0
+#endif
+
 /* ext/json compatibility: JSON_ERROR_* values are stable ints. fastjson
  * sets the same numeric codes so callers can use either ext/json's
  * constants or bare ints to compare against fastjson_last_error().
@@ -202,6 +216,17 @@ void fastjson_throw_read_error(const yyjson_read_err *err,
  * through fastjson_last_error_pos/info. */
 void fastjson_set_read_error(const char *json, size_t json_len,
                              const yyjson_read_err *err);
+
+/* Read a JSON buffer into an immutable yyjson doc: decode-flag
+ * translation, ext/json inf/nan exponent-overflow retry, and parse-error
+ * UTF-8 reclassification. Returns the doc (caller frees with
+ * yyjson_doc_free) or NULL with *err populated. extra_yflags is OR'd
+ * into the translated flags (e.g. YYJSON_READ_VALIDATE_ONLY,
+ * YYJSON_READ_NUMBER_AS_RAW). */
+yyjson_doc *fastjson_read_doc_ex(const char *json, size_t json_len,
+                                 zend_long flags,
+                                 yyjson_read_flag extra_yflags,
+                                 yyjson_read_err *err);
 
 /* Returns true if `s` contains an unquoted Inf, Infinity, or NaN
  * literal token (case-insensitive). Used after the overflow-retry

@@ -49,19 +49,6 @@
 #include <math.h>
 
 #include "php.h"
-#if PHP_VERSION_ID >= 80300 && defined(ZEND_CHECK_STACK_LIMIT)
-#include "Zend/zend_call_stack.h"
-#define FASTJSON_HAVE_NATIVE_STACK_LIMIT 1
-#else
-/* zend_call_stack_overflowed() / EG(stack_limit) are 8.3+, and even on
- * 8.3+ the function is only declared when ZEND_CHECK_STACK_LIMIT is
- * configured (php-src cannot detect stack bounds on every platform).
- * Where either is absent, the remaining_depth counter (default 512)
- * still bounds recursion, so the secondary C-stack check degrades to a
- * no-op. */
-#define zend_call_stack_overflowed(limit) (0)
-#define FASTJSON_HAVE_NATIVE_STACK_LIMIT 0
-#endif
 #include "Zend/zend_enum.h"
 #include "Zend/zend_exceptions.h"
 #include "Zend/zend_interfaces.h"

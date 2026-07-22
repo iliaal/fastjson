@@ -166,10 +166,7 @@ static bool FJ_WALK_NAME(FJ_WALK_VAL *val, bool assoc,
                 ZEND_HASH_FILL_ADD(&child);
             }
         } ZEND_HASH_FILL_END();
-        if (!fill_ok) {
-            return false;
-        }
-        return true;
+        return fill_ok;
     }
 
     case YYJSON_TYPE_OBJ: {

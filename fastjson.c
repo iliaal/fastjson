@@ -23,7 +23,6 @@
 #include "php_fastjson.h"
 #include "fastjson_arginfo.h"
 #include "yyjson.h"
-#include "fastjson_alloc.h"
 
 ZEND_DECLARE_MODULE_GLOBALS(fastjson)
 
@@ -112,23 +111,24 @@ void fastjson_set_read_error(const char *json, size_t json_len,
     }
 }
 
-void fastjson_clear_error(void)
+static void fastjson_error_globals_set(zend_long code, const char *msg)
 {
-    FASTJSON_G(last_err_code) = FASTJSON_ERROR_NONE;
-    FASTJSON_G(last_err_msg) = NULL;
+    FASTJSON_G(last_err_code) = code;
+    FASTJSON_G(last_err_msg) = msg;
     FASTJSON_G(last_err_pos) = -1;
     FASTJSON_G(last_err_line) = 0;
     FASTJSON_G(last_err_col) = 0;
 }
 
+void fastjson_clear_error(void)
+{
+    fastjson_error_globals_set(FASTJSON_ERROR_NONE, NULL);
+}
+
 void fastjson_set_error_code(zend_long code, const char *msg)
 {
-    FASTJSON_G(last_err_code) = code;
-    FASTJSON_G(last_err_msg) = msg;
     /* Encode/IO/depth errors carry no source-byte offset. */
-    FASTJSON_G(last_err_pos) = -1;
-    FASTJSON_G(last_err_line) = 0;
-    FASTJSON_G(last_err_col) = 0;
+    fastjson_error_globals_set(code, msg);
 }
 
 void fastjson_save_error_state(fastjson_error_state *state)
@@ -834,41 +834,14 @@ PHP_FUNCTION(fastjson_validate)
     /* Depth enforcement on the success path is intentionally NOT done
      * here -- it would require walking the parsed yyjson_doc, which
      * doubles the success-path cost. yyjson's internal recursion guard
-     * still rejects pathological nesting before stack exhaustion. */
-    yyjson_read_flag yflags = YYJSON_READ_VALIDATE_ONLY;
-    if (flags & FASTJSON_DECODE_INVALID_UTF8_IGNORE) {
-        yflags |= YYJSON_READ_ALLOW_INVALID_UNICODE;
-    }
-
+     * still rejects pathological nesting before stack exhaustion.
+     *
+     * YYJSON_READ_VALIDATE_ONLY (patch P-002) skips val_hdr allocation
+     * (~2/3 of peak memory). The returned doc is a stub sentinel. */
     yyjson_read_err err;
-    /* yyjson patch P-002: validate-only mode skips val_hdr allocation
-     * (~2/3 of peak memory). The returned doc is a stub sentinel; we
-     * just check non-NULL and free it. See vendor/yyjson/PATCHES.md. */
-    yyjson_doc *doc = yyjson_read_opts(json, json_len, yflags,
-                                       &fastjson_php_alc, &err);
-    if (doc == NULL && err.msg
-            && strcmp(err.msg, "number is infinity when parsed as double") == 0
-            && !fastjson_input_has_inf_nan_literal(json, json_len, false)) {
-        /* Match ext/json: exponent-overflow numbers like "1e309" are
-         * valid JSON values (decoded to INF). The pre-scan rejects
-         * inputs that also contain an unquoted Inf/NaN literal, which
-         * yyjson's flag would accept but ext/json doesn't. */
-        doc = yyjson_read_opts(json, json_len,
-                               yflags | YYJSON_READ_ALLOW_INF_AND_NAN,
-                               &fastjson_php_alc, &err);
-    }
-
+    yyjson_doc *doc = fastjson_read_doc_ex(json, json_len, flags,
+                                           YYJSON_READ_VALIDATE_ONLY, &err);
     if (doc == NULL) {
-        /* Match fastjson_decode: a malformed UTF-8 byte at the parse-
-         * error position is JSON_ERROR_UTF8, not JSON_ERROR_SYNTAX.
-         * A non-ASCII byte that starts a valid UTF-8 sequence (e.g.
-         * a bare `é` at top level) is a syntactic JSON error, not a
-         * UTF-8 error -- ext/json keeps SYNTAX for those. */
-        if (err.pos < json_len
-                && (unsigned char)json[err.pos] >= 0x80
-                && !fastjson_byte_is_valid_utf8_start(json, json_len, err.pos)) {
-            err.code = YYJSON_READ_ERROR_INVALID_STRING;
-        }
         fastjson_set_read_error(json, json_len, &err);
         RETURN_FALSE;
     }
@@ -936,11 +909,7 @@ PHP_RINIT_FUNCTION(fastjson)
     /* Reset on every request -- module globals persist across requests
      * in non-ZTS builds, so a previous request's error state would
      * otherwise bleed into the next. */
-    FASTJSON_G(last_err_code) = FASTJSON_ERROR_NONE;
-    FASTJSON_G(last_err_msg) = NULL;
-    FASTJSON_G(last_err_pos) = -1;
-    FASTJSON_G(last_err_line) = 0;
-    FASTJSON_G(last_err_col) = 0;
+    fastjson_clear_error();
     return SUCCESS;
 }
 
@@ -958,11 +927,6 @@ PHP_MINIT_FUNCTION(fastjson)
     fastjson_json_serializable_ce = zend_hash_str_find_ptr(CG(class_table),
         "jsonserializable", sizeof("jsonserializable") - 1);
 
-    return SUCCESS;
-}
-
-PHP_MSHUTDOWN_FUNCTION(fastjson)
-{
     return SUCCESS;
 }
 
@@ -994,7 +958,7 @@ zend_module_entry fastjson_module_entry = {
     "fastjson",
     ext_functions,
     PHP_MINIT(fastjson),
-    PHP_MSHUTDOWN(fastjson),
+    NULL,
     PHP_RINIT(fastjson),
     NULL,
     PHP_MINFO(fastjson),

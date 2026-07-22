@@ -21,17 +21,6 @@
 #include "php.h"
 #include "php_streams.h"
 #include "ext/standard/file.h"
-#if PHP_VERSION_ID >= 80300 && defined(ZEND_CHECK_STACK_LIMIT)
-#include "Zend/zend_call_stack.h"
-#else
-/* zend_call_stack_overflowed() / EG(stack_limit) are 8.3+, and even on
- * 8.3+ the function is only declared when ZEND_CHECK_STACK_LIMIT is
- * configured (php-src cannot detect stack bounds on every platform).
- * Where either is absent, the remaining_depth counter (default 512)
- * still bounds recursion, so the secondary C-stack check degrades to a
- * no-op. */
-#define zend_call_stack_overflowed(limit) (0)
-#endif
 #include "Zend/zend_exceptions.h"
 #include "Zend/zend_smart_str.h"
 #include "php_fastjson.h"
@@ -70,7 +59,7 @@ static size_t fastjson_effective_stack_depth(zend_long depth)
 
 static zend_long fastjson_effective_walk_depth(zend_long depth)
 {
-#if PHP_VERSION_ID >= 80300 && defined(ZEND_CHECK_STACK_LIMIT)
+#if FASTJSON_HAVE_NATIVE_STACK_LIMIT
     return depth;
 #else
     return (zend_long)fastjson_effective_stack_depth(depth);
@@ -258,16 +247,11 @@ static zend_always_inline void fj_mut_raw_to_zval(yyjson_mut_val *val,
 #undef FJ_WALK_SANITIZE
 #undef FJ_WALK_MUTABLE
 
-/* Read a JSON buffer into an immutable yyjson doc, applying fastjson's
- * decode-flag translation, the ext/json inf/nan exponent-overflow retry,
- * and the parse-error UTF-8 reclassification. Returns the doc (caller
- * frees with yyjson_doc_free) or NULL with *err populated; err->code is
- * already mapped to the right yyjson_read_code bucket. Shared by
- * fastjson_decode, fastjson_pointer_get, and fastjson_merge_patch. */
-static yyjson_doc *fastjson_read_doc_ex(const char *json, size_t json_len,
-                                        zend_long flags,
-                                        yyjson_read_flag extra_yflags,
-                                        yyjson_read_err *err)
+/* Shared by decode, validate, pointer_*, and merge_patch. */
+yyjson_doc *fastjson_read_doc_ex(const char *json, size_t json_len,
+                                 zend_long flags,
+                                 yyjson_read_flag extra_yflags,
+                                 yyjson_read_err *err)
 {
     /* BIGINT_AS_STRING -> BIGNUM_AS_RAW so numbers that overflow
      * uint64/double surface as YYJSON_TYPE_RAW (raw digit string); the
@@ -322,13 +306,39 @@ static yyjson_doc *fastjson_read_doc(const char *json, size_t json_len,
     return fastjson_read_doc_ex(json, json_len, flags, 0, err);
 }
 
+/* Convert a resolved/merged immutable subtree into return_value.
+ * Frees `doc`. Returns true on success (caller clears error on the
+ * non-throw path), false if the walk hit the depth cap (return_value
+ * left NULL; exception thrown under throw_mode). */
+static bool fastjson_walk_doc_into(yyjson_doc *doc, yyjson_val *root,
+                                   bool use_assoc, zend_long depth,
+                                   zend_long flags, bool throw_mode,
+                                   const fastjson_error_state *saved_err,
+                                   zval *return_value)
+{
+    zend_long walk_depth = fastjson_effective_walk_depth(depth);
+    bool walk_ok = FASTJSON_HAS_UTF8_HANDLING_FLAG(flags)
+        ? fastjson_yyval_to_zval_sanitize(root, use_assoc, walk_depth, flags, return_value)
+        : fastjson_yyval_to_zval(root, use_assoc, walk_depth, flags, return_value);
+    if (!walk_ok) {
+        /* The walker set FASTJSON_ERROR_DEPTH and return_value may hold a
+         * partial container; reset to a clean null. */
+        zval_ptr_dtor(return_value);
+        ZVAL_NULL(return_value);
+        yyjson_doc_free(doc);
+        if (throw_mode) {
+            fastjson_throw_current_error("Maximum stack depth exceeded",
+                                         saved_err);
+        }
+        return false;
+    }
+    yyjson_doc_free(doc);
+    return true;
+}
+
 /* Shared decode core for fastjson_decode and fastjson_file_decode.
- * Runs the yyjson read (with the inf/nan-overflow retry and parse-error
- * UTF-8 reclassification), dispatches the appropriate walker into
- * `return_value`, and honors the JSON_THROW_ON_ERROR state-preservation
- * contract. $depth must already be validated and, in non-throw mode,
- * the caller must already have cleared the error state; saved_err is the
- * snapshot to restore on the throw path. The param is named
+ * $depth must already be validated and, in non-throw mode, the caller
+ * must already have cleared the error state. The param is named
  * `return_value` so RETURN_NULL() / RETURN_THROWS() expand correctly. */
 static void fastjson_decode_into(const char *json, size_t json_len,
                                  bool use_assoc, zend_long depth,
@@ -347,33 +357,15 @@ static void fastjson_decode_into(const char *json, size_t json_len,
         RETURN_NULL();
     }
 
-    yyjson_val *root = yyjson_doc_get_root(doc);
-    /* Single dispatch: pick the sanitizing walker only when the
-     * caller asked for UTF-8 handling. The fast walker is otherwise
-     * branch-identical to the pre-IGNORE/SUBSTITUTE code. */
-    zend_long walk_depth = fastjson_effective_walk_depth(depth);
-    bool walk_ok = FASTJSON_HAS_UTF8_HANDLING_FLAG(flags)
-        ? fastjson_yyval_to_zval_sanitize(root, use_assoc, walk_depth, flags, return_value)
-        : fastjson_yyval_to_zval(root, use_assoc, walk_depth, flags, return_value);
-    if (!walk_ok) {
-        /* fastjson_yyval_to_zval already populated FASTJSON_ERROR_DEPTH.
-         * return_value may hold a partial zend_array/zend_object; reset
-         * so RETURN_NULL gives the user a clean null. */
-        zval_ptr_dtor(return_value);
-        ZVAL_NULL(return_value);
-        yyjson_doc_free(doc);
+    if (!fastjson_walk_doc_into(doc, yyjson_doc_get_root(doc), use_assoc,
+                                depth, flags, throw_mode, saved_err,
+                                return_value)) {
         if (throw_mode) {
-            fastjson_throw_current_error("Maximum stack depth exceeded",
-                                         saved_err);
             RETURN_THROWS();
         }
         return;
     }
-
-    yyjson_doc_free(doc);
-    /* Match ext/json's THROW_ON_ERROR contract: when the caller opted
-     * into exceptions for errors, the global error state is the
-     * caller's previous state, not "no error". Only clear on the
+    /* Match ext/json's THROW_ON_ERROR contract: only clear on the
      * non-throw success path. */
     if (!throw_mode) {
         fastjson_clear_error();
@@ -546,35 +538,52 @@ PHP_FUNCTION(fastjson_file_decode)
     zend_string_release(contents);
 }
 
-/* Convert a resolved/merged immutable subtree into return_value, mirroring
- * fastjson_decode_into's walker dispatch and depth-failure handling. Frees
- * `doc`. Returns true on success (caller clears error on the non-throw
- * path), false if the walk hit the depth cap (return_value left NULL,
- * exception thrown under throw_mode). */
-static bool fastjson_walk_doc_into(yyjson_doc *doc, yyjson_val *root,
-                                   bool use_assoc, zend_long depth,
-                                   zend_long flags, bool throw_mode,
-                                   const fastjson_error_state *saved_err,
-                                   zval *return_value)
+/* Splice-status to error-code/message mapping for pointer_set and the
+ * ambiguous-target paths of pointer_get / pointer_exists. */
+typedef struct {
+    fj_splice_status status;
+    zend_long err_code;
+    const char *err_msg;
+} fj_splice_error_entry;
+
+static const fj_splice_error_entry fj_splice_errors[] = {
+    { FJ_SPLICE_DEPTH_FAIL,    FASTJSON_ERROR_DEPTH,            "Maximum stack depth exceeded" },
+    { FJ_SPLICE_TOO_LARGE,     FASTJSON_ERROR_UNSUPPORTED_TYPE, "Encoded JSON string is too large" },
+    { FJ_SPLICE_INF_OR_NAN,    FASTJSON_ERROR_INF_OR_NAN,       "Inf and NaN cannot be JSON encoded" },
+    { FJ_SPLICE_INVALID_UTF8,  FASTJSON_ERROR_UTF8,             "Malformed UTF-8 characters, possibly incorrectly encoded" },
+    { FJ_SPLICE_AMBIGUOUS,     FASTJSON_ERROR_SYNTAX,           "JSON pointer target is ambiguous because the object contains duplicate members" },
+    { FJ_SPLICE_SETTABLE_FAIL, FASTJSON_ERROR_SYNTAX,           "JSON pointer does not resolve to a settable location" },
+};
+
+/* Dispatch a splice failure: set error state, or throw under throw_mode.
+ * Returns true if the caller should RETURN_THROWS. */
+static bool fj_splice_dispatch_error(fj_splice_status status,
+                                     bool throw_mode,
+                                     const fastjson_error_state *saved_err)
 {
-    zend_long walk_depth = fastjson_effective_walk_depth(depth);
-    bool walk_ok = FASTJSON_HAS_UTF8_HANDLING_FLAG(flags)
-        ? fastjson_yyval_to_zval_sanitize(root, use_assoc, walk_depth, flags, return_value)
-        : fastjson_yyval_to_zval(root, use_assoc, walk_depth, flags, return_value);
-    if (!walk_ok) {
-        /* The walker set FASTJSON_ERROR_DEPTH and return_value may hold a
-         * partial container; reset to a clean null. */
-        zval_ptr_dtor(return_value);
-        ZVAL_NULL(return_value);
-        yyjson_doc_free(doc);
-        if (throw_mode) {
-            fastjson_throw_current_error("Maximum stack depth exceeded",
-                                         saved_err);
+    for (size_t i = 0; i < sizeof(fj_splice_errors) / sizeof(fj_splice_errors[0]); i++) {
+        if (fj_splice_errors[i].status == status) {
+            if (throw_mode) {
+                fastjson_throw_error(fj_splice_errors[i].err_code,
+                                     fj_splice_errors[i].err_msg, NULL,
+                                     saved_err);
+                return true;
+            }
+            fastjson_set_error_code(fj_splice_errors[i].err_code,
+                                    fj_splice_errors[i].err_msg);
+            return false;
         }
-        return false;
     }
-    yyjson_doc_free(doc);
-    return true;
+    /* Unknown status: fall through to generic write failure. */
+    if (throw_mode) {
+        fastjson_throw_error(FASTJSON_ERROR_SYNTAX,
+                             "fastjson_pointer_set write failed", NULL,
+                             saved_err);
+        return true;
+    }
+    fastjson_set_error_code(FASTJSON_ERROR_SYNTAX,
+                            "fastjson_pointer_set write failed");
+    return false;
 }
 
 PHP_FUNCTION(fastjson_pointer_get)
@@ -629,14 +638,10 @@ PHP_FUNCTION(fastjson_pointer_get)
         yyjson_doc_get_root(doc), pointer, pointer_len, &target);
     if (pointer_status == FJ_SPLICE_AMBIGUOUS) {
         yyjson_doc_free(doc);
-        if (throw_mode) {
-            fastjson_throw_error(FASTJSON_ERROR_SYNTAX,
-                "JSON pointer target is ambiguous because the object contains duplicate members",
-                NULL, &saved_err);
+        if (fj_splice_dispatch_error(FJ_SPLICE_AMBIGUOUS, throw_mode,
+                                     &saved_err)) {
             RETURN_THROWS();
         }
-        fastjson_set_error_code(FASTJSON_ERROR_SYNTAX,
-            "JSON pointer target is ambiguous because the object contains duplicate members");
         RETURN_NULL();
     }
     if (target == NULL) {
@@ -1164,14 +1169,10 @@ PHP_FUNCTION(fastjson_pointer_exists)
         yyjson_doc_get_root(doc), pointer, pointer_len, &target);
     if (pointer_status == FJ_SPLICE_AMBIGUOUS) {
         yyjson_doc_free(doc);
-        if (throw_mode) {
-            fastjson_throw_error(FASTJSON_ERROR_SYNTAX,
-                "JSON pointer target is ambiguous because the object contains duplicate members",
-                NULL, &saved_err);
+        if (fj_splice_dispatch_error(FJ_SPLICE_AMBIGUOUS, throw_mode,
+                                     &saved_err)) {
             RETURN_THROWS();
         }
-        fastjson_set_error_code(FASTJSON_ERROR_SYNTAX,
-            "JSON pointer target is ambiguous because the object contains duplicate members");
         RETURN_FALSE;
     }
     bool exists = target != NULL;
@@ -1183,54 +1184,6 @@ PHP_FUNCTION(fastjson_pointer_exists)
         fastjson_clear_error();
     }
     RETURN_BOOL(exists);
-}
-
-/* Splice-status to error-code/message mapping for fastjson_pointer_set. */
-typedef struct {
-    fj_splice_status status;
-    zend_long err_code;
-    const char *err_msg;
-} fj_splice_error_entry;
-
-static const fj_splice_error_entry fj_splice_errors[] = {
-    { FJ_SPLICE_DEPTH_FAIL,    FASTJSON_ERROR_DEPTH,            "Maximum stack depth exceeded" },
-    { FJ_SPLICE_TOO_LARGE,     FASTJSON_ERROR_UNSUPPORTED_TYPE, "Encoded JSON string is too large" },
-    { FJ_SPLICE_INF_OR_NAN,    FASTJSON_ERROR_INF_OR_NAN,       "Inf and NaN cannot be JSON encoded" },
-    { FJ_SPLICE_INVALID_UTF8,  FASTJSON_ERROR_UTF8,             "Malformed UTF-8 characters, possibly incorrectly encoded" },
-    { FJ_SPLICE_AMBIGUOUS,     FASTJSON_ERROR_SYNTAX,           "JSON pointer target is ambiguous because the object contains duplicate members" },
-    { FJ_SPLICE_SETTABLE_FAIL, FASTJSON_ERROR_SYNTAX,           "JSON pointer does not resolve to a settable location" },
-};
-
-/* Dispatch a splice failure: set error state and return (false or
- * THROW_THROWS) according to throw_mode. Returns true if the caller
- * should RETURN_THROWS. */
-static bool fj_splice_dispatch_error(fj_splice_status status,
-                                     bool throw_mode,
-                                     const fastjson_error_state *saved_err)
-{
-    for (size_t i = 0; i < sizeof(fj_splice_errors) / sizeof(fj_splice_errors[0]); i++) {
-        if (fj_splice_errors[i].status == status) {
-            if (throw_mode) {
-                fastjson_throw_error(fj_splice_errors[i].err_code,
-                                     fj_splice_errors[i].err_msg, NULL,
-                                     saved_err);
-                return true;
-            }
-            fastjson_set_error_code(fj_splice_errors[i].err_code,
-                                    fj_splice_errors[i].err_msg);
-            return false;
-        }
-    }
-    /* Unknown status: fall through to generic write failure. */
-    if (throw_mode) {
-        fastjson_throw_error(FASTJSON_ERROR_SYNTAX,
-                             "fastjson_pointer_set write failed", NULL,
-                             saved_err);
-        return true;
-    }
-    fastjson_set_error_code(FASTJSON_ERROR_SYNTAX,
-                            "fastjson_pointer_set write failed");
-    return false;
 }
 
 PHP_FUNCTION(fastjson_pointer_set)

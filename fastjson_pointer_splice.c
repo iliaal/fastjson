@@ -25,11 +25,6 @@
 #include <math.h>
 
 #include "php.h"
-#if PHP_VERSION_ID >= 80300 && defined(ZEND_CHECK_STACK_LIMIT)
-#include "Zend/zend_call_stack.h"
-#else
-#define zend_call_stack_overflowed(limit) (0)
-#endif
 #include "Zend/zend_smart_str.h"
 #include "php_fastjson.h"
 #include "fastjson_arginfo.h"
@@ -970,44 +965,35 @@ zend_string *fastjson_imut_pointer_set_write(yyjson_val *root,
 {
     *status = FJ_SPLICE_OK;
 
-    if (plan->nsegs == 0) {
-        fj_splice_ctx ctx;
-        memset(&ctx, 0, sizeof(ctx));
-        ctx.flags = flags;
-        ctx.yflags = fastjson_translate_write_flags(flags, true);
-        ctx.pretty = (flags & FASTJSON_ENCODE_PRETTY_PRINT) != 0;
-        ctx.replacement = replacement;
-        ctx.status = FJ_SPLICE_OK;
-        smart_str_alloc(&ctx.buf, 256, 0);
-        if (!fj_splice_write_replacement(&ctx, depth_limit)) {
-            smart_str_free(&ctx.buf);
-            *status = ctx.status == FJ_SPLICE_OK
-                ? FJ_SPLICE_WRITE_FAIL : ctx.status;
-            return NULL;
-        }
-        smart_str_0(&ctx.buf);
-        return ctx.buf.s;
-    }
-
     fj_splice_ctx ctx;
     memset(&ctx, 0, sizeof(ctx));
     ctx.flags = flags;
     ctx.yflags = fastjson_translate_write_flags(flags, true);
     ctx.pretty = (flags & FASTJSON_ENCODE_PRETTY_PRINT) != 0;
     ctx.replacement = replacement;
-    ctx.segs = plan->segs;
-    ctx.nsegs = plan->nsegs;
     ctx.status = FJ_SPLICE_OK;
-    ctx.settable = true;
     smart_str_alloc(&ctx.buf, 256, 0);
 
-    bool ok = fj_splice_write_at(&ctx, root, 0, depth_limit);
-
-    if (!ok) {
-        smart_str_free(&ctx.buf);
-        *status = ctx.status != FJ_SPLICE_OK ? ctx.status
-            : (ctx.settable ? FJ_SPLICE_WRITE_FAIL : FJ_SPLICE_SETTABLE_FAIL);
-        return NULL;
+    bool ok;
+    if (plan->nsegs == 0) {
+        ok = fj_splice_write_replacement(&ctx, depth_limit);
+        if (!ok) {
+            smart_str_free(&ctx.buf);
+            *status = ctx.status == FJ_SPLICE_OK
+                ? FJ_SPLICE_WRITE_FAIL : ctx.status;
+            return NULL;
+        }
+    } else {
+        ctx.segs = plan->segs;
+        ctx.nsegs = plan->nsegs;
+        ctx.settable = true;
+        ok = fj_splice_write_at(&ctx, root, 0, depth_limit);
+        if (!ok) {
+            smart_str_free(&ctx.buf);
+            *status = ctx.status != FJ_SPLICE_OK ? ctx.status
+                : (ctx.settable ? FJ_SPLICE_WRITE_FAIL : FJ_SPLICE_SETTABLE_FAIL);
+            return NULL;
+        }
     }
 
     smart_str_0(&ctx.buf);
