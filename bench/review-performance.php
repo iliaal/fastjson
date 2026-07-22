@@ -50,6 +50,28 @@ function reviewMeasure(callable $fn, int $samples, int $targetMs): array
     ];
 }
 
+function reviewValidate(string $name, mixed $result): void
+{
+    if ($name === 'decode_error_tail_512k') {
+        $valid = $result === null
+            && fastjson_last_error() === JSON_ERROR_SYNTAX;
+    } else {
+        $valid = $result !== false
+            && $result !== null
+            && fastjson_last_error() === JSON_ERROR_NONE;
+    }
+
+    if (!$valid) {
+        fwrite(STDERR, sprintf(
+            "benchmark case %s failed its correctness check (result=%s, error=%d)\n",
+            $name,
+            get_debug_type($result),
+            fastjson_last_error()
+        ));
+        exit(1);
+    }
+}
+
 $packedScalar = json_encode(range(0, 9999));
 $packedMixed = json_encode(array_map(
     static fn(int $i): array => [$i, "item-$i", ($i & 1) === 0, $i + 0.25],
@@ -83,6 +105,8 @@ $escaped128k = str_repeat('"\\\n', intdiv(128 * 1024, 3));
 $escaped256k = str_repeat('"\\\n', intdiv(256 * 1024, 3));
 $escaped512k = str_repeat('"\\\n', intdiv(512 * 1024, 3));
 $escaped1m = str_repeat('"\\\n', intdiv(1024 * 1024, 3));
+$lateQuote256k = str_repeat('a', 256 * 1024 - 1) . '"';
+$lateQuote512k = str_repeat('a', 512 * 1024 - 1) . '"';
 $unicode128k = str_repeat("é", intdiv(128 * 1024, 2));
 $unicode256k = str_repeat("é", intdiv(256 * 1024, 2));
 $unicode512k = str_repeat("é", intdiv(512 * 1024, 2));
@@ -91,6 +115,8 @@ $hex32k = str_repeat('<>&\'"', intdiv(32 * 1024, 5));
 $cleanStringJson = '"' . $ascii1m . '"';
 $invalidTailJson = '"' . $ascii1m . "\xFF\"";
 $parseError = '{"payload":"' . str_repeat('a', 512 * 1024) . '",}';
+$validateStrings1b = json_encode(array_fill(0, 100_000, 'a'));
+$validateStrings8b = json_encode(array_fill(0, 50_000, 'abcdefgh'));
 
 $pointerBase = json_encode([
     'rows' => array_map(
@@ -127,7 +153,11 @@ $cases = [
     'pointer_set_string_1m' => static fn() => fastjson_pointer_set('{}', '/value', $ascii1m),
     'decode_tolerant_clean_1m' => static fn() => fastjson_decode($cleanStringJson, true, 512, JSON_INVALID_UTF8_SUBSTITUTE),
     'decode_tolerant_invalid_tail_1m' => static fn() => fastjson_decode($invalidTailJson, true, 512, JSON_INVALID_UTF8_SUBSTITUTE),
+    'decode_tolerant_strings_1b' => static fn() => fastjson_decode($validateStrings1b, true, 512, JSON_INVALID_UTF8_SUBSTITUTE),
+    'decode_tolerant_strings_8b' => static fn() => fastjson_decode($validateStrings8b, true, 512, JSON_INVALID_UTF8_SUBSTITUTE),
     'decode_error_tail_512k' => static fn() => fastjson_decode($parseError, true),
+    'validate_strings_1b' => static fn() => fastjson_validate($validateStrings1b),
+    'validate_strings_8b' => static fn() => fastjson_validate($validateStrings8b),
     'encode_ascii_64k' => static fn() => fastjson_encode($ascii64k),
     'encode_ascii_128k' => static fn() => fastjson_encode($ascii128k),
     'encode_ascii_below_256k' => static fn() => fastjson_encode($asciiBelow256k),
@@ -139,6 +169,8 @@ $cases = [
     'encode_escaped_256k' => static fn() => fastjson_encode($escaped256k),
     'encode_escaped_512k' => static fn() => fastjson_encode($escaped512k),
     'encode_escaped_1m' => static fn() => fastjson_encode($escaped1m),
+    'encode_late_quote_256k' => static fn() => fastjson_encode($lateQuote256k),
+    'encode_late_quote_512k' => static fn() => fastjson_encode($lateQuote512k),
     'encode_unicode_128k' => static fn() => fastjson_encode($unicode128k),
     'encode_unicode_256k' => static fn() => fastjson_encode($unicode256k),
     'encode_unicode_512k' => static fn() => fastjson_encode($unicode512k),
@@ -157,11 +189,26 @@ $cases = [
     'encode_double' => static fn() => fastjson_encode(12345.25),
 ];
 
-$results = [];
+$selectedCases = [];
+if ($filter !== null && @preg_match($filter, '') === false) {
+    fwrite(STDERR, "invalid benchmark filter: $filter\n");
+    exit(1);
+}
 foreach ($cases as $name => $fn) {
     if ($filter !== null && preg_match($filter, $name) !== 1) {
         continue;
     }
+    $selectedCases[$name] = $fn;
+}
+
+if ($selectedCases === []) {
+    fwrite(STDERR, "no benchmark cases matched the filter\n");
+    exit(1);
+}
+
+$results = [];
+foreach ($selectedCases as $name => $fn) {
+    reviewValidate($name, $fn());
     $results[$name] = reviewMeasure($fn, $samples, $targetMs);
 }
 

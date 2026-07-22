@@ -269,8 +269,10 @@ function fastjson_pointer_exists(string $json, string $pointer, int $flags = 0):
  * than once, the location is ambiguous and the operation fails instead of
  * replacing every duplicate.
  *
- * $depth is argument #4, matching fastjson_decode() and
- * fastjson_pointer_get(). JSON_PRETTY_PRINT, JSON_UNESCAPED_SLASHES,
+ * $depth is argument #4 and bounds nesting in the re-serialized result.
+ * The replacement value consumes the budget remaining at its pointer path;
+ * an input subtree that is replaced wholesale does not consume output depth.
+ * JSON_PRETTY_PRINT, JSON_UNESCAPED_SLASHES,
  * JSON_UNESCAPED_UNICODE, and JSON_HEX_* format the whole output.
  * Value-transforming flags (JSON_NUMERIC_CHECK,
  * JSON_PRESERVE_ZERO_FRACTION, JSON_FORCE_OBJECT,
@@ -300,8 +302,10 @@ function fastjson_pointer_set(string $json, string $pointer, mixed $value, int $
  *
  * On a JSON parse error in either operand, returns null with
  * fastjson_last_error() set (or throws under JSON_THROW_ON_ERROR).
- * $associative, $depth, and $flags -- including FASTJSON_DECODE_RELAXED
- * for the operand parse -- carry the same semantics as fastjson_decode().
+ * $depth bounds the effective merged result: operand subtrees deleted or
+ * replaced by the patch need not fit, while every retained subtree must fit.
+ * $associative and $flags -- including FASTJSON_DECODE_RELAXED for the operand
+ * parse -- otherwise carry the same semantics as fastjson_decode().
  */
 function fastjson_merge_patch(string $target, string $patch, ?bool $associative = null, int $depth = 512, int $flags = 0): mixed {}
 

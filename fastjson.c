@@ -431,21 +431,33 @@ static zend_always_inline bool fastjson_ascii_byte_needs_escape(
 }
 
 static bool fastjson_string_is_copyable_ascii(const char *s, size_t len,
-                                              yyjson_write_flag flags)
+                                              yyjson_write_flag flags,
+                                              size_t *prefix_len)
 {
     size_t pos = 0;
     for (; pos + sizeof(uint64_t) <= len; pos += sizeof(uint64_t)) {
         uint64_t word;
         memcpy(&word, s + pos, sizeof(word));
-        if (fastjson_ascii_word_needs_escape(word, flags)) {
+        if (UNEXPECTED(fastjson_ascii_word_needs_escape(word, flags))) {
+            if (pos >= len - len / 8) {
+                for (; pos < len; pos++) {
+                    if (fastjson_ascii_byte_needs_escape(
+                            (unsigned char)s[pos], flags)) {
+                        break;
+                    }
+                }
+            }
+            *prefix_len = pos;
             return false;
         }
     }
     for (; pos < len; pos++) {
         if (fastjson_ascii_byte_needs_escape((unsigned char)s[pos], flags)) {
+            *prefix_len = pos;
             return false;
         }
     }
+    *prefix_len = len;
     return true;
 }
 
@@ -457,7 +469,8 @@ fj_string_size_status fastjson_json_string_size(const char *s, size_t len,
     /* yyjson's common large-string case is printable ASCII without escape
      * candidates. Detect it eight bytes at a time so the exact-size path
      * remains memory-bandwidth-bound instead of adding a branch per byte. */
-    if (fastjson_string_is_copyable_ascii(s, len, flags)) {
+    size_t prefix_len;
+    if (fastjson_string_is_copyable_ascii(s, len, flags, &prefix_len)) {
         if (UNEXPECTED(len > ZSTR_MAX_LEN - 2)) {
             return FJ_STRING_SIZE_TOO_LARGE;
         }
@@ -520,13 +533,37 @@ fj_string_size_status fastjson_write_large_json_string(
     }
 
     if (len < FASTJSON_EXACT_NONASCII_THRESHOLD) {
-        if (fastjson_string_is_copyable_ascii(s, len, flags)) {
+        size_t prefix_len;
+        if (fastjson_string_is_copyable_ascii(
+                s, len, flags, &prefix_len)) {
             smart_str_alloc(buf, len + 2, 0);
             char *cur = ZSTR_VAL(buf->s) + current;
             cur[0] = '"';
             memcpy(cur + 1, s, len);
             cur[len + 1] = '"';
             ZSTR_LEN(buf->s) = current + len + 2;
+            return FJ_STRING_SIZE_OK;
+        }
+        if (prefix_len >= len - len / 8) {
+            size_t tail_len = len - prefix_len;
+            if (UNEXPECTED(tail_len >
+                    (ZSTR_MAX_LEN - current - prefix_len - 3) / 6)) {
+                return FJ_STRING_SIZE_TOO_LARGE;
+            }
+            smart_str_alloc(buf, prefix_len + tail_len * 6 + 3, 0);
+            char *cur = ZSTR_VAL(buf->s) + current;
+            cur[0] = '"';
+            memcpy(cur + 1, s, prefix_len);
+            char *tail = cur + prefix_len + 1;
+            char *end = yyjson_write_string_to_buf(
+                tail, s + prefix_len, tail_len, flags);
+            if (UNEXPECTED(end == NULL)) {
+                return FJ_STRING_SIZE_INVALID_UTF8;
+            }
+            size_t tail_output_len = (size_t)(end - tail);
+            memmove(tail, tail + 1, tail_output_len - 1);
+            end--;
+            ZSTR_LEN(buf->s) = (size_t)(end - ZSTR_VAL(buf->s));
             return FJ_STRING_SIZE_OK;
         }
         if (UNEXPECTED(len > (ZSTR_MAX_LEN - current - 2) / 6)) {

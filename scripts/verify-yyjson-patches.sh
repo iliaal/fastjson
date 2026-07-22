@@ -48,7 +48,10 @@ main() {
 	local -r work_dir="${_tmpdir}/work"
 	local -r url="https://github.com/ibireme/yyjson/archive/refs/tags/${version}.tar.gz"
 
-	curl --fail --location --silent --show-error --output "${archive}" "${url}"
+	curl --fail --location --silent --show-error \
+		--connect-timeout 10 --max-time 60 \
+		--retry 3 --retry-all-errors --retry-delay 1 --retry-max-time 180 \
+		--output "${archive}" "${url}"
 	printf '%s  %s\n' "${ARCHIVE_SHA256}" "${archive}" | sha256sum --check --status
 	mkdir -p -- "${source_dir}" "${work_dir}/vendor/yyjson"
 	tar --extract --gzip --file "${archive}" --strip-components=1 \

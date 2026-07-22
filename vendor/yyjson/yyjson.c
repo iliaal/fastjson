@@ -4721,6 +4721,9 @@ static_inline bool read_uni_esc(u8 **src_ptr, u8 **dst_ptr, const char **msg) {
  @param con Continuation for incremental parsing.
  @return Whether success.
  */
+/* P-005 keeps the rare parse state in the existing flag word. A dedicated
+ * local increases register pressure in this hot loop, including strict reads. */
+#define READ_INVALID_UNICODE_SEEN ((yyjson_read_flag)1 << 31)
 static_inline bool read_str_opt(u8 quo, u8 **ptr, u8 *eof, yyjson_read_flag flg,
                                 yyjson_val *val, const char **msg, u8 *con[2]) {
     /*
@@ -4744,7 +4747,6 @@ static_inline bool read_str_opt(u8 quo, u8 **ptr, u8 *eof, yyjson_read_flag flg,
     u8 *src = hdr, *dst = NULL, *pos;
     u16 hi, lo;
     u32 uni, tmp;
-    bool invalid_unicode = false;
 
     /* Resume incremental parsing. */
     if (con && unlikely(con[0])) {
@@ -4807,8 +4809,10 @@ skip_ascii_end:
     gcc_store_barrier(*src);
     if (likely(*src == quo)) {
         val->tag = ((u64)(src - hdr) << YYJSON_TAG_BIT) | YYJSON_TYPE_STR |
-                        (quo == '"' ? YYJSON_SUBTYPE_NOESC : 0) |
-                        (invalid_unicode ? YYJSON_RESERVED_INVALID_UNICODE : 0);
+                   (quo == '"' ? YYJSON_SUBTYPE_NOESC : 0);
+        if (unlikely(flg & READ_INVALID_UNICODE_SEEN)) {
+            val->tag |= YYJSON_RESERVED_INVALID_UNICODE;
+        }
         val->uni.str = (const char *)hdr;
         *src = '\0';
         *end = src + 1;
@@ -4858,7 +4862,7 @@ skip_utf8:
 #endif
         if (unlikely(pos == src)) {
             if (has_allow(INVALID_UNICODE)) {
-                invalid_unicode = true;
+                flg |= READ_INVALID_UNICODE_SEEN;
                 ++src;
             }
             else return_err(src, "invalid UTF-8 encoding in string");
@@ -4933,8 +4937,10 @@ copy_escape:
             }
         }
     } else if (likely(*src == quo)) {
-        val->tag = ((u64)(dst - hdr) << YYJSON_TAG_BIT) | YYJSON_TYPE_STR |
-                   (invalid_unicode ? YYJSON_RESERVED_INVALID_UNICODE : 0);
+        val->tag = ((u64)(dst - hdr) << YYJSON_TAG_BIT) | YYJSON_TYPE_STR;
+        if (unlikely(flg & READ_INVALID_UNICODE_SEEN)) {
+            val->tag |= YYJSON_RESERVED_INVALID_UNICODE;
+        }
         val->uni.str = (const char *)hdr;
         *dst = '\0';
         *end = src + 1;
@@ -5041,7 +5047,7 @@ copy_utf8:
             if (!has_allow(INVALID_UNICODE)) {
                 return_err(src, MSG_ERR_UTF8);
             }
-            invalid_unicode = true;
+            flg |= READ_INVALID_UNICODE_SEEN;
             goto copy_ascii_stop_1;
         }
         goto copy_ascii;
@@ -5050,6 +5056,7 @@ copy_utf8:
 
 #undef return_err
 }
+#undef READ_INVALID_UNICODE_SEEN
 
 static_inline bool read_str(u8 **ptr, u8 *eof, yyjson_read_flag flg,
                             yyjson_val *val, const char **msg) {

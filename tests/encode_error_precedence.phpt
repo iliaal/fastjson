@@ -8,15 +8,21 @@ fastjson
 $resource = fopen('php://memory', 'r');
 
 $cases = [
-    [[INF, $resource], 512],
-    [[NAN, $resource], 512],
-    [[INF, [[1]]], 2],
+    [[INF, $resource], 512, 0],
+    [[NAN, $resource], 512, 0],
+    [[INF, [[1]]], 2, 0],
+    [['first' => INF, 'later' => $resource], 512, 0],
+    [(object)['first' => INF, 'later' => $resource], 512, 0],
+    [[INF, $resource], 512, JSON_FORCE_OBJECT],
+    [[INF, "\xFF"], 512, 0],
+    [[INF, "\xFF"], 512, JSON_INVALID_UTF8_IGNORE],
+    [['first' => INF, "\xFF" => 1], 512, 0],
 ];
 
-foreach ($cases as [$value, $depth]) {
-    json_encode($value, 0, $depth);
+foreach ($cases as [$value, $depth, $flags]) {
+    json_encode($value, $flags, $depth);
     $native = json_last_error();
-    var_dump(fastjson_encode($value, 0, $depth));
+    var_dump(fastjson_encode($value, $flags, $depth));
     var_dump(fastjson_last_error() === $native);
     echo $native, "\n";
 }
@@ -36,5 +42,23 @@ bool(true)
 bool(false)
 bool(true)
 1
+bool(false)
+bool(true)
+8
+bool(false)
+bool(true)
+8
+bool(false)
+bool(true)
+8
+bool(false)
+bool(true)
+5
+bool(false)
+bool(true)
+7
+bool(false)
+bool(true)
+5
 string(8) "[0,null]"
 bool(true)

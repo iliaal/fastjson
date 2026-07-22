@@ -93,6 +93,19 @@ static bool dw_encode_zval(fastjson_dw_ctx *ctx, zval *zv,
                            zend_long remaining_depth);
 static bool dw_emit_object_props(fastjson_dw_ctx *ctx, zval *zv,
                                  zend_long remaining_depth);
+static bool dw_discard_zval(fastjson_dw_ctx *ctx, zval *zv,
+                            zend_long remaining_depth);
+static bool dw_discard_object_props(fastjson_dw_ctx *ctx, zval *zv,
+                                    zend_long remaining_depth);
+static bool dw_discard_array_range(fastjson_dw_ctx *ctx, HashTable *ht,
+                                   uint32_t from,
+                                   zend_long remaining_depth,
+                                   bool as_list);
+static bool dw_discard_object_props_range(fastjson_dw_ctx *ctx,
+                                          zend_object *obj,
+                                          HashTable *props,
+                                          uint32_t from,
+                                          zend_long remaining_depth);
 
 typedef struct {
 #if PHP_VERSION_ID >= 80300
@@ -360,9 +373,9 @@ static bool dw_emit_double(fastjson_dw_ctx *ctx, double d)
             smart_str_appendc(&ctx->buf, '0');
             return true;
         }
-        smart_str_appendc(&ctx->buf, '0');
         ctx->hard_error = true;
-        return true;
+        smart_str_free(&ctx->buf);
+        return false;
     }
     /* Negative zero: ext/json emits "-0" (without PRESERVE_ZERO_FRACTION)
      * or "-0.0" (with). The long-path shortcut would cast (zend_long)-0.0
@@ -494,8 +507,11 @@ static bool dw_emit_object_key(fastjson_dw_ctx *ctx, zend_string *key,
     return true;
 }
 
-static bool dw_emit_array(fastjson_dw_ctx *ctx, HashTable *ht,
-                          zend_long remaining_depth, bool force_object)
+/* Keep the error-only discard traversal out of the common encoder's
+ * register allocation; inlining this function measurably slowed scalar arrays. */
+static zend_never_inline bool dw_emit_array(fastjson_dw_ctx *ctx, HashTable *ht,
+                                            zend_long remaining_depth,
+                                            bool force_object)
 {
     if (UNEXPECTED(zend_call_stack_overflowed(EG(stack_limit)))) {
         return dw_partial_or_fail(ctx, FASTJSON_ERROR_DEPTH,
@@ -538,7 +554,19 @@ static bool dw_emit_array(fastjson_dw_ctx *ctx, HashTable *ht,
             ZVAL_DEREF(item);
             if (!first) smart_str_appendc(&ctx->buf, ',');
             if (pretty) dw_emit_newline_indent(ctx, ctx->indent_level);
-            if (!dw_encode_zval(ctx, item, remaining_depth - 1)) {
+            if (UNEXPECTED(!dw_encode_zval(
+                    ctx, item, remaining_depth - 1))) {
+                if (ctx->hard_error) {
+#if PHP_VERSION_ID < 80200
+                    uint32_t from = (uint32_t)((_p + 1) - __ht->arData);
+#else
+                    uint32_t from = HT_IS_PACKED(__ht)
+                        ? (uint32_t)((_z + 1) - __ht->arPacked)
+                        : (uint32_t)(((Bucket *)_z + 1) - __ht->arData);
+#endif
+                    (void)dw_discard_array_range(ctx, ht, from,
+                        remaining_depth - 1, true);
+                }
                 if (need_recursion_guard) GC_UNPROTECT_RECURSION(ht);
                 if (pretty && !empty) ctx->indent_level--;
                 return false;
@@ -553,8 +581,19 @@ static bool dw_emit_array(fastjson_dw_ctx *ctx, HashTable *ht,
             ZVAL_DEREF(item);
             if (!first) smart_str_appendc(&ctx->buf, ',');
             if (pretty) dw_emit_newline_indent(ctx, ctx->indent_level);
-            if (!dw_emit_object_key(ctx, key, index)
-                    || !dw_encode_zval(ctx, item, remaining_depth - 1)) {
+            if (UNEXPECTED(!dw_emit_object_key(ctx, key, index)
+                    || !dw_encode_zval(ctx, item, remaining_depth - 1))) {
+                if (ctx->hard_error) {
+#if PHP_VERSION_ID < 80200
+                    uint32_t from = (uint32_t)((_p + 1) - __ht->arData);
+#else
+                    uint32_t from = HT_IS_PACKED(__ht)
+                        ? (uint32_t)(__z - __ht->arPacked)
+                        : (uint32_t)((Bucket *)__z - __ht->arData);
+#endif
+                    (void)dw_discard_array_range(ctx, ht, from,
+                        remaining_depth - 1, false);
+                }
                 if (need_recursion_guard) GC_UNPROTECT_RECURSION(ht);
                 if (pretty && !empty) ctx->indent_level--;
                 return false;
@@ -786,8 +825,22 @@ static bool dw_emit_object_props(fastjson_dw_ctx *ctx, zval *zv,
         if (pretty && !body_open) { ctx->indent_level++; body_open = true; }
         if (!first) smart_str_appendc(&ctx->buf, ',');
         if (pretty) dw_emit_newline_indent(ctx, ctx->indent_level);
-        if (!dw_emit_object_key(ctx, key, index)
-                || !dw_encode_zval(ctx, item, remaining_depth - 1)) {
+        if (UNEXPECTED(!dw_emit_object_key(ctx, key, index)
+                || !dw_encode_zval(ctx, item, remaining_depth - 1))) {
+            if (ctx->hard_error) {
+#if PHP_VERSION_ID < 80200
+                uint32_t from = (uint32_t)((_p + 1) - __ht->arData);
+#else
+                uint32_t from = (uint32_t)((Bucket *)__z
+                    - __ht->arData);
+#endif
+                if (release_hook_rv) {
+                    zval_ptr_dtor(&hook_rv);
+                    release_hook_rv = false;
+                }
+                (void)dw_discard_object_props_range(ctx, obj, props, from,
+                    remaining_depth - 1);
+            }
             if (release_hook_rv) zval_ptr_dtor(&hook_rv);
             if (need_recursion_guard) GC_UNPROTECT_RECURSION(recursion_rc);
             if (body_open) ctx->indent_level--;
@@ -806,6 +859,326 @@ static bool dw_emit_object_props(fastjson_dw_ctx *ctx, zval *zv,
     if (need_recursion_guard) GC_UNPROTECT_RECURSION(recursion_rc);
     zend_release_properties(props);
     return true;
+}
+
+static bool dw_discard_string(fastjson_dw_ctx *ctx,
+                              const char *s, size_t len)
+{
+    if (UNEXPECTED(len > (ZSTR_MAX_LEN - 2) / 6)) {
+        return dw_fail_too_large(ctx);
+    }
+    if (FASTJSON_HAS_UTF8_HANDLING_FLAG(ctx->flags)
+            || fastjson_utf8_well_formed(s, len)) {
+        return true;
+    }
+    dw_set_error(ctx, FASTJSON_ERROR_UTF8,
+        "Malformed UTF-8 characters, possibly incorrectly encoded");
+    return false;
+}
+
+static bool dw_discard_array_range(fastjson_dw_ctx *ctx, HashTable *ht,
+                                   uint32_t from,
+                                   zend_long remaining_depth,
+                                   bool as_list)
+{
+    if (from >= ht->nNumUsed) {
+        return true;
+    }
+
+    if (as_list) {
+        ZEND_HASH_FOREACH_FROM(ht, 0, from) {
+            zval *item = _z;
+            ZVAL_DEREF(item);
+            if (!dw_discard_zval(ctx, item, remaining_depth)) {
+                return false;
+            }
+        } ZEND_HASH_FOREACH_END();
+    } else {
+        zend_string *key;
+        zval *item;
+        ZEND_HASH_FOREACH_STR_KEY_VAL_FROM(ht, key, item, from) {
+            if (key && !dw_discard_string(
+                    ctx, ZSTR_VAL(key), ZSTR_LEN(key))) {
+                return false;
+            }
+            ZVAL_DEREF(item);
+            if (!dw_discard_zval(ctx, item, remaining_depth)) {
+                return false;
+            }
+        } ZEND_HASH_FOREACH_END();
+    }
+    return true;
+}
+
+static bool dw_discard_array(fastjson_dw_ctx *ctx, HashTable *ht,
+                             zend_long remaining_depth, bool force_object)
+{
+    if (UNEXPECTED(zend_call_stack_overflowed(EG(stack_limit)))) {
+        return dw_partial_or_fail(ctx, FASTJSON_ERROR_DEPTH,
+            "Maximum stack depth exceeded", false);
+    }
+    if (remaining_depth <= 0 || remaining_depth > INT_MAX) {
+        return dw_partial_or_fail(ctx, FASTJSON_ERROR_DEPTH,
+            "Maximum stack depth exceeded", false);
+    }
+
+    bool need_recursion_guard = !(GC_FLAGS(ht) & GC_IMMUTABLE);
+    if (need_recursion_guard) {
+        if (GC_IS_RECURSIVE(ht)) {
+            return dw_partial_or_fail(ctx, FASTJSON_ERROR_RECURSION,
+                "Recursion detected", false);
+        }
+        GC_PROTECT_RECURSION(ht);
+    }
+
+    bool as_list = !force_object && zend_array_is_list(ht);
+    bool ok = dw_discard_array_range(
+        ctx, ht, 0, remaining_depth - 1, as_list);
+    if (need_recursion_guard) GC_UNPROTECT_RECURSION(ht);
+    return ok;
+}
+
+static bool dw_discard_object_property(fastjson_dw_ctx *ctx,
+                                       zend_object *obj,
+                                       zend_string *key,
+                                       zval *item,
+                                       zend_long remaining_depth)
+{
+    if (key && ZSTR_LEN(key) > 0 && ZSTR_VAL(key)[0] == '\0') {
+        return true;
+    }
+    if (Z_TYPE_P(item) == IS_INDIRECT) {
+        item = Z_INDIRECT_P(item);
+    }
+
+    zval hook_rv;
+    bool release_hook_rv = false;
+    if (Z_TYPE_P(item) == IS_PTR) {
+        zend_property_info *info = Z_PTR_P(item);
+#if PHP_VERSION_ID >= 80400
+        if ((info->flags & ZEND_ACC_VIRTUAL)
+                && (!info->hooks || !info->hooks[ZEND_PROPERTY_HOOK_GET])) {
+            return true;
+        }
+#endif
+        ZVAL_UNDEF(&hook_rv);
+        zval *hooked = zend_read_property_ex(info->ce, obj,
+                                             info->name, true, &hook_rv);
+        if (EG(exception)) {
+            zval_ptr_dtor(&hook_rv);
+            return false;
+        }
+        item = hooked;
+        release_hook_rv = true;
+    }
+
+    if (Z_ISUNDEF_P(item)) {
+        if (release_hook_rv) zval_ptr_dtor(&hook_rv);
+        return true;
+    }
+    if (key && !dw_discard_string(ctx, ZSTR_VAL(key), ZSTR_LEN(key))) {
+        if (release_hook_rv) zval_ptr_dtor(&hook_rv);
+        return false;
+    }
+
+    ZVAL_DEREF(item);
+    bool ok = dw_discard_zval(ctx, item, remaining_depth);
+    if (release_hook_rv) zval_ptr_dtor(&hook_rv);
+    return ok;
+}
+
+static bool dw_discard_object_props_range(fastjson_dw_ctx *ctx,
+                                          zend_object *obj,
+                                          HashTable *props,
+                                          uint32_t from,
+                                          zend_long remaining_depth)
+{
+    if (from >= props->nNumUsed) {
+        return true;
+    }
+    zend_string *key;
+    zval *item;
+    ZEND_HASH_FOREACH_STR_KEY_VAL_FROM(props, key, item, from) {
+        if (!dw_discard_object_property(
+                ctx, obj, key, item, remaining_depth)) {
+            return false;
+        }
+    } ZEND_HASH_FOREACH_END();
+    return true;
+}
+
+static bool dw_discard_object_props(fastjson_dw_ctx *ctx, zval *zv,
+                                    zend_long remaining_depth)
+{
+    zend_object *obj = Z_OBJ_P(zv);
+    HashTable *props = zend_get_properties_for(zv, ZEND_PROP_PURPOSE_JSON);
+    if (props == NULL) {
+        return EG(exception) ? false : true;
+    }
+
+    zend_refcounted *recursion_rc = (zend_refcounted *)props;
+#if PHP_VERSION_ID >= 80400
+    if (obj->ce->num_hooked_props != 0) {
+        recursion_rc = (zend_refcounted *)obj;
+    }
+#endif
+    bool need_recursion_guard = !(GC_FLAGS(recursion_rc) & GC_IMMUTABLE);
+    if (need_recursion_guard) {
+        if (GC_IS_RECURSIVE(recursion_rc)) {
+            zend_release_properties(props);
+            return dw_partial_or_fail(ctx, FASTJSON_ERROR_RECURSION,
+                "Recursion detected", false);
+        }
+        GC_PROTECT_RECURSION(recursion_rc);
+    }
+
+    bool ok = dw_discard_object_props_range(
+        ctx, obj, props, 0, remaining_depth - 1);
+    if (need_recursion_guard) GC_UNPROTECT_RECURSION(recursion_rc);
+    zend_release_properties(props);
+    return ok;
+}
+
+static bool dw_discard_jsonserializable(fastjson_dw_ctx *ctx, zval *zv,
+                                        zend_long remaining_depth)
+{
+    zend_object *obj = Z_OBJ_P(zv);
+    fastjson_dw_json_guard guard;
+    if (dw_json_guard_is_recursive(&guard, zv)) {
+        return dw_partial_or_fail(ctx, FASTJSON_ERROR_RECURSION,
+            "Recursion detected", false);
+    }
+    GC_ADDREF(obj);
+    dw_json_guard_protect(&guard);
+
+    zval retval;
+    ZVAL_UNDEF(&retval);
+    zend_call_method_with_0_params(obj, obj->ce, NULL,
+                                   "jsonserialize", &retval);
+    if (EG(exception)) {
+        dw_json_guard_unprotect(&guard);
+        zval_ptr_dtor(&retval);
+        OBJ_RELEASE(obj);
+        return false;
+    }
+
+    bool ok;
+    if (Z_TYPE(retval) == IS_OBJECT && Z_OBJ(retval) == obj) {
+        dw_json_guard_unprotect(&guard);
+        if (remaining_depth <= 0 || remaining_depth > INT_MAX) {
+            ok = dw_partial_or_fail(ctx, FASTJSON_ERROR_DEPTH,
+                "Maximum stack depth exceeded", false);
+        } else {
+            ok = dw_discard_object_props(ctx, &retval, remaining_depth);
+        }
+    } else {
+        ok = dw_discard_zval(ctx, &retval, remaining_depth);
+        dw_json_guard_unprotect(&guard);
+    }
+    zval_ptr_dtor(&retval);
+    OBJ_RELEASE(obj);
+    return ok;
+}
+
+static bool dw_discard_object(fastjson_dw_ctx *ctx, zval *zv,
+                              zend_long remaining_depth)
+{
+    if (UNEXPECTED(zend_call_stack_overflowed(EG(stack_limit)))) {
+        return dw_partial_or_fail(ctx, FASTJSON_ERROR_DEPTH,
+            "Maximum stack depth exceeded", false);
+    }
+    if (fastjson_json_serializable_ce != NULL
+            && instanceof_function(Z_OBJCE_P(zv),
+                                   fastjson_json_serializable_ce)) {
+        return dw_discard_jsonserializable(ctx, zv, remaining_depth);
+    }
+    if (Z_OBJCE_P(zv)->ce_flags & ZEND_ACC_ENUM) {
+        if (Z_OBJCE_P(zv)->enum_backing_type == IS_UNDEF) {
+            return dw_partial_or_fail(ctx, FASTJSON_ERROR_NON_BACKED_ENUM,
+                "Non-backed enums have no default serialization", true);
+        }
+        zval *backing = zend_enum_fetch_case_value(Z_OBJ_P(zv));
+        return dw_discard_zval(ctx, backing, remaining_depth);
+    }
+    if (remaining_depth <= 0 || remaining_depth > INT_MAX) {
+        return dw_partial_or_fail(ctx, FASTJSON_ERROR_DEPTH,
+            "Maximum stack depth exceeded", false);
+    }
+    return dw_discard_object_props(ctx, zv, remaining_depth);
+}
+
+static bool dw_discard_zval_inner(fastjson_dw_ctx *ctx, zval *zv,
+                                  zend_long remaining_depth)
+{
+    switch (Z_TYPE_P(zv)) {
+    case IS_NULL:
+    case IS_TRUE:
+    case IS_FALSE:
+    case IS_LONG:
+        return true;
+    case IS_DOUBLE:
+        if (!isfinite(Z_DVAL_P(zv))) {
+            dw_set_error(ctx, FASTJSON_ERROR_INF_OR_NAN,
+                "Inf and NaN cannot be JSON encoded");
+        }
+        return true;
+    case IS_STRING: {
+        if (ctx->flags & FASTJSON_ENCODE_NUMERIC_CHECK) {
+            const char *s = Z_STRVAL_P(zv);
+            size_t slen = Z_STRLEN_P(zv);
+            if (slen > 0) {
+                unsigned char c0 = (unsigned char)s[0];
+                if (!isspace(c0) && c0 != '-' && c0 != '+'
+                        && c0 != '.' && !isdigit(c0)) {
+                    goto discard_string;
+                }
+            }
+            zend_long lval;
+            double dval;
+            uint8_t t = is_numeric_string(s, slen, &lval, &dval, 0);
+            if (t == IS_LONG || (t == IS_DOUBLE && isfinite(dval))) {
+                return true;
+            }
+        }
+discard_string:
+        return dw_discard_string(ctx, Z_STRVAL_P(zv), Z_STRLEN_P(zv));
+    }
+    case IS_ARRAY: {
+        bool force_object = (ctx->flags & FASTJSON_ENCODE_FORCE_OBJECT) != 0;
+        zval arr_copy;
+        ZVAL_COPY(&arr_copy, zv);
+        bool ok = dw_discard_array(ctx, Z_ARRVAL(arr_copy), remaining_depth,
+                                   force_object);
+        zval_ptr_dtor_nogc(&arr_copy);
+        return ok;
+    }
+    case IS_OBJECT:
+        return dw_discard_object(ctx, zv, remaining_depth);
+    case IS_REFERENCE:
+        ZVAL_DEREF(zv);
+        ZVAL_DEREF(zv);
+        return dw_discard_zval(ctx, zv, remaining_depth);
+    default:
+        return dw_partial_or_fail(ctx, FASTJSON_ERROR_UNSUPPORTED_TYPE,
+            "Type is not supported", false);
+    }
+}
+
+static bool dw_discard_zval(fastjson_dw_ctx *ctx, zval *zv,
+                            zend_long remaining_depth)
+{
+#if !FASTJSON_HAVE_NATIVE_STACK_LIMIT
+    if (ctx->call_depth >= 1024) {
+        return dw_partial_or_fail(ctx, FASTJSON_ERROR_DEPTH,
+            "Maximum stack depth exceeded", false);
+    }
+    ctx->call_depth++;
+    bool ok = dw_discard_zval_inner(ctx, zv, remaining_depth);
+    ctx->call_depth--;
+    return ok;
+#else
+    return dw_discard_zval_inner(ctx, zv, remaining_depth);
+#endif
 }
 
 static bool dw_encode_zval_inner(fastjson_dw_ctx *ctx, zval *zv,

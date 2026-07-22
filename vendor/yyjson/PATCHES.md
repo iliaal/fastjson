@@ -257,11 +257,13 @@ decodes paid for a redundant scan; malformed strings were scanned once to
 detect the fault and again to sanitize it.
 
 **Patch.** Reserve tag bit `1 << 5` as
-`YYJSON_RESERVED_INVALID_UNICODE`. `read_str_opt()` tracks whether it takes
-either invalid-Unicode acceptance branch and includes the bit in the final
-string tag. The bit is metadata only: the existing type, subtype, length, and
-string bytes are unchanged. yyjson's immutable-to-mutable copy preserves the
-full tag, so merge-patch output retains the marker too.
+`YYJSON_RESERVED_INVALID_UNICODE`. `read_str_opt()` records either invalid-
+Unicode acceptance branch in an internal high bit of its existing local flag
+word, then includes the reserved bit in the final string tag. Reusing that word
+avoids the register pressure and strict-read regression caused by a dedicated
+per-string boolean. The bit is metadata only: the existing type, subtype,
+length, and string bytes are unchanged. yyjson's immutable-to-mutable copy
+preserves the full tag, so merge-patch output retains the marker too.
 
 fastjson's sanitizing walkers check this bit. Clean strings go directly to the
 Zend value; tagged strings go directly through the sanitizer without a
@@ -270,16 +272,19 @@ separate well-formedness scan.
 **Re-apply recipe on yyjson upgrade.**
 
 1. Add `YYJSON_RESERVED_INVALID_UNICODE` to an unused reserved tag bit.
-2. Add a local `invalid_unicode` boolean to the string reader.
-3. Set it in both branches that accept invalid UTF-8 under
+2. Reserve an internal high bit in `read_str_opt()`'s by-value `flg` word; do
+   not add another local variable to this register-sensitive loop.
+3. Set the internal bit in both branches that accept invalid UTF-8 under
    `ALLOW_INVALID_UNICODE` (the no-escape and copy/escape paths).
-4. OR the reserved bit into both successful string-tag assignments.
+4. Write each normal string tag first, then OR the reserved tag bit inside an
+   `unlikely(flg & READ_INVALID_UNICODE_SEEN)` branch.
 5. Confirm immutable/mutable value-copy functions still copy the entire tag.
 
 **Verification.** Run the UTF-8 decode, pointer, merge-patch, and upstream
-compatibility PHPTs. Benchmark tolerant decoding with both clean UTF-8 and an
-invalid byte near the end; neither path should retain a redundant full-string
-scan.
+compatibility PHPTs. Benchmark strict validation with short strings and tolerant
+decoding with clean strings plus an invalid byte near the end. Strict parsing
+must match the pre-patch path, and tolerant decoding must not retain a redundant
+full-string scan.
 
 ## Build-flag dependencies (not vendor patches)
 

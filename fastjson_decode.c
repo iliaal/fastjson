@@ -498,15 +498,36 @@ PHP_FUNCTION(fastjson_file_decode)
                                 "Failed to open file for reading");
         RETURN_NULL();
     }
+    zend_string *contents;
+    bool read_failed = false;
     if (php_stream_is(stream, PHP_STREAM_IS_STDIO)) {
         php_stream_set_option(stream, PHP_STREAM_OPTION_READ_BUFFER,
                               PHP_STREAM_BUFFER_NONE, NULL);
-    }
-    zend_string *contents = php_stream_copy_to_mem(
-        stream, PHP_STREAM_COPY_ALL, 0);
-    bool read_failed = !php_stream_eof(stream);
-    if (contents == NULL) {
-        contents = ZSTR_EMPTY_ALLOC();
+        contents = php_stream_copy_to_mem(stream, PHP_STREAM_COPY_ALL, 0);
+        read_failed = !php_stream_eof(stream);
+        if (contents == NULL) {
+            contents = ZSTR_EMPTY_ALLOC();
+        }
+    } else {
+        smart_str read_buf = {0};
+        char chunk[8192];
+        while (true) {
+            ssize_t got = php_stream_read(stream, chunk, sizeof(chunk));
+            if (got > 0) {
+                smart_str_appendl(&read_buf, chunk, (size_t)got);
+                continue;
+            }
+            if (got < 0 || !php_stream_eof(stream)) {
+                read_failed = true;
+            }
+            break;
+        }
+        if (read_buf.s == NULL) {
+            contents = ZSTR_EMPTY_ALLOC();
+        } else {
+            smart_str_0(&read_buf);
+            contents = read_buf.s;
+        }
     }
     php_stream_close(stream);
     /* A userspace wrapper may throw from stream_close() after a successful
