@@ -1156,7 +1156,6 @@ discard_string:
         return dw_discard_object(ctx, zv, remaining_depth);
     case IS_REFERENCE:
         ZVAL_DEREF(zv);
-        ZVAL_DEREF(zv);
         return dw_discard_zval(ctx, zv, remaining_depth);
     default:
         return dw_partial_or_fail(ctx, FASTJSON_ERROR_UNSUPPORTED_TYPE,
