@@ -46,12 +46,18 @@ on:
         description: 'Existing release tag to build and upload prebuilt binaries for (e.g. 0.4.0)'
         required: true
 
+permissions: {}
+
+concurrency:
+  group: release-linux-${{ github.event.release.tag_name || inputs.release_tag }}
+  cancel-in-progress: false
+
 jobs:
   build:
     name: ${{ matrix.os }} php ${{ matrix.php }}
     runs-on: ${{ matrix.os }}
     permissions:
-      contents: write
+      contents: write # Uploads binary assets to the selected release.
     strategy:
       fail-fast: false
       matrix:
@@ -66,9 +72,10 @@ jobs:
           - macos-14
         php: ['8.4', '8.5']
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ github.event.release.tag_name || inputs.release_tag }}
+          persist-credentials: false
 
       - name: Verify release checkout
         env:
@@ -81,13 +88,13 @@ jobs:
           test "$source_version" = "${RELEASE_TAG#v}"
 
       - name: Setup PHP
-        uses: shivammathur/setup-php@v2
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # master
         with:
           php-version: ${{ matrix.php }}
           coverage: none
 
       - name: Build and upload prebuilt binary
-        uses: php/pie-ext-binary-builder@0.0.3
+        uses: php/pie-ext-binary-builder@5298761950f63c7e9565ed7004e922b346e4386c # 0.0.3
         with:
           release-tag: ${{ github.event.release.tag_name || inputs.release_tag }}
           github-token: ${{ secrets.GITHUB_TOKEN }}

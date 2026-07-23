@@ -17,16 +17,26 @@ on:
   # without publishing assets to a non-existent release.
   workflow_dispatch:
 
+permissions: {}
+
+concurrency:
+  group: release-windows-${{ github.event.release.tag_name || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'release' }}
+
 jobs:
   matrix:
     name: Resolve Windows release matrix
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
       - id: matrix
-        uses: php/php-windows-builder/extension-matrix@v1
+        uses: php/php-windows-builder/extension-matrix@e03e5d39879adaeb61ed2225f0f4eae7db8c1df8 # 1.8.1
         with:
           # Pull requests run a TS/NTS PHP 8.4 canary. Releases and manual
           # dispatches keep the full supported-version matrix.
@@ -40,12 +50,16 @@ jobs:
     name: Build ${{ matrix.php-version }} ${{ matrix.ts }} ${{ matrix.arch }}
     needs: matrix
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.matrix.outputs.matrix) }}
     steps:
-      - uses: actions/checkout@v6
-      - uses: php/php-windows-builder/extension@v1
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: php/php-windows-builder/extension@e03e5d39879adaeb61ed2225f0f4eae7db8c1df8 # 1.8.1
         with:
           php-version: ${{ matrix.php-version }}
           arch: ${{ matrix.arch }}
@@ -58,9 +72,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
     permissions:
-      contents: write
+      contents: write # Uploads Windows binaries to the published release.
     steps:
-      - uses: php/php-windows-builder/release@v1
+      - uses: php/php-windows-builder/release@e03e5d39879adaeb61ed2225f0f4eae7db8c1df8 # 1.8.1
         with:
           release: ${{ github.event.release.tag_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
