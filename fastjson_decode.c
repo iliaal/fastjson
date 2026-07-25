@@ -514,9 +514,7 @@ PHP_FUNCTION(fastjson_file_decode)
     /* A userspace wrapper may throw from stream_close() after a successful
      * read. Stop before parsing so the wrapper exception remains primary. */
     if (EG(exception)) {
-        if (contents != NULL) {
-            zend_string_release(contents);
-        }
+        zend_string_release(contents);
         fastjson_restore_error_state(throw_mode ? &saved_err : &operation_err);
         RETURN_THROWS();
     }
@@ -926,11 +924,6 @@ static yyjson_mut_val *fastjson_merge_patch_indexed(yyjson_mut_doc *doc,
                                                     size_t remaining_depth,
                                                     bool *depth_failed)
 {
-    if (!yyjson_is_obj(patch)) {
-        return fj_merge_copy_checked(doc, patch, remaining_depth,
-                                     depth_failed);
-    }
-
     yyjson_mut_val *builder = yyjson_mut_obj(doc);
     if (builder == NULL) {
         return NULL;
@@ -1294,7 +1287,4 @@ pointer_set_failed:
     }
 
     RETVAL_STR(out);
-    if (!throw_mode && FASTJSON_G(last_err_code) == FASTJSON_ERROR_NONE) {
-        fastjson_clear_error();
-    }
 }

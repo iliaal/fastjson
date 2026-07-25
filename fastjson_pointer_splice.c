@@ -260,10 +260,8 @@ static bool fj_splice_write_replacement(fj_splice_ctx *ctx,
             return false;
         }
         smart_str_appendl(&ctx->buf, src + start, chunk_len);
-        if (spaces != 0) {
-            memset(ZSTR_VAL(ctx->buf.s) + ZSTR_LEN(ctx->buf.s), ' ', spaces);
-            ZSTR_LEN(ctx->buf.s) += spaces;
-        }
+        memset(ZSTR_VAL(ctx->buf.s) + ZSTR_LEN(ctx->buf.s), ' ', spaces);
+        ZSTR_LEN(ctx->buf.s) += spaces;
         start = i + 1;
     }
     if (start < len) {
@@ -374,19 +372,17 @@ static bool fj_splice_write_object_full(fj_splice_ctx *ctx,
     bool pretty = ctx->pretty;
     size_t n = yyjson_obj_size(FJ_IMUT_VAL(obj));
     bool empty = n == 0;
-    bool body_open = false;
 
     smart_str_appendc(&ctx->buf, '{');
+    if (pretty && !empty) {
+        ctx->indent++;
+    }
     bool first = true;
     yyjson_val *key;
     yyjson_obj_iter iter;
     yyjson_obj_iter_init(FJ_IMUT_VAL(obj), &iter);
     while ((key = yyjson_obj_iter_next(&iter))) {
         yyjson_val *child = yyjson_obj_iter_get_val(key);
-        if (pretty && !body_open && !empty) {
-            ctx->indent++;
-            body_open = true;
-        }
         if (!first) {
             smart_str_appendc(&ctx->buf, ',');
         }
@@ -406,7 +402,7 @@ static bool fj_splice_write_object_full(fj_splice_ctx *ctx,
         }
         first = false;
     }
-    if (body_open) {
+    if (pretty && !empty) {
         ctx->indent--;
         fj_splice_newline_indent(ctx, ctx->indent);
     }
@@ -419,9 +415,6 @@ static bool fj_splice_write_array(fj_splice_ctx *ctx, const yyjson_val *arr,
 {
     if (!fj_splice_stack_ok(ctx)) {
         return false;
-    }
-    if (seg_idx >= ctx->nsegs) {
-        return fj_splice_write_array_full(ctx, arr, remaining_depth);
     }
 
     size_t want_idx;
@@ -437,19 +430,17 @@ static bool fj_splice_write_array(fj_splice_ctx *ctx, const yyjson_val *arr,
     }
 
     bool pretty = ctx->pretty;
-    bool empty = n == 0;
     smart_str_appendc(&ctx->buf, '[');
-    if (pretty && !empty) {
+    if (pretty) {
         ctx->indent++;
     }
 
-    bool first = true;
     size_t cur_idx = 0;
     yyjson_val *item;
     yyjson_arr_iter iter;
     yyjson_arr_iter_init(FJ_IMUT_VAL(arr), &iter);
     while ((item = yyjson_arr_iter_next(&iter))) {
-        if (!first) {
+        if (cur_idx != 0) {
             smart_str_appendc(&ctx->buf, ',');
         }
         if (pretty) {
@@ -467,11 +458,10 @@ static bool fj_splice_write_array(fj_splice_ctx *ctx, const yyjson_val *arr,
         } else if (!fj_splice_write_full(ctx, item, remaining_depth - 1)) {
             return false;
         }
-        first = false;
         cur_idx++;
     }
 
-    if (pretty && !empty) {
+    if (pretty) {
         ctx->indent--;
         fj_splice_newline_indent(ctx, ctx->indent);
     }
@@ -485,18 +475,15 @@ static bool fj_splice_write_object(fj_splice_ctx *ctx, const yyjson_val *obj,
     if (!fj_splice_stack_ok(ctx)) {
         return false;
     }
-    if (seg_idx >= ctx->nsegs) {
-        return fj_splice_write_object_full(ctx, obj, remaining_depth);
-    }
 
     const fj_ptr_seg *target = &ctx->segs[seg_idx];
     bool pretty = ctx->pretty;
-    size_t n = yyjson_obj_size(FJ_IMUT_VAL(obj));
-    bool empty = n == 0;
-    bool body_open = false;
     bool matched = false;
 
     smart_str_appendc(&ctx->buf, '{');
+    if (pretty) {
+        ctx->indent++;
+    }
 
     bool first = true;
     yyjson_val *key;
@@ -514,10 +501,6 @@ static bool fj_splice_write_object(fj_splice_ctx *ctx, const yyjson_val *obj,
             }
             matched = true;
             if (seg_idx == ctx->nsegs - 1) {
-                if (pretty && !body_open) {
-                    ctx->indent++;
-                    body_open = true;
-                }
                 if (!first) {
                     smart_str_appendc(&ctx->buf, ',');
                 }
@@ -543,10 +526,6 @@ static bool fj_splice_write_object(fj_splice_ctx *ctx, const yyjson_val *obj,
             }
         }
 
-        if (pretty && !body_open && !empty) {
-            ctx->indent++;
-            body_open = true;
-        }
         if (!first) {
             smart_str_appendc(&ctx->buf, ',');
         }
@@ -573,10 +552,6 @@ static bool fj_splice_write_object(fj_splice_ctx *ctx, const yyjson_val *obj,
     }
 
     if (!matched) {
-        if (pretty && !body_open) {
-            ctx->indent++;
-            body_open = true;
-        }
         if (!first) {
             smart_str_appendc(&ctx->buf, ',');
         }
@@ -600,7 +575,7 @@ static bool fj_splice_write_object(fj_splice_ctx *ctx, const yyjson_val *obj,
         }
     }
 
-    if (body_open) {
+    if (pretty) {
         ctx->indent--;
         fj_splice_newline_indent(ctx, ctx->indent);
     }

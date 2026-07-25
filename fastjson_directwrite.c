@@ -1000,7 +1000,7 @@ static bool dw_discard_object_props(fastjson_dw_ctx *ctx, zval *zv,
     zend_object *obj = Z_OBJ_P(zv);
     HashTable *props = zend_get_properties_for(zv, ZEND_PROP_PURPOSE_JSON);
     if (props == NULL) {
-        return EG(exception) ? false : true;
+        return !EG(exception);
     }
 
     zend_refcounted *recursion_rc = (zend_refcounted *)props;

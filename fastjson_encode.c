@@ -56,9 +56,6 @@ static zend_string *fastjson_do_encode(
     if (zs != NULL) {
         return zs;
     }
-    if (EG(exception)) {
-        return NULL;
-    }
     if (throw_mode) {
         fastjson_throw_error(encode_err->code, encode_err->msg,
                              throw_fallback, saved_err);

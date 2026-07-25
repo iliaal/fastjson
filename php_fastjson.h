@@ -327,10 +327,8 @@ static zend_always_inline void fastjson_append_newline_indent(
         size_t spaces = (size_t)level * 4;
         smart_str_alloc(buf, spaces + 1, 0);
         smart_str_appendc(buf, '\n');
-        if (spaces != 0) {
-            memset(ZSTR_VAL(buf->s) + ZSTR_LEN(buf->s), ' ', spaces);
-            ZSTR_LEN(buf->s) += spaces;
-        }
+        memset(ZSTR_VAL(buf->s) + ZSTR_LEN(buf->s), ' ', spaces);
+        ZSTR_LEN(buf->s) += spaces;
         return;
     }
     smart_str_appendc(buf, '\n');
