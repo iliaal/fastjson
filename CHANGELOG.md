@@ -10,6 +10,35 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - `fastjson_encode()`, `fastjson_file_encode()`, and replacement encoding in `fastjson_pointer_set()` now publish the outer operation's final error state after nested callbacks or destructors call fastjson recursively, matching `ext/json` for success, partial-output, failure, and exception paths.
 - `fastjson_file_encode()` now stops immediately when a userspace stream wrapper throws from `stream_close()`, keeping that exception primary and preserving the applicable error-state contract.
+- `fastjson_decode()` and `fastjson_validate()` no longer reject a string that carries both a backslash escape and invalid UTF-8 under `JSON_INVALID_UTF8_IGNORE`/`SUBSTITUTE`. `"\/\xFFe"` was reported as `unexpected control character in string`; it now decodes to `/e` like `json_decode()`. Raw control characters are still rejected (vendor patch P-004).
+- A non-finite number without `JSON_PARTIAL_OUTPUT_ON_ERROR` keeps traversing so a later error can take precedence, as `ext/json` does — but that walk now stops where `ext/json` stops. Previously an error nested inside the failing container did not end the walk, so `fastjson_encode([[INF, "\xB1\x31"], INF])` reported `JSON_ERROR_INF_OR_NAN` where `json_encode()` reports `JSON_ERROR_UTF8`, and `JsonSerializable::jsonSerialize()` could be invoked on values `ext/json` never reaches.
+- `fastjson_pointer_get()` and `fastjson_pointer_exists()` reject a pointer whose traversed path is made ambiguous by duplicate object members instead of silently selecting the first, while full decode keeps `ext/json`'s last-wins behaviour. Duplicates away from the path are still accepted.
+- `fastjson_pointer_set()` preserves untouched number lexemes byte-for-byte, so large integers, `-0`, and trailing-zero forms survive a set elsewhere in the document, and replacement values are spliced without an encode/parse/write round trip that normalised `-0`.
+- `fastjson_pointer_set()` validates pointer syntax, traversal, and the settable location before serialising the replacement, so a malformed or non-settable pointer no longer invokes `JsonSerializable` callbacks first.
+- `fastjson_pointer_set()` and `fastjson_merge_patch()` apply `$depth` to the effective result rather than to input branches the operation discards.
+- `fastjson_file_decode()` reports a read failure when a stream wrapper returns a terminal error after valid JSON while also reporting EOF, instead of decoding the bytes read so far.
+- `fastjson_file_decode()` ignores a stream wrapper's declared size for non-stdio streams, so a wrapper claiming 64 MiB for an 11-byte body can no longer exhaust `memory_limit`.
+- The `JsonSerializable` recursion guard is released before the `jsonSerialize()` result is destroyed, so a destructor that re-enters encoding no longer sees a false `JSON_ERROR_RECURSION`.
+
+### Performance
+
+Measured against 0.6.0 on PHP 8.4 release builds (x86_64; aarch64 where noted).
+
+- `fastjson_merge_patch()` is ~95% faster on a 2,000-key merge: the mutable result is walked into zvals directly instead of being copied into an immutable document first, and duplicate-heavy objects use a hash index rather than repeated linear lookups.
+- Large clean-ASCII `fastjson_encode()` is 32–66% faster (256 KiB – 1 MiB); a large string whose first escape appears late reuses the clean prefix instead of rescanning (`encode_late_quote_512k` −70%).
+- Tolerant decode (`JSON_INVALID_UTF8_IGNORE`/`SUBSTITUTE`) is 20–64% faster on clean input: vendor patch P-005 tags strings the parser saw as malformed, so the sanitising walker only runs when it is needed.
+- Packed-array decode is ~22% faster and object decode ~11% faster (Zend packed fill, pre-sized `stdClass` property tables).
+- `fastjson_pointer_set()` is 42–66% faster depending on shape, and parse-error position reporting on ASCII input is ~51% faster.
+- Top-level `null`, `true`, integer, and double encoding skip the `smart_str` buffer entirely (35–43% faster).
+- `fastjson_file_decode()` is ~7% faster on a 16 MiB document.
+- A non-finite number without `JSON_PARTIAL_OUTPUT_ON_ERROR` frees the buffered output immediately instead of accumulating a tail it will discard: `[INF, <32 MiB string>]` drops from 33.5 MB of extra peak memory to zero.
+- The exact-size preflight for very large strings now starts at 8 MiB rather than 1 MiB. Below that the writer takes its single-pass path: at 1 MiB the second pass cost more than the reservation it saved (+75% on x86_64, +160% on aarch64 for UTF-8 text).
+
+### Build
+
+- `vendor/yyjson/` local patches P-001 through P-005 are stored as a replayable patch series verified against pristine yyjson 0.12.0 in CI, instead of prose-only descriptions.
+- Project metadata verification compares the stub hash embedded in `fastjson_arginfo.h` against `fastjson.stub.php`.
+- GitHub Actions workflows pin every action by commit SHA, default to `permissions: {}` with per-job least privilege, disable credential persistence, and verify that a release build checks out the tag it claims. PHP 8.6 joins the source-build matrix.
 
 ## [0.6.0] - 2026-07-09
 

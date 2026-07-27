@@ -70,6 +70,12 @@ typedef struct fastjson_dw_ctx {
     bool            partial_output;
     bool            pretty_print;
     bool            hard_error;
+    /* Set once a discard walk hits an error that ext/json treats as a hard
+     * stop. ext/json propagates that FAILURE out of every enclosing
+     * container, so no further siblings are visited; without this flag each
+     * enclosing level would start its own discard and report an error from a
+     * value ext/json never reached (and re-enter JsonSerializable). */
+    bool            discard_aborted;
     fastjson_error_state error;
     uint32_t        call_depth;
     int             indent_level;  /* current pretty-print depth; 0 at
@@ -543,7 +549,7 @@ static zend_never_inline bool dw_emit_array(fastjson_dw_ctx *ctx, HashTable *ht,
             if (pretty) dw_emit_newline_indent(ctx, ctx->indent_level);
             if (UNEXPECTED(!dw_encode_zval(
                     ctx, item, remaining_depth - 1))) {
-                if (ctx->hard_error) {
+                if (ctx->hard_error && !ctx->discard_aborted) {
 #if PHP_VERSION_ID < 80200
                     uint32_t from = (uint32_t)((_p + 1) - __ht->arData);
 #else
@@ -551,8 +557,10 @@ static zend_never_inline bool dw_emit_array(fastjson_dw_ctx *ctx, HashTable *ht,
                         ? (uint32_t)((_z + 1) - __ht->arPacked)
                         : (uint32_t)(((Bucket *)_z + 1) - __ht->arData);
 #endif
-                    (void)dw_discard_array_range(ctx, ht, from,
-                        remaining_depth - 1, true);
+                    if (!dw_discard_array_range(ctx, ht, from,
+                            remaining_depth - 1, true)) {
+                        ctx->discard_aborted = true;
+                    }
                 }
                 if (need_recursion_guard) GC_UNPROTECT_RECURSION(ht);
                 if (pretty && !empty) ctx->indent_level--;
@@ -570,7 +578,7 @@ static zend_never_inline bool dw_emit_array(fastjson_dw_ctx *ctx, HashTable *ht,
             if (pretty) dw_emit_newline_indent(ctx, ctx->indent_level);
             if (UNEXPECTED(!dw_emit_object_key(ctx, key, index)
                     || !dw_encode_zval(ctx, item, remaining_depth - 1))) {
-                if (ctx->hard_error) {
+                if (ctx->hard_error && !ctx->discard_aborted) {
 #if PHP_VERSION_ID < 80200
                     uint32_t from = (uint32_t)((_p + 1) - __ht->arData);
 #else
@@ -578,8 +586,10 @@ static zend_never_inline bool dw_emit_array(fastjson_dw_ctx *ctx, HashTable *ht,
                         ? (uint32_t)(__z - __ht->arPacked)
                         : (uint32_t)((Bucket *)__z - __ht->arData);
 #endif
-                    (void)dw_discard_array_range(ctx, ht, from,
-                        remaining_depth - 1, false);
+                    if (!dw_discard_array_range(ctx, ht, from,
+                            remaining_depth - 1, false)) {
+                        ctx->discard_aborted = true;
+                    }
                 }
                 if (need_recursion_guard) GC_UNPROTECT_RECURSION(ht);
                 if (pretty && !empty) ctx->indent_level--;
@@ -814,7 +824,7 @@ static bool dw_emit_object_props(fastjson_dw_ctx *ctx, zval *zv,
         if (pretty) dw_emit_newline_indent(ctx, ctx->indent_level);
         if (UNEXPECTED(!dw_emit_object_key(ctx, key, index)
                 || !dw_encode_zval(ctx, item, remaining_depth - 1))) {
-            if (ctx->hard_error) {
+            if (ctx->hard_error && !ctx->discard_aborted) {
 #if PHP_VERSION_ID < 80200
                 uint32_t from = (uint32_t)((_p + 1) - __ht->arData);
 #else
@@ -825,8 +835,10 @@ static bool dw_emit_object_props(fastjson_dw_ctx *ctx, zval *zv,
                     zval_ptr_dtor(&hook_rv);
                     release_hook_rv = false;
                 }
-                (void)dw_discard_object_props_range(ctx, obj, props, from,
-                    remaining_depth - 1);
+                if (!dw_discard_object_props_range(ctx, obj, props, from,
+                        remaining_depth - 1)) {
+                    ctx->discard_aborted = true;
+                }
             }
             if (release_hook_rv) zval_ptr_dtor(&hook_rv);
             if (need_recursion_guard) GC_UNPROTECT_RECURSION(recursion_rc);
