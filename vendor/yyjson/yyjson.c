@@ -4952,11 +4952,21 @@ copy_escape:
          * UTF-8 validity only (handled on the high-byte path above); a
          * literal control byte (< 0x20) is a JSON-grammar violation that
          * ext/json always rejects (JSON_ERROR_CTRL_CHAR) regardless of its
-         * JSON_INVALID_UTF8_* flags. Unclosed strings are caught earlier as
-         * "unexpected end of data", so only genuine control chars reach here.
-         * Original upstream tolerated them here under the flag. */
+         * JSON_INVALID_UTF8_* flags. Original upstream tolerated them here
+         * under the flag.
+         *
+         * This arm is NOT reached for control characters only. On the copy
+         * path, copy_utf8 sends a byte tolerated by ALLOW_INVALID_UNICODE to
+         * copy_ascii_stop_1, which copies it and re-enters copy_utf8; the
+         * next ordinary ASCII byte then arrives here via `goto copy_escape`.
+         * Test only the control range and let anything else copy through as
+         * upstream did, or a tolerated invalid byte followed by more text is
+         * misreported as a control character. */
         if (src >= eof) return_err(src, "unclosed string");
-        return_err(src, "unexpected control character in string");
+        if (unlikely(*src < 0x20)) {
+            return_err(src, "unexpected control character in string");
+        }
+        *dst++ = *src++;
     }
 
 copy_ascii:

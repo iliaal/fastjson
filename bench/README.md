@@ -21,6 +21,46 @@ php -d extension=... bench/run.php bench/data 200
 The output is markdown. Pipe to a file to capture, or just commit
 `bench/baseline.md` after a clean run.
 
+## Review-performance harness
+
+`bench/run.php` measures the corpus files; it does not cover the paths most
+often touched by tuning work. `bench/review-performance.php` does: large-string
+encode across the threshold boundaries, pointer splice, merge patch, tolerant
+decode, and parse-error position reporting. Its committed reference is
+`bench/review-baseline.md`.
+
+```sh
+php -d extension=$(pwd)/modules/fastjson.so bench/review-performance.php \
+    [samples] [target_ms] [/case-name-regex/]
+```
+
+It validates each selected case's result before timing it and exits non-zero on
+an invalid or unmatched filter, so a case that starts returning `false` cannot
+read as a speedup.
+
+**Compare releases, not sessions.** Absolute numbers move with machine load;
+two runs minutes apart can differ by 40% on the same binary. Build the previous
+release and the working tree, then alternate them in one session and take the
+best of each:
+
+```sh
+git worktree add ../fj-prev <previous-tag>
+(cd ../fj-prev && phpize && ./configure --enable-fastjson \
+    --with-php-config=$(which php-config) && make -j$(nproc))
+
+for pass in 1 2; do
+  for so in "$(pwd)/modules/fastjson.so" ../fj-prev/modules/fastjson.so; do
+    taskset -c 4 php -d extension="$so" -d memory_limit=-1 \
+        bench/review-performance.php 9 100 > "bench-$(basename $(dirname $(dirname $so)))-$pass.json"
+  done
+done
+```
+
+Interleaving the two builds is what makes the comparison trustworthy: it cancels
+thermal drift and background load that a sequential A-then-B run attributes to
+the code. Check ARM too when a change tunes a scan/copy trade-off — the
+crossover points differ from x86_64.
+
 ## Methodology
 
 - **Latest baseline:** 100 iterations of `(encode | decode | validate)` on each

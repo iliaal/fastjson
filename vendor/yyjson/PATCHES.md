@@ -203,6 +203,19 @@ handled on a *separate* path (the non-ASCII branch, message
 `ALLOW_INVALID_UNICODE`. Only the control-char branch is made
 unconditional.
 
+**This arm is not reached for control characters alone.** The reader has
+two string paths: a non-copying `skip_*` path, and a `copy_*` path it
+switches to once an escape appears. On the copy path, `copy_utf8` sends a
+byte tolerated by `ALLOW_INVALID_UNICODE` to `copy_ascii_stop_1`, which
+copies that byte and re-enters `copy_utf8`; the next *ordinary* ASCII byte
+then arrives in this arm via `goto copy_escape`. So the branch must test the
+control range explicitly and let everything else fall through to upstream's
+byte copy. Rejecting unconditionally instead broke any string that carried
+both a backslash escape and an invalid UTF-8 byte with more text after it —
+`"\/\xFFe"` under `JSON_INVALID_UTF8_IGNORE` was reported as
+`"unexpected control character in string"` where ext/json decodes `/e`.
+Covered by `tests/decode_invalid_utf8_after_escape.phpt`.
+
 **Patch.** Replace the flag-gated control-char branch:
 
 ```c
@@ -215,14 +228,15 @@ unconditional.
     }
 ```
 
-with an unconditional rejection (unclosed strings are already caught
-earlier as `"unexpected end of data"`, so only genuine control chars
-reach here):
+with a rejection scoped to the control range, keeping the byte copy:
 
 ```c
     } else {
         if (src >= eof) return_err(src, "unclosed string");
-        return_err(src, "unexpected control character in string");
+        if (unlikely(*src < 0x20)) {
+            return_err(src, "unexpected control character in string");
+        }
+        *dst++ = *src++;
     }
 ```
 
