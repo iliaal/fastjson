@@ -122,7 +122,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        php: ['8.1', '8.2', '8.3', '8.4']
+        # Mirror the PHP versions release-linux.yml ships macOS binaries for
+        # (8.4, 8.5). A version this job omits is a cell that first gets built
+        # after the tag, when the release workflow runs -- and a failure there
+        # publishes a release with that platform's assets missing.
+        php: ['8.1', '8.2', '8.3', '8.4', '8.5']
 
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
