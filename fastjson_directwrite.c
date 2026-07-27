@@ -550,6 +550,14 @@ static zend_never_inline bool dw_emit_array(fastjson_dw_ctx *ctx, HashTable *ht,
             if (UNEXPECTED(!dw_encode_zval(
                     ctx, item, remaining_depth - 1))) {
                 if (ctx->hard_error && !ctx->discard_aborted) {
+                    /* Resume at the element after the one that failed.
+                     * ZEND_HASH_FOREACH_VAL expands to
+                     * _ZEND_HASH_FOREACH_VAL, which declares only `_z` (the
+                     * current element) and advances it in the loop's
+                     * increment -- hence the +1. The key/value loops use
+                     * ZEND_HASH_FOREACH_FROM instead, where `__z` is already
+                     * advanced and is not in scope here. The two spellings
+                     * are not interchangeable. */
 #if PHP_VERSION_ID < 80200
                     uint32_t from = (uint32_t)((_p + 1) - __ht->arData);
 #else
@@ -579,6 +587,8 @@ static zend_never_inline bool dw_emit_array(fastjson_dw_ctx *ctx, HashTable *ht,
             if (UNEXPECTED(!dw_emit_object_key(ctx, key, index)
                     || !dw_encode_zval(ctx, item, remaining_depth - 1))) {
                 if (ctx->hard_error && !ctx->discard_aborted) {
+                    /* `__z` is pre-advanced by ZEND_HASH_FOREACH_FROM, so it
+                     * already names the next element; no +1 here. */
 #if PHP_VERSION_ID < 80200
                     uint32_t from = (uint32_t)((_p + 1) - __ht->arData);
 #else
@@ -825,6 +835,8 @@ static bool dw_emit_object_props(fastjson_dw_ctx *ctx, zval *zv,
         if (UNEXPECTED(!dw_emit_object_key(ctx, key, index)
                 || !dw_encode_zval(ctx, item, remaining_depth - 1))) {
             if (ctx->hard_error && !ctx->discard_aborted) {
+                /* `__z` is pre-advanced by ZEND_HASH_FOREACH_FROM, so it
+                 * already names the next element; no +1 here. */
 #if PHP_VERSION_ID < 80200
                 uint32_t from = (uint32_t)((_p + 1) - __ht->arData);
 #else
