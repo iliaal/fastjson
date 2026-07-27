@@ -42,14 +42,29 @@ jobs:
         run: docker run --rm -v "$PWD:/fastjson:ro" php:8.4-cli bash /fastjson/scripts/pie-smoke.sh
 
   linux:
-    name: PHP ${{ matrix.php }} - Linux
-    runs-on: ubuntu-latest
+    name: PHP ${{ matrix.php }} - Linux ${{ matrix.arch }}
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest]
+        arch: [x86_64]
         # 8.6 is pre-release; keep it in the source-build gate without
         # publishing release binaries until PHP declares it stable.
         php: ['8.1', '8.2', '8.3', '8.4', '8.5', '8.6']
+        # release-linux.yml ships arm64 glibc binaries for 8.4 and 8.5.
+        # Build those cells here so a break shows up before the tag rather
+        # than in the release workflow, where it silently drops the asset.
+        # Only the shipped versions: arm64 runners are free on public repos
+        # but not free of queue time, and the C is arch-sensitive in exactly
+        # two places (SWAR word scans and the encode threshold tuning).
+        include:
+          - os: ubuntu-24.04-arm
+            arch: arm64
+            php: '8.4'
+          - os: ubuntu-24.04-arm
+            arch: arm64
+            php: '8.5'
 
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
