@@ -43,10 +43,13 @@ echo fastjson_last_error_msg(), "\n";
 var_dump(fastjson_decode('"\\/' . "\xFF" . 'e"', true, 512, 0));
 var_dump(fastjson_last_error() === JSON_ERROR_UTF8);
 
-/* fastjson_validate() agrees with json_validate() on the same inputs. */
+/* fastjson_validate() agrees with ext/json on the same inputs. json_validate()
+ * is 8.3+, so use json_decode()'s error state as the oracle instead. */
 foreach ($cases as $json) {
+    json_decode($json, true, 512, JSON_INVALID_UTF8_IGNORE);
+    $nativeValid = json_last_error() === JSON_ERROR_NONE;
     var_dump(fastjson_validate($json, 512, JSON_INVALID_UTF8_IGNORE)
-        === json_validate($json, 512, JSON_INVALID_UTF8_IGNORE));
+        === $nativeValid);
 }
 ?>
 --EXPECT--
