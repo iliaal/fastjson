@@ -6,12 +6,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-26
+
+### Added
+
+- `FASTJSON_ERROR_INVALID_PROPERTY_NAME`, reported when a JSON object key decodes to a name `stdClass` cannot carry (`{"\u0000x":1}`), matching `json_decode()`'s `JSON_ERROR_INVALID_PROPERTY_NAME`. The associative-array form still accepts the key.
+- `FASTJSON_ERROR_STATE_MISMATCH`, `FASTJSON_ERROR_CTRL_CHAR`, and `FASTJSON_ERROR_UTF16`, for numeric parity with the matching `JSON_ERROR_*` codes so one `switch` covers both extensions. fastjson does not return these three itself; it reports a raw control character or a lone surrogate as `FASTJSON_ERROR_UTF8`.
+
 ### Fixed
 
 - `fastjson_encode()`, `fastjson_file_encode()`, and replacement encoding in `fastjson_pointer_set()` now publish the outer operation's final error state after nested callbacks or destructors call fastjson recursively, matching `ext/json` for success, partial-output, failure, and exception paths.
 - `fastjson_file_encode()` now stops immediately when a userspace stream wrapper throws from `stream_close()`, keeping that exception primary and preserving the applicable error-state contract.
 - `fastjson_decode()` and `fastjson_validate()` no longer reject a string that carries both a backslash escape and invalid UTF-8 under `JSON_INVALID_UTF8_IGNORE`/`SUBSTITUTE`. `"\/\xFFe"` was reported as `unexpected control character in string`; it now decodes to `/e` like `json_decode()`. Raw control characters are still rejected (vendor patch P-004).
-- A non-finite number without `JSON_PARTIAL_OUTPUT_ON_ERROR` keeps traversing so a later error can take precedence, as `ext/json` does — but that walk now stops where `ext/json` stops. Previously an error nested inside the failing container did not end the walk, so `fastjson_encode([[INF, "\xB1\x31"], INF])` reported `JSON_ERROR_INF_OR_NAN` where `json_encode()` reports `JSON_ERROR_UTF8`, and `JsonSerializable::jsonSerialize()` could be invoked on values `ext/json` never reaches.
+- After a non-finite number without `JSON_PARTIAL_OUTPUT_ON_ERROR`, the walk that looks for a later error now stops where `ext/json` stops. `fastjson_encode([[INF, "\xB1\x31"], INF])` reported `JSON_ERROR_INF_OR_NAN` where `json_encode()` reports `JSON_ERROR_UTF8`, and `JsonSerializable::jsonSerialize()` could run on values `ext/json` never reaches.
 - `fastjson_pointer_get()` and `fastjson_pointer_exists()` reject a pointer whose traversed path is made ambiguous by duplicate object members instead of silently selecting the first, while full decode keeps `ext/json`'s last-wins behaviour. Duplicates away from the path are still accepted.
 - `fastjson_pointer_set()` preserves untouched number lexemes byte-for-byte, so large integers, `-0`, and trailing-zero forms survive a set elsewhere in the document, and replacement values are spliced without an encode/parse/write round trip that normalised `-0`.
 - `fastjson_pointer_set()` validates pointer syntax, traversal, and the settable location before serialising the replacement, so a malformed or non-settable pointer no longer invokes `JsonSerializable` callbacks first.
@@ -283,7 +290,8 @@ backed by yyjson 0.12.0.
 - U+2028 / U+2029 line separators emitted as ordinary code points
   (yyjson default). ext/json always escapes for JSONP safety.
 
-[Unreleased]: https://github.com/iliaal/fastjson/compare/0.6.0...HEAD
+[Unreleased]: https://github.com/iliaal/fastjson/compare/0.7.0...HEAD
+[0.7.0]: https://github.com/iliaal/fastjson/releases/tag/0.7.0
 [0.6.0]: https://github.com/iliaal/fastjson/releases/tag/0.6.0
 [0.5.0]: https://github.com/iliaal/fastjson/releases/tag/0.5.0
 [0.4.0]: https://github.com/iliaal/fastjson/releases/tag/0.4.0
