@@ -36,7 +36,7 @@ jobs:
         with:
           persist-credentials: false
       - id: matrix
-        uses: php/php-windows-builder/extension-matrix@e03e5d39879adaeb61ed2225f0f4eae7db8c1df8 # 1.8.1
+        uses: php/php-windows-builder/extension-matrix@29352c0ef9e8ce65264ea9e287881a6f7758a953 # 1.9.0
         with:
           # Pull requests run a TS/NTS PHP 8.4 canary. Releases and manual
           # dispatches keep the full supported-version matrix.
