@@ -118,6 +118,12 @@ function fastjson_version(): string {}
  *                                   false); global error state is
  *                                   preserved per ext/json's contract
  *
+ * Byte-equality with ext/json holds on the common path, but very large
+ * or very small doubles may render in a different (numerically
+ * equivalent) notation: e.g. 1.0e17 encodes as "100000000000000000.0"
+ * where json_encode() emits "1.0e+17", and 1.0e-5 as "0.00001" vs
+ * "1.0e-5". See CHANGELOG.md for the full divergence list.
+ *
  * The $depth parameter caps recursion. On overflow the function
  * returns false with fastjson_last_error() == FASTJSON_ERROR_RECURSION
  * (for cyclic references) or FASTJSON_ERROR_DEPTH (for plain depth
