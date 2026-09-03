@@ -89,9 +89,12 @@ jobs:
           # (GitHub's default shell does not set pipefail), so a broken
           # build could pass and the tests would then merely skip.
           make -j"$(nproc)" 2>&1 | tee build.log
-          if grep -q 'warning:' build.log; then
+          # 'ld: warning:' lines are macOS linker deprecation notices
+          # (-single_module, -undefined suppress), not compiler output;
+          # only compiler warnings fail the build.
+          if grep 'warning:' build.log | grep -v '^ld: warning:' | grep -q .; then
             echo "::error::Build produced warning(s)"
-            grep 'warning:' build.log || true
+            grep 'warning:' build.log | grep -v '^ld: warning:' || true
             exit 1
           fi
 
@@ -166,9 +169,11 @@ jobs:
           # warning grep keeps macOS at the same no-warnings bar as the
           # Linux job: warnings fail the build on every platform.
           make -j$(sysctl -n hw.ncpu) 2>&1 | tee build.log
-          if grep -q 'warning:' build.log; then
+          # Same compiler-only bar as Linux: 'ld: warning:' lines are
+          # macOS linker deprecation notices, not compiler output.
+          if grep 'warning:' build.log | grep -v '^ld: warning:' | grep -q .; then
             echo "::error::Build produced warning(s)"
-            grep 'warning:' build.log || true
+            grep 'warning:' build.log | grep -v '^ld: warning:' || true
             exit 1
           fi
 
@@ -216,12 +221,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Full floor-to-tip range: memory-safety bugs (recursion guards,
+        # Floor-to-tip range: memory-safety bugs (recursion guards,
         # retval_stash UAF, hooked-property paths) are version-sensitive,
         # so sanitize every supported PHP, not just the newest. 8.1/8.2
-        # cover the zend_call_stack_overflowed fallback boundary (8.3+);
-        # 8.6 tracks the pre-release branch until PHP declares it stable.
-        php: ['8.1', '8.2', '8.3', '8.4', '8.5', '8.6']
+        # cover the zend_call_stack_overflowed fallback boundary (8.3+).
+        # No 8.6 cell: php-src has no PHP-8.6 branch yet (clone fails
+        # fatal 128), so the ASAN job cannot build it; re-add when the
+        # branch exists.
+        php: ['8.1', '8.2', '8.3', '8.4', '8.5']
 
     env:
       # detect_leaks=1 is pinned explicitly. LSan's default is on under
