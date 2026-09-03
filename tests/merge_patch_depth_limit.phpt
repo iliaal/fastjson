@@ -38,12 +38,16 @@ try {
 }
 
 // Builds with native stack-limit support honor a caller depth above the
-// conservative fallback cap.
+// conservative fallback cap. The marker names which branch ran, so a
+// runner that always takes one arm (or skips the ini check) shows up in
+// --show-diff output instead of passing on identical goldens.
 $r = fastjson_merge_patch('{}', $cap, true, 100000);
 if (ini_get('zend.max_allowed_stack_size') !== false) {
+    echo "native-guard\n";
     var_dump(is_array($r));
     var_dump(fastjson_last_error() === FASTJSON_ERROR_NONE);
 } else {
+    echo "fallback-cap\n";
     var_dump($r === null);
     var_dump(fastjson_last_error() === FASTJSON_ERROR_DEPTH);
 }
@@ -70,7 +74,7 @@ echo fastjson_encode(
     fastjson_merge_patch('{"a":1,"b":2}', '{"b":null,"c":3}', true)
 ), "\n";
 ?>
---EXPECT--
+--EXPECTF--
 NULL
 bool(true)
 NULL
@@ -78,6 +82,7 @@ bool(true)
 int(0)
 bool(true)
 threw: Maximum stack depth exceeded
+%s
 bool(true)
 bool(true)
 NULL

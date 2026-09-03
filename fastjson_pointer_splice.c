@@ -797,6 +797,27 @@ static bool fj_pointer_walk(yyjson_val *root,
     return true;
 }
 
+/* Shared segment-count gate for the plan and resolve paths. The absolute
+ * FASTJSON_POINTER_MAX_SEGMENTS cap always applies; the nsegs-vs-depth
+ * check additionally applies when check_depth (resolve callers with no
+ * $depth pass check_depth false and get the cap only). Both report
+ * DEPTH_FAIL so oversized pointers surface as FASTJSON_ERROR_DEPTH,
+ * never as a silent "absent". */
+static bool fj_pointer_nsegs_ok(size_t nsegs, size_t depth_limit,
+                                bool check_depth,
+                                fj_splice_status *status)
+{
+    if (nsegs > FASTJSON_POINTER_MAX_SEGMENTS) {
+        *status = FJ_SPLICE_DEPTH_FAIL;
+        return false;
+    }
+    if (check_depth && depth_limit > 0 && nsegs >= depth_limit) {
+        *status = FJ_SPLICE_DEPTH_FAIL;
+        return false;
+    }
+    return true;
+}
+
 bool fastjson_pointer_plan_init(yyjson_val *root, const char *pointer,
                                 size_t pointer_len, size_t depth_limit,
                                 fastjson_pointer_plan *plan,
@@ -807,9 +828,8 @@ bool fastjson_pointer_plan_init(yyjson_val *root, const char *pointer,
         *status = FJ_SPLICE_SETTABLE_FAIL;
         return false;
     }
-    if (depth_limit > 0 && plan->nsegs >= depth_limit) {
+    if (!fj_pointer_nsegs_ok(plan->nsegs, depth_limit, true, status)) {
         fastjson_pointer_plan_destroy(plan);
-        *status = FJ_SPLICE_DEPTH_FAIL;
         return false;
     }
 
@@ -832,10 +852,12 @@ void fastjson_pointer_plan_destroy(fastjson_pointer_plan *plan)
     memset(plan, 0, sizeof(*plan));
 }
 
-fj_splice_status fastjson_pointer_resolve(yyjson_val *root,
-                                          const char *pointer,
-                                          size_t pointer_len,
-                                          yyjson_val **target)
+static fj_splice_status fj_pointer_resolve_impl(yyjson_val *root,
+                                                const char *pointer,
+                                                size_t pointer_len,
+                                                size_t depth_limit,
+                                                bool check_depth,
+                                                yyjson_val **target)
 {
     fastjson_pointer_plan plan;
     if (!fj_pointer_parse(pointer, pointer_len, &plan)) {
@@ -844,11 +866,36 @@ fj_splice_status fastjson_pointer_resolve(yyjson_val *root,
     }
 
     fj_splice_status status = FJ_SPLICE_OK;
+    if (!fj_pointer_nsegs_ok(plan.nsegs, depth_limit, check_depth,
+                             &status)) {
+        *target = NULL;
+        fastjson_pointer_plan_destroy(&plan);
+        return status;
+    }
     if (!fj_pointer_walk(root, &plan, false, target, &status)) {
         *target = NULL;
     }
     fastjson_pointer_plan_destroy(&plan);
     return status;
+}
+
+fj_splice_status fastjson_pointer_resolve(yyjson_val *root,
+                                          const char *pointer,
+                                          size_t pointer_len,
+                                          yyjson_val **target)
+{
+    return fj_pointer_resolve_impl(root, pointer, pointer_len, 0, false,
+                                   target);
+}
+
+fj_splice_status fastjson_pointer_resolve_limited(yyjson_val *root,
+                                                  const char *pointer,
+                                                  size_t pointer_len,
+                                                  size_t depth_limit,
+                                                  yyjson_val **target)
+{
+    return fj_pointer_resolve_impl(root, pointer, pointer_len, depth_limit,
+                                   true, target);
 }
 
 /* Build a scalar yyjson_val directly when its representation is independent

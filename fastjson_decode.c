@@ -275,14 +275,18 @@ yyjson_doc *fastjson_read_doc_ex(const char *json, size_t json_len,
 
     yyjson_doc *doc = yyjson_read_opts((char *)json, json_len, yflags,
                                        &fastjson_php_alc, err);
-    if (doc == NULL && err->msg
-            && strcmp(err->msg, "number is infinity when parsed as double") == 0
+    if (doc == NULL && err->code == YYJSON_READ_ERROR_INVALID_NUMBER
             && !fastjson_input_has_inf_nan_literal(json, json_len,
                     (flags & FASTJSON_DECODE_RELAXED) != 0)) {
-        /* yyjson rejects exponent-overflow numbers like "1e309"; ext/json
-         * decodes them to INF. Retry with ALLOW_INF_AND_NAN to match,
-         * unless the input also carries an unquoted Inf/NaN literal token
-         * (which ext/json rejects). */
+        /* yyjson reports a double-overflow number like "1e309" under
+         * INVALID_NUMBER; ext/json decodes it to INF. Retry with
+         * ALLOW_INF_AND_NAN to match, unless the input also carries an
+         * unquoted Inf/NaN literal token (which ext/json rejects). Keyed
+         * on the read code rather than yyjson's message wording, so a
+         * vendor rewording cannot silently flip INF to SYNTAX (the
+         * contract is pinned in scripts/verify-yyjson-patches.sh).
+         * Other INVALID_NUMBER failures simply fail the retry the same
+         * way, at the cost of one extra parse. */
         doc = yyjson_read_opts((char *)json, json_len,
                                yflags | YYJSON_READ_ALLOW_INF_AND_NAN,
                                &fastjson_php_alc, err);
@@ -298,6 +302,77 @@ yyjson_doc *fastjson_read_doc_ex(const char *json, size_t json_len,
         err->code = YYJSON_READ_ERROR_INVALID_STRING;
     }
     return doc;
+}
+
+/* Raw-input container-nesting scan (declared in php_fastjson.h). Counts
+ * '{'/'[' outside strings -- and outside line/block comments when
+ * allow_comments -- with early exit once `limit` is reached, so the
+ * validate success path pays one allocation-free pass instead of a tree
+ * walk (the P-002 validate-only stub carries no values). Skipping
+ * matches the inputs the scan gates: strict JSON for validate (no
+ * comments possible), and yyjson ALLOW_COMMENTS parity ('//' to CR/LF,
+ * block comments to the first close delimiter) for RELAXED merge
+ * operands. Brackets inside strings/comments can only under- or
+ * over-count on inputs the parser then rejects anyway; on well-formed
+ * input the count equals the parsed tree's container nesting, which is
+ * exactly what the decode walker's remaining_depth rule rejects at
+ * nesting >= $depth. */
+bool fastjson_json_nesting_reaches(const char *json, size_t len,
+                                   size_t limit, bool allow_comments)
+{
+    if (limit == 0) {
+        return true;
+    }
+    size_t depth = 0;
+    size_t i = 0;
+    while (i < len) {
+        unsigned char c = (unsigned char)json[i];
+        if (c == '"') {
+            i++;
+            while (i < len) {
+                unsigned char s = (unsigned char)json[i];
+                if (s == '\\') {
+                    i += 2;
+                    continue;
+                }
+                i++;
+                if (s == '"') {
+                    break;
+                }
+            }
+            continue;
+        }
+        if (allow_comments && c == '/' && i + 1 < len) {
+            unsigned char n = (unsigned char)json[i + 1];
+            if (n == '/') {
+                i += 2;
+                while (i < len && json[i] != '\n' && json[i] != '\r') {
+                    i++;
+                }
+                continue;
+            }
+            if (n == '*') {
+                i += 2;
+                while (i + 1 < len
+                        && !(json[i] == '*' && json[i + 1] == '/')) {
+                    i++;
+                }
+                i += 2;
+                continue;
+            }
+        }
+        if (c == '{' || c == '[') {
+            if (++depth >= limit) {
+                return true;
+            }
+        } else if (c == '}' || c == ']') {
+            if (depth > 0) {
+                depth--;
+            }
+        }
+        i++;
+    }
+    return false;
 }
 
 static yyjson_doc *fastjson_read_doc(const char *json, size_t json_len,
@@ -602,11 +677,12 @@ PHP_FUNCTION(fastjson_pointer_get)
         Z_PARAM_LONG(flags)
     ZEND_PARSE_PARAMETERS_END();
 
-    bool throw_mode = (flags & FASTJSON_DECODE_THROW_ON_ERROR) != 0;
+    bool throw_mode;
     fastjson_error_state saved_err;
-    fastjson_throw_mode_init(throw_mode, &saved_err);
-
-    FASTJSON_VALIDATE_DEPTH(depth, 4);
+    if (!fastjson_entry_prologue(flags, FASTJSON_DECODE_THROW_ON_ERROR,
+                                 depth, 4, &throw_mode, &saved_err)) {
+        RETURN_THROWS();
+    }
 
     bool use_assoc = assoc_is_null
         ? ((flags & FASTJSON_DECODE_OBJECT_AS_ARRAY) != 0)
@@ -623,20 +699,25 @@ PHP_FUNCTION(fastjson_pointer_get)
         RETURN_NULL();
     }
 
-    /* RFC 6901 JSON Pointer. yyjson_ptr_getn returns NULL when the
-     * pointer does not resolve OR is malformed (e.g. missing leading
-     * '/'); both are treated as "no value" -- not a JSON error -- so we
-     * return null with the error state left clear. A pointer that
+    /* RFC 6901 JSON Pointer. The resolve additionally enforces the same
+     * nsegs-vs-depth gate plan_init applies (plus an absolute segment
+     * cap): a pointer at/above $depth segments fails with DEPTH rather
+     * than resolving. Unresolvable and malformed pointers (e.g. missing
+     * leading '/') are treated as "no value" -- not a JSON error -- so
+     * we return null with the error state left clear. A pointer that
      * resolves to a JSON null returns null too (target != NULL); the two
      * are indistinguishable from PHP, consistent with the decode family's
      * documented null-ambiguity. The empty pointer "" selects the whole
      * document per RFC 6901. */
     yyjson_val *target;
-    fj_splice_status pointer_status = fastjson_pointer_resolve(
-        yyjson_doc_get_root(doc), pointer, pointer_len, &target);
-    if (pointer_status == FJ_SPLICE_AMBIGUOUS) {
+    size_t resolve_depth = (size_t)fastjson_effective_walk_depth(depth);
+    fj_splice_status pointer_status = fastjson_pointer_resolve_limited(
+        yyjson_doc_get_root(doc), pointer, pointer_len, resolve_depth,
+        &target);
+    if (pointer_status == FJ_SPLICE_AMBIGUOUS
+            || pointer_status == FJ_SPLICE_DEPTH_FAIL) {
         yyjson_doc_free(doc);
-        if (fj_splice_dispatch_error(FJ_SPLICE_AMBIGUOUS, throw_mode,
+        if (fj_splice_dispatch_error(pointer_status, throw_mode,
                                      &saved_err)) {
             RETURN_THROWS();
         }
@@ -669,9 +750,10 @@ PHP_FUNCTION(fastjson_pointer_get)
  * returning as soon as the limit is reached so the work stack never
  * holds more than `limit` frames.
  *
- * fastjson_merge_patch needs this because yyjson_merge_patch and
- * yyjson_mut_doc_imut_copy recurse once per nesting level on the C stack
- * BEFORE the depth-capped zval walker runs; an adversarial deeply-nested
+ * fastjson_merge_patch needs this because the bounded merge
+ * (fastjson_merge_patch_bounded via fj_merge_copy_checked) recurses once
+ * per nesting level on the C stack BEFORE the depth-capped zval walker
+ * runs; an adversarial deeply-nested
  * operand would overflow the stack and crash. Measuring depth on the
  * parsed tree (not the raw source bytes) is immune to comments, quotes,
  * and escapes -- a textual brace-counting scan has to replicate yyjson's
@@ -1028,15 +1110,24 @@ PHP_FUNCTION(fastjson_merge_patch)
         Z_PARAM_LONG(flags)
     ZEND_PARSE_PARAMETERS_END();
 
-    bool throw_mode = (flags & FASTJSON_DECODE_THROW_ON_ERROR) != 0;
+    bool throw_mode;
     fastjson_error_state saved_err;
-    fastjson_throw_mode_init(throw_mode, &saved_err);
-
-    FASTJSON_VALIDATE_DEPTH(depth, 4);
+    if (!fastjson_entry_prologue(flags, FASTJSON_DECODE_THROW_ON_ERROR,
+                                 depth, 4, &throw_mode, &saved_err)) {
+        RETURN_THROWS();
+    }
 
     bool use_assoc = assoc_is_null
         ? ((flags & FASTJSON_DECODE_OBJECT_AS_ARRAY) != 0)
         : (bool)assoc;
+
+    /* No raw-input prescan on the operands here, although fastjson_validate
+     * uses one: $depth applies to the effective merge result, not to input
+     * branches the patch discards (a 20-deep target with {"deep":null} must
+     * succeed at depth 5), so any operand-side trip is a false positive.
+     * This is safe because the yyjson reader is iterative (no C recursion
+     * in the parse), the merge itself is depth-bounded below, and tree
+     * allocation runs through the Zend heap under memory_limit. */
 
     /* Parse both operands as immutable docs first; either failing is a
      * JSON error surfaced through the usual path. */
@@ -1151,18 +1242,21 @@ PHP_FUNCTION(fastjson_pointer_exists)
         RETURN_FALSE;
     }
 
-    /* yyjson_ptr_getn returns the resolved value or NULL (missing path or
-     * malformed pointer). Unlike fastjson_pointer_get, the bool result is
-     * unambiguous: a path resolving to JSON null still returns true. The
-     * error state stays clear on a successful parse, so a false return with
+    /* Depth-gated resolve (a path resolving to JSON null still returns
+     * true, so unlike fastjson_pointer_get the bool result is
+     * unambiguous). _exists takes no $depth, so the depth gate is
+     * disabled (0) and only the absolute segment cap can fail here;
+     * either way a failure is a real error, not "absent". The error
+     * state stays clear on a successful parse, so a false return with
      * last_error() == NONE means "absent", while a false return with an
      * error set means the JSON itself was malformed. */
     yyjson_val *target;
-    fj_splice_status pointer_status = fastjson_pointer_resolve(
-        yyjson_doc_get_root(doc), pointer, pointer_len, &target);
-    if (pointer_status == FJ_SPLICE_AMBIGUOUS) {
+    fj_splice_status pointer_status = fastjson_pointer_resolve_limited(
+        yyjson_doc_get_root(doc), pointer, pointer_len, 0, &target);
+    if (pointer_status == FJ_SPLICE_AMBIGUOUS
+            || pointer_status == FJ_SPLICE_DEPTH_FAIL) {
         yyjson_doc_free(doc);
-        if (fj_splice_dispatch_error(FJ_SPLICE_AMBIGUOUS, throw_mode,
+        if (fj_splice_dispatch_error(pointer_status, throw_mode,
                                      &saved_err)) {
             RETURN_THROWS();
         }

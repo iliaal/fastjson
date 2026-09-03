@@ -8,7 +8,7 @@ fastjson
 // Poison the error state from a prior failed call.
 fastjson_decode("bogus");
 $poison = fastjson_last_error();
-var_dump($poison !== 0);
+var_dump($poison === FASTJSON_ERROR_SYNTAX);
 
 // A successful decode under THROW_ON_ERROR must NOT clear the state.
 $r = fastjson_decode("[1, 2, 3]", true, 512, JSON_THROW_ON_ERROR);
@@ -27,7 +27,7 @@ try {
     fastjson_decode("garbage", true, 512, JSON_THROW_ON_ERROR);
     echo "no throw\n";
 } catch (JsonException $e) {
-    var_dump($e->getCode() !== 0);
+    var_dump($e->getCode() === FASTJSON_ERROR_SYNTAX);
 }
 var_dump(fastjson_last_error() === $snapshot);
 ?>

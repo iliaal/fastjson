@@ -91,7 +91,67 @@ jobs:
         uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # master
         with:
           php-version: ${{ matrix.php }}
+          tools: phpize, php-config
           coverage: none
+
+      - name: Build extension
+        shell: bash
+        run: |
+          set -euo pipefail
+          phpize
+          ./configure --enable-fastjson
+          # Same no-warnings bar as the tests.yml Linux job: a warning
+          # fails the release before any binary is uploaded. pipefail
+          # keeps a failing `make` from being swallowed by the tee pipe
+          # (GitHub's default shell does not set pipefail). nproc covers
+          # Linux, sysctl covers the macOS cells in this matrix.
+          make -j"$(nproc 2>/dev/null || sysctl -n hw.ncpu)" 2>&1 | tee build.log
+          if grep -q 'warning:' build.log; then
+            echo "::error::Build produced warning(s)"
+            grep 'warning:' build.log || true
+            exit 1
+          fi
+
+      - name: Run tests
+        shell: bash
+        run: |
+          # Same gate as the tests.yml jobs: extension load guard plus
+          # run-tests with FAIL,BORK,LEAK,XLEAK checks, on the release
+          # checkout, before any prebuilt binary is uploaded. -uo
+          # pipefail but not -e: the explicit checks below own failure
+          # detection, and -e would abort the tee'd run-tests pipeline
+          # before they run when run-tests exits non-zero.
+          set -uo pipefail
+          export TEST_PHP_EXECUTABLE=$(which php)
+          export TEST_PHP_ARGS="-d extension=$(pwd)/modules/fastjson.so"
+          export NO_INTERACTION=1
+          # A bad module ABI loads no extension, so every PHPT SKIPs and
+          # the summary reports 0 failures -- a green run that tested
+          # nothing. Fail fast unless the extension actually loaded.
+          # Capture first, then match: piping `php -m` straight into
+          # `grep -q` lets grep close the pipe on the first hit, SIGPIPEs
+          # php, and trips pipefail.
+          mods=$(php $TEST_PHP_ARGS -m)
+          grep -qix fastjson <<< "$mods" \
+            || { echo "::error::fastjson extension failed to load"; exit 1; }
+          # tee (not $(...)) so the run-tests summary and diffs are always
+          # visible: under set -e a `RESULT=$(...)` assignment aborts before
+          # echo when run-tests exits non-zero, hiding which test failed.
+          php run-tests.php --show-diff -g FAIL,BORK,LEAK,XLEAK \
+              tests/ tests/upstream-json/ 2>&1 | tee /tmp/test-output.txt
+          run_status=${PIPESTATUS[0]}
+          if ! grep -q 'Number of tests' /tmp/test-output.txt; then
+            echo "::error::run-tests.php produced no summary (aborted?), status $run_status"
+            exit 1
+          fi
+          if grep -qiE 'Tests (failed|leaked|borked)[[:space:]]*:[[:space:]]*[1-9]' /tmp/test-output.txt; then
+            echo "::error::tests failed/leaked/borked"
+            exit 1
+          fi
+          if [ "$run_status" -ne 0 ]; then
+            echo "::error::run-tests.php exited with status $run_status"
+            exit 1
+          fi
 
       - name: Build and upload prebuilt binary
         uses: php/pie-ext-binary-builder@5298761950f63c7e9565ed7004e922b346e4386c # 0.0.3

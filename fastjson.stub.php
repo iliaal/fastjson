@@ -236,7 +236,9 @@ function fastjson_file_decode(string $filename, ?bool $associative = null, int $
  *
  * If an object traversed by the pointer contains the selected member more
  * than once, RFC 6901 evaluation is ambiguous. The function returns null with
- * FASTJSON_ERROR_SYNTAX, or throws under JSON_THROW_ON_ERROR. JSON parse
+ * FASTJSON_ERROR_SYNTAX, or throws under JSON_THROW_ON_ERROR. A pointer
+ * carrying $depth or more segments (or above an internal absolute segment
+ * cap) fails with FASTJSON_ERROR_DEPTH instead of resolving. JSON parse
  * errors use the same error path. $associative, $depth, and $flags -- including
  * FASTJSON_DECODE_RELAXED -- otherwise carry the same semantics as
  * fastjson_decode() and apply to the decoded subtree.
@@ -254,7 +256,8 @@ function fastjson_pointer_get(string $json, string $pointer, ?bool $associative 
  *
  * A false return with fastjson_last_error() == FASTJSON_ERROR_NONE means
  * the path is absent. A duplicate selected member is ambiguous and sets
- * FASTJSON_ERROR_SYNTAX; JSON parse errors also set an error. Either error
+ * FASTJSON_ERROR_SYNTAX; a pointer above the internal absolute segment cap
+ * sets FASTJSON_ERROR_DEPTH. JSON parse errors also set an error. Either error
  * throws under JSON_THROW_ON_ERROR. $flags carries the parse-affecting bits of
  * fastjson_decode() (e.g. FASTJSON_DECODE_RELAXED, JSON_THROW_ON_ERROR).
  */
@@ -323,11 +326,15 @@ function fastjson_merge_patch(string $target, string $patch, ?bool $associative 
  * carry an ext/json-compatible JSON_ERROR_* code and yyjson's
  * error message. On success, the error state is reset.
  *
- * The $depth parameter is accepted for source-compatibility with
- * ext/json's json_validate() but is not enforced on the success
- * path: doing so would require walking the parsed doc and double
- * the success-path cost. The argument is still validated (positive
- * in-range) and raises ValueError on $depth <= 0 or > INT_MAX.
+ * The $depth parameter caps nesting exactly as in fastjson_decode():
+ * inputs nesting $depth or more containers deep fail with
+ * FASTJSON_ERROR_DEPTH (a scalar needs depth >= 1, "[]" needs
+ * depth >= 2, "[[[1]]]" needs depth >= 4). The check is a single
+ * allocation-free scan over the raw input that skips string contents
+ * and exits early once the cap is reached, so the validate-only fast
+ * path keeps its throughput/memory edge. The argument is still
+ * validated (positive in-range) and raises ValueError on $depth <= 0
+ * or > INT_MAX.
  *
  * The only $flags value accepted is JSON_INVALID_UTF8_IGNORE. Any
  * other bits raise a ValueError, matching ext/json's contract.

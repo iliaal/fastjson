@@ -28,7 +28,39 @@ require() {
 	}
 }
 
+pin_overflow_contract() {
+	# CR-007 contract: fastjson's exponent-overflow (1e309 -> INF) retry
+	# keys on err->code == YYJSON_READ_ERROR_INVALID_NUMBER, never on
+	# yyjson's message wording. Pin both sides of that contract: the
+	# vendored overflow diagnostic must still flow through an
+	# INVALID_NUMBER site, and fastjson_decode.c must key on the code.
+	local yyjson_c="${PROJECT_DIR}/vendor/yyjson/yyjson.c"
+	local decode_c="${PROJECT_DIR}/fastjson_decode.c"
+	if ! grep -q 'number is infinity when parsed as double' "${yyjson_c}"; then
+		printf 'CR-007 contract broken: overflow diagnostic missing from %s\n' \
+			"${yyjson_c}" >&2
+		exit 1
+	fi
+	local bad
+	bad=$(awk '/^fail_number:/{ buf=$0; getline nxt; if (buf !~ /INVALID_NUMBER/ && nxt !~ /INVALID_NUMBER/) print FNR": "buf" / "nxt; }' \
+		"${yyjson_c}")
+	if [[ -n "${bad}" ]]; then
+		printf 'CR-007 contract broken: fail_number site without INVALID_NUMBER:\n%s\n' \
+			"${bad}" >&2
+		exit 1
+	fi
+	if grep -q 'number is infinity' "${decode_c}"; then
+		printf 'CR-007 contract broken: fastjson_decode.c keys on yyjson message wording\n' >&2
+		exit 1
+	fi
+	if ! grep -q 'err->code == YYJSON_READ_ERROR_INVALID_NUMBER' "${decode_c}"; then
+		printf 'CR-007 contract broken: overflow retry lost its read-code key\n' >&2
+		exit 1
+	fi
+}
+
 main() {
+	require awk
 	require cmp
 	require curl
 	require git
@@ -87,6 +119,7 @@ main() {
 		"${PROJECT_DIR}/vendor/yyjson/yyjson.c"
 	cmp --silent -- "${work_dir}/vendor/yyjson/yyjson.h" \
 		"${PROJECT_DIR}/vendor/yyjson/yyjson.h"
+	pin_overflow_contract
 	printf 'yyjson %s patch series verified: %d patches\n' \
 		"${version}" "${patch_count}"
 }

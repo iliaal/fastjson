@@ -53,10 +53,10 @@ var_dump(fastjson_last_error_msg());
 fastjson_decode('[[1]]', true, 3);
 var_dump(fastjson_last_error() === FASTJSON_ERROR_NONE);
 ?>
---EXPECTF--
+--EXPECT--
 fastjson_decode(): Argument #3 ($depth) must be greater than 0
 fastjson_decode(): Argument #3 ($depth) must be greater than 0
-fastjson_decode(): Argument #3 ($depth) must be less than %d
+fastjson_decode(): Argument #3 ($depth) must be less than 2147483647
 ---
 mismatches: 0
 ---

@@ -46,15 +46,15 @@ foreach ($cases as [$value]) {
     var_dump(fastjson_last_error() === $native);
 }
 
-/* Callback counts must match ext/json exactly. */
+/* Callback counts must match ext/json exactly, except past a hard error:
+ * the discard walk treats later JsonSerializable values opaquely instead
+ * of re-entering userland, so those fire zero times (asserted below). */
 $callbackCases = [
     static fn() => [[INF, $bad], new Probe()],
     static fn() => ['a' => [INF, $bad], 'b' => new Probe()],
     static fn() => [[[INF, $bad]], new Probe()],
-    static fn() => [[INF], new Probe()],
     static fn() => [new Probe(), new Probe()],
 ];
-
 foreach ($callbackCases as $make) {
     Probe::$calls = 0;
     json_encode($make());
@@ -63,6 +63,14 @@ foreach ($callbackCases as $make) {
     fastjson_encode($make());
     var_dump(Probe::$calls === $nativeCalls);
 }
+
+/* A JsonSerializable after a hard error is skipped opaquely (no userland
+ * call) while the reported error still matches ext/json. */
+Probe::$calls = 0;
+var_dump(fastjson_encode([[INF], new Probe()]));
+var_dump(Probe::$calls);
+json_encode([[INF], new Probe()]);
+var_dump(fastjson_last_error() === json_last_error());
 
 /* PARTIAL_OUTPUT keeps the buffered walk and is unaffected. */
 var_dump(fastjson_encode([[INF, $bad], INF], JSON_PARTIAL_OUTPUT_ON_ERROR)
@@ -92,5 +100,7 @@ bool(true)
 bool(true)
 bool(true)
 bool(true)
+bool(false)
+int(0)
 bool(true)
 bool(true)

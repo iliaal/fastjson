@@ -11,7 +11,10 @@ fastjson
 
 function assert_cleared(string $where, Closure $bad_call): void {
     fastjson_validate('not json');  // populate failure state
-    assert(fastjson_last_error() === FASTJSON_ERROR_SYNTAX, "setup");
+    if (fastjson_last_error() !== FASTJSON_ERROR_SYNTAX) {
+        echo "$where: setup did not populate failure state\n";
+        exit(1);
+    }
     try { $bad_call(); echo "$where: no throw\n"; }
     catch (ValueError $_) {
         echo "$where last_error: ", fastjson_last_error(), "\n";

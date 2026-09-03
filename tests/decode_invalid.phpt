@@ -17,8 +17,7 @@ echo "---\n";
 $bad = fastjson_decode('not json');
 var_dump($bad);
 var_dump(fastjson_last_error() === FASTJSON_ERROR_SYNTAX);
-var_dump(strlen(fastjson_last_error_msg()) > 0);
-var_dump(fastjson_last_error_msg() !== 'No error');
+var_dump(fastjson_last_error_msg());
 
 echo "---\n";
 
@@ -45,8 +44,7 @@ bool(true)
 ---
 NULL
 bool(true)
-bool(true)
-bool(true)
+string(32) "invalid literal, expected 'null'"
 ---
 array(3) {
   [0]=>

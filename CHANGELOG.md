@@ -6,6 +6,27 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `Fastjson\JsonException`, owned by the extension and used for `JSON_THROW_ON_ERROR` when `ext/json` is absent (previously fell back to `\Exception`, which `catch (JsonException)` misses).
+- `fastjson_pointer_set()`/`_get()` reject pointers with more than 4096 segments, and `pointer_get` enforces `$depth` on the resolved path.
+
+### Fixed
+
+- `fastjson_encode()` honors `serialize_precision` for doubles instead of always emitting the shortest round-trip form.
+- `fastjson_validate()` enforces `$depth` on the success path like `ext/json`.
+- A successful `fastjson_encode()`/`fastjson_file_encode()` under `JSON_THROW_ON_ERROR` no longer leaks a nested callback's error state into `fastjson_last_error()`.
+- `fastjson_file_encode()` loops short `php_stream_write()` results to completion and reports `php_stream_close()` failures instead of leaving silently truncated files.
+- The `1e309`-to-`INF` retry keys on the yyjson error code instead of the vendor message wording; the contract is pinned in `scripts/verify-yyjson-patches.sh`.
+- `fastjson_merge_patch()` keeps applying `$depth` to the effective result: a deep branch the patch discards no longer fails the call.
+- Post-hard-error encode cleanup no longer re-invokes `JsonSerializable::jsonSerialize()` or property hooks, and a later `INF` can no longer overwrite the recorded first error. Deliberate divergence, pinned in tests: values `ext/json` would visit after `INF` (e.g. a later `Probe` object) are now skipped, and the first error stands where `ext/json` would report the later one.
+- Test oracles hardened (exact error codes/messages, discriminating goldens, assertion-free setup guards) and temp-file isolation fixed.
+
+### Changed
+
+- Release workflow runs the full test gate on the release checkout before uploading prebuilt binaries; macOS build fails on warnings like Linux; ASAN covers PHP 8.1–8.6.
+- `SECURITY.md` supported-versions table and benchmark headline numbers corrected.
+
 ## [0.7.0] - 2026-07-26
 
 ### Added

@@ -48,11 +48,11 @@ static zend_string *fastjson_do_encode(
         }
         return NULL;
     }
-    if (!throw_mode) {
-        /* Nested fastjson calls during callbacks must not replace this
-         * invocation's final error state. */
-        fastjson_restore_error_state(encode_err);
-    }
+    /* Publish this invocation's outcome so nested userland encodes cannot
+     * leak their error state: non-throw reports the invocation result,
+     * throw-mode restores the entry state on success (failures throw with
+     * the entry state restored by fastjson_throw_error). */
+    fastjson_restore_error_state(throw_mode ? saved_err : encode_err);
     if (zs != NULL) {
         return zs;
     }
@@ -154,21 +154,34 @@ PHP_FUNCTION(fastjson_file_encode)
                                 "Failed to open file for writing");
         RETURN_FALSE;
     }
-    size_t written = php_stream_write(stream, ZSTR_VAL(zs), ZSTR_LEN(zs));
-    php_stream_close(stream);
-    bool wrote_all = (written == ZSTR_LEN(zs));
+    /* php_stream_write may short-write (userspace wrappers report any
+     * count), so loop to completion; a <= 0 return means no progress. */
+    size_t total = ZSTR_LEN(zs);
+    size_t done = 0;
+    while (done < total) {
+        ssize_t n = php_stream_write(stream, ZSTR_VAL(zs) + done,
+                                     total - done);
+        if (n <= 0) {
+            break;
+        }
+        if ((size_t)n >= total - done) {
+            done = total;
+            break;
+        }
+        done += (size_t)n;
+    }
+    int close_res = php_stream_close(stream);
+    bool wrote_all = (done == total);
     zend_string_release(zs);
     if (EG(exception)) {
         fastjson_restore_error_state(throw_mode ? &saved_err : &encode_err);
         RETURN_THROWS();
     }
-    if (!wrote_all) {
+    if (!wrote_all || close_res != 0) {
         fastjson_set_error_code(FASTJSON_ERROR_SYNTAX,
                                 "Failed to write file");
         RETURN_FALSE;
     }
-    if (!throw_mode) {
-        fastjson_restore_error_state(&encode_err);
-    }
+    fastjson_restore_error_state(throw_mode ? &saved_err : &encode_err);
     RETURN_TRUE;
 }

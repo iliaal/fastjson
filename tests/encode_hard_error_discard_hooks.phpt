@@ -1,5 +1,5 @@
 --TEST--
-fastjson_encode: hard-error traversal still reads later property hooks
+fastjson_encode: hard-error discard skips later property hooks
 --EXTENSIONS--
 fastjson
 --SKIPIF--
@@ -40,5 +40,5 @@ var_dump($extraPeak < 4 * 1024 * 1024);
 --EXPECT--
 bool(false)
 bool(true)
-int(1)
+int(0)
 bool(true)

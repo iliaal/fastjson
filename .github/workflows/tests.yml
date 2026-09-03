@@ -43,6 +43,7 @@ jobs:
 
   linux:
     name: PHP ${{ matrix.php }} - Linux ${{ matrix.arch }}
+    needs: validate
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -133,6 +134,7 @@ jobs:
 
   macos:
     name: PHP ${{ matrix.php }} - macOS
+    needs: validate
     runs-on: macos-latest
     strategy:
       fail-fast: false
@@ -155,10 +157,20 @@ jobs:
           tools: phpize, php-config
 
       - name: Build extension
+        shell: bash
         run: |
+          set -euo pipefail
           phpize
           ./configure --enable-fastjson
-          make -j$(sysctl -n hw.ncpu)
+          # pipefail makes a failing `make` fail the step, and the
+          # warning grep keeps macOS at the same no-warnings bar as the
+          # Linux job: warnings fail the build on every platform.
+          make -j$(sysctl -n hw.ncpu) 2>&1 | tee build.log
+          if grep -q 'warning:' build.log; then
+            echo "::error::Build produced warning(s)"
+            grep 'warning:' build.log || true
+            exit 1
+          fi
 
       - name: Run tests
         shell: bash
@@ -199,16 +211,17 @@ jobs:
 
   asan:
     name: PHP ${{ matrix.php }} - ASAN
+    needs: validate
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        # 8.3 covers the pre-8.4 hooked-property path and the
-        # zend_call_stack_overflowed fallback boundary; 8.5 covers the
-        # newest property-hook / read_property code path. Memory-safety
-        # bugs there (recursion guards, retval_stash UAF) are version-
-        # sensitive, so sanitize more than just 8.4.
-        php: ['8.3', '8.4', '8.5']
+        # Full floor-to-tip range: memory-safety bugs (recursion guards,
+        # retval_stash UAF, hooked-property paths) are version-sensitive,
+        # so sanitize every supported PHP, not just the newest. 8.1/8.2
+        # cover the zend_call_stack_overflowed fallback boundary (8.3+);
+        # 8.6 tracks the pre-release branch until PHP declares it stable.
+        php: ['8.1', '8.2', '8.3', '8.4', '8.5', '8.6']
 
     env:
       # detect_leaks=1 is pinned explicitly. LSan's default is on under

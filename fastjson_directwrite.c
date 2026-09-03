@@ -67,6 +67,10 @@ typedef struct fastjson_dw_ctx {
     yyjson_write_flag yflags;   /* translated to yyjson's flag enum
                                  * once at top-level; reused by every
                                  * call to yyjson_write_string_to_buf */
+    /* PG(serialize_precision) sampled once at entry. ext/json formats every
+     * double via zend_gcvt(precision); the default -1 means shortest
+     * round-trip, which the yyjson fast path below already matches. */
+    int             precision;
     bool            partial_output;
     bool            pretty_print;
     bool            hard_error;
@@ -380,6 +384,23 @@ static bool dw_emit_double(fastjson_dw_ctx *ctx, double d)
         } else {
             smart_str_appendl(&ctx->buf, "-0", 2);
         }
+        return true;
+    }
+    /* Non-default serialize_precision: ext/json formats every double with
+     * zend_gcvt(precision), so the long shortcut and yyjson shortest
+     * round-trip below would both diverge. Mirror php_json_encode_double. */
+    if (UNEXPECTED(ctx->precision != -1)) {
+        char num[ZEND_DOUBLE_MAX_LENGTH];
+        php_gcvt(d, ctx->precision, '.', 'e', num);
+        size_t len = strlen(num);
+        if ((ctx->flags & FASTJSON_ENCODE_PRESERVE_ZERO_FRACTION)
+                && strchr(num, '.') == NULL
+                && len < ZEND_DOUBLE_MAX_LENGTH - 2) {
+            num[len++] = '.';
+            num[len++] = '0';
+            num[len] = '\0';
+        }
+        smart_str_appendl(&ctx->buf, num, len);
         return true;
     }
 
@@ -955,6 +976,7 @@ static bool dw_discard_object_property(fastjson_dw_ctx *ctx,
                                        zval *item,
                                        zend_long remaining_depth)
 {
+    (void)obj;
     if (key && ZSTR_LEN(key) > 0 && ZSTR_VAL(key)[0] == '\0') {
         return true;
     }
@@ -962,40 +984,22 @@ static bool dw_discard_object_property(fastjson_dw_ctx *ctx,
         item = Z_INDIRECT_P(item);
     }
 
-    zval hook_rv;
-    bool release_hook_rv = false;
+    /* Hooked properties read userland on the emit path already; invoking
+     * the get hook again here would double-fire getters (and a throw
+     * would mask the recorded hard error). Skip opaquely. */
     if (Z_TYPE_P(item) == IS_PTR) {
-        zend_property_info *info = Z_PTR_P(item);
-#if PHP_VERSION_ID >= 80400
-        if ((info->flags & ZEND_ACC_VIRTUAL)
-                && (!info->hooks || !info->hooks[ZEND_PROPERTY_HOOK_GET])) {
-            return true;
-        }
-#endif
-        ZVAL_UNDEF(&hook_rv);
-        zval *hooked = zend_read_property_ex(info->ce, obj,
-                                             info->name, true, &hook_rv);
-        if (EG(exception)) {
-            zval_ptr_dtor(&hook_rv);
-            return false;
-        }
-        item = hooked;
-        release_hook_rv = true;
+        return true;
     }
 
     if (Z_ISUNDEF_P(item)) {
-        if (release_hook_rv) zval_ptr_dtor(&hook_rv);
         return true;
     }
     if (key && !dw_discard_string(ctx, ZSTR_VAL(key), ZSTR_LEN(key))) {
-        if (release_hook_rv) zval_ptr_dtor(&hook_rv);
         return false;
     }
 
     ZVAL_DEREF(item);
-    bool ok = dw_discard_zval(ctx, item, remaining_depth);
-    if (release_hook_rv) zval_ptr_dtor(&hook_rv);
-    return ok;
+    return dw_discard_zval(ctx, item, remaining_depth);
 }
 
 static bool dw_discard_object_props_range(fastjson_dw_ctx *ctx,
@@ -1053,42 +1057,14 @@ static bool dw_discard_object_props(fastjson_dw_ctx *ctx, zval *zv,
 static bool dw_discard_jsonserializable(fastjson_dw_ctx *ctx, zval *zv,
                                         zend_long remaining_depth)
 {
-    zend_object *obj = Z_OBJ_P(zv);
-    fastjson_dw_json_guard guard;
-    if (dw_json_guard_is_recursive(&guard, zv)) {
-        return dw_partial_or_fail(ctx, FASTJSON_ERROR_RECURSION,
-            "Recursion detected", false);
-    }
-    GC_ADDREF(obj);
-    dw_json_guard_protect(&guard);
-
-    zval retval;
-    ZVAL_UNDEF(&retval);
-    zend_call_method_with_0_params(obj, obj->ce, NULL,
-                                   "jsonserialize", &retval);
-    if (EG(exception)) {
-        dw_json_guard_unprotect(&guard);
-        zval_ptr_dtor(&retval);
-        OBJ_RELEASE(obj);
-        return false;
-    }
-
-    bool ok;
-    if (Z_TYPE(retval) == IS_OBJECT && Z_OBJ(retval) == obj) {
-        dw_json_guard_unprotect(&guard);
-        if (remaining_depth <= 0 || remaining_depth > INT_MAX) {
-            ok = dw_partial_or_fail(ctx, FASTJSON_ERROR_DEPTH,
-                "Maximum stack depth exceeded", false);
-        } else {
-            ok = dw_discard_object_props(ctx, &retval, remaining_depth);
-        }
-    } else {
-        ok = dw_discard_zval(ctx, &retval, remaining_depth);
-        dw_json_guard_unprotect(&guard);
-    }
-    zval_ptr_dtor(&retval);
-    OBJ_RELEASE(obj);
-    return ok;
+    /* Post-hard-error discard must not re-enter userland: the emit path
+     * already invoked jsonSerialize() once, and a second call would
+     * double-fire stateful serializers (or throw, masking the first
+     * error). Treat the value opaquely; the recorded error stands. */
+    (void)ctx;
+    (void)zv;
+    (void)remaining_depth;
+    return true;
 }
 
 static bool dw_discard_object(fastjson_dw_ctx *ctx, zval *zv,
@@ -1128,7 +1104,11 @@ static bool dw_discard_zval_inner(fastjson_dw_ctx *ctx, zval *zv,
     case IS_LONG:
         return true;
     case IS_DOUBLE:
-        if (!isfinite(Z_DVAL_P(zv))) {
+        /* A discard-found INF must not overwrite the recorded hard error:
+         * the emit path already published the first failure, and every
+         * other discard error aborts the walk, so this only ever
+         * re-records the same code. */
+        if (!isfinite(Z_DVAL_P(zv)) && !ctx->hard_error) {
             dw_set_error(ctx, FASTJSON_ERROR_INF_OR_NAN,
                 "Inf and NaN cannot be JSON encoded");
         }
@@ -1318,6 +1298,7 @@ zend_string *fastjson_directwrite_encode(zval *value, zend_long flags,
     memset(&ctx, 0, sizeof(ctx));
     ctx.flags = flags;
     ctx.yflags = fastjson_translate_write_flags(flags, false);
+    ctx.precision = (int)PG(serialize_precision);
     ctx.partial_output = (flags & FASTJSON_ENCODE_PARTIAL_OUTPUT_ON_ERROR) != 0;
     ctx.pretty_print = (flags & FASTJSON_ENCODE_PRETTY_PRINT) != 0;
     fastjson_error_state_clear(&ctx.error);

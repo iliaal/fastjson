@@ -6,7 +6,7 @@
 [![License: BSD-3-Clause](https://img.shields.io/badge/License-BSD--3--Clause-green.svg)](https://opensource.org/licenses/BSD-3-Clause)
 [![Follow @iliaa](https://img.shields.io/badge/Follow-@iliaa-000000?style=flat&logo=x&logoColor=white)](https://x.com/intent/follow?screen_name=iliaa)
 
-![fastjson: 6x encode, 2.7x decode, 5x validate vs ext/json](images/fastjson-hero.jpg)
+![fastjson: 5.6x encode, 2.6x decode, 5.0x validate vs ext/json](images/fastjson-hero.jpg)
 
 Fast JSON encode, decode, and validate for PHP 8.1+. Drop-in alternative to `ext/json` with a namespaced `fastjson_*` API and `json_last_error`-compatible error reporting. Backed by [yyjson](https://github.com/ibireme/yyjson) 0.12.0, one of the fastest portable JSON libraries. Coexists with `ext/json`; adoption is opt-in per call site.
 
@@ -63,7 +63,7 @@ Function signatures track `ext/json` so call sites migrate by search-and-replace
 
 **Decode flags:** `JSON_OBJECT_AS_ARRAY`, `JSON_BIGINT_AS_STRING`, `JSON_INVALID_UTF8_IGNORE`, `JSON_INVALID_UTF8_SUBSTITUTE`, `JSON_THROW_ON_ERROR`, and the fastjson-only `FASTJSON_DECODE_RELAXED` (tolerates the JSONC subset `ext/json` rejects: `//` and `/* */` comments, trailing commas, and a leading UTF-8 BOM).
 
-**Validate flags:** `JSON_INVALID_UTF8_IGNORE` (other bits raise `ValueError` per ext/json's contract).
+**Validate flags:** `JSON_INVALID_UTF8_IGNORE` (other bits raise `ValueError` per ext/json's contract). `$depth` is enforced on the success path like `ext/json`: documents nesting `$depth` or more containers deep validate false with a depth error.
 
 **Beyond the core trio:** `fastjson_file_decode()` / `fastjson_file_encode()` read and write a JSON file in one call through the PHP streams layer (`open_basedir` and stream wrappers apply). `fastjson_file_encode()` opens the destination in write mode, so it is a convenience helper, not an atomic config/state-file update primitive; use your own temp-file + rename flow when partial writes would be unsafe. File I/O failures reuse `FASTJSON_ERROR_SYNTAX` to stay compatible with the `JSON_ERROR_*` code range, so callers that need to separate filesystem faults from parse or encode failures should check `fastjson_last_error_msg()` for the `Failed to ... file` messages. `fastjson_pointer_get()` extracts a single value by [RFC 6901](https://www.rfc-editor.org/rfc/rfc6901) JSON Pointer without materializing the rest of the document; `fastjson_pointer_exists()` reports whether a pointer resolves (distinguishing "present but null" from "absent"); `fastjson_pointer_set()` sets a single value by pointer and returns the re-serialized document, splicing the edit directly into the parsed document so a single edit on a large document skips a full decode/re-encode. Formatting and escaping flags apply to the whole pointer-set output; value-transforming flags apply only to the replacement. Pointer-set rejects an ambiguous target member duplicated in an object. `fastjson_merge_patch()` applies an [RFC 7386](https://www.rfc-editor.org/rfc/rfc7386) merge patch and canonicalizes duplicate members at each merged object using the last value and first insertion position. Merge-patch member matching always uses the raw JSON key bytes. `JSON_INVALID_UTF8_IGNORE` and `JSON_INVALID_UTF8_SUBSTITUTE` sanitize only the materialized PHP result, so malformed and valid key spellings that sanitize to the same PHP key remain distinct during the merge.
 
@@ -98,7 +98,7 @@ fastjson trades memory for speed on decode (yyjson's two-stage parser holds the 
 
 ## Roadmap
 
-- [ ] `fastjson_validate` success-path depth enforcement (currently argument-validated but the cap is not walked, since yyjson's validate-only mode has no parse-time depth flag and a post-parse walk halves the success-path throughput)
+- [x] `fastjson_validate` success-path depth enforcement (allocation-free nesting scan; the validate-only fast path is kept)
 - [ ] Streaming / incremental decode and encode
 
 ## 🔗 Native PHP extensions

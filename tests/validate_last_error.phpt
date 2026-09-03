@@ -16,7 +16,7 @@ var_dump(fastjson_validate('not json'));
 $code = fastjson_last_error();
 $msg = fastjson_last_error_msg();
 var_dump($code === FASTJSON_ERROR_SYNTAX);
-var_dump(is_string($msg) && strlen($msg) > 0 && $msg !== 'No error');
+var_dump($msg);
 
 echo "---\n";
 
@@ -29,8 +29,8 @@ echo "---\n";
 
 // Subsequent failure repopulates with that call's code.
 var_dump(fastjson_validate('{'));
-var_dump(fastjson_last_error() !== 0);
-var_dump(fastjson_last_error_msg() !== 'No error');
+var_dump(fastjson_last_error() === FASTJSON_ERROR_SYNTAX);
+var_dump(fastjson_last_error_msg());
 ?>
 --EXPECT--
 int(0)
@@ -38,7 +38,7 @@ string(8) "No error"
 ---
 bool(false)
 bool(true)
-bool(true)
+string(32) "invalid literal, expected 'null'"
 ---
 bool(true)
 int(0)
@@ -46,4 +46,4 @@ string(8) "No error"
 ---
 bool(false)
 bool(true)
-bool(true)
+string(22) "unexpected end of data"

@@ -7,7 +7,9 @@ fastjson
 
 // A raw stdio implementation could not open a file:// URL; the streams
 // layer can. Round-trip through an explicit wrapper to prove routing.
-$path = sys_get_temp_dir() . '/fastjson_file_wrapper.json';
+// tempnam avoids colliding with parallel runs; CLEAN removes leftovers
+// when the FILE section aborts before its own unlink.
+$path = tempnam(sys_get_temp_dir(), 'fjswrap');
 $url  = 'file://' . $path;
 
 $data = ['k' => 'v', 'n' => 42];
@@ -19,6 +21,12 @@ var_dump(fastjson_file_decode($url, true) === $data);
 var_dump(fastjson_file_decode($path, true) === $data);
 
 unlink($path);
+?>
+--CLEAN--
+<?php
+foreach (glob(sys_get_temp_dir() . '/fjswrap*') as $f) {
+    @unlink($f);
+}
 ?>
 --EXPECT--
 bool(true)

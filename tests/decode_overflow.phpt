@@ -19,11 +19,11 @@ var_dump(fastjson_validate("[1e309, 2]"));
 // Literal Infinity / -Infinity / NaN are NOT valid JSON and ext/json
 // rejects them; fastjson must too.
 var_dump(fastjson_decode("Infinity"));
-var_dump(fastjson_last_error() !== 0);
+var_dump(fastjson_last_error() === FASTJSON_ERROR_SYNTAX);
 var_dump(fastjson_decode("-Infinity"));
-var_dump(fastjson_last_error() !== 0);
+var_dump(fastjson_last_error() === FASTJSON_ERROR_SYNTAX);
 var_dump(fastjson_decode("NaN"));
-var_dump(fastjson_last_error() !== 0);
+var_dump(fastjson_last_error() === FASTJSON_ERROR_SYNTAX);
 
 // Validate rejects literals too.
 var_dump(fastjson_validate("Infinity"));

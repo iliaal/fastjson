@@ -2,6 +2,7 @@
 fastjson_encode shares JsonSerializable recursion state with json_encode
 --EXTENSIONS--
 fastjson
+json
 --FILE--
 <?php
 

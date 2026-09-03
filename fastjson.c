@@ -20,6 +20,8 @@
 #include "php_ini.h"
 #include "Zend/zend_exceptions.h"
 #include "ext/standard/info.h"
+#include "php_streams.h"
+#include "ext/standard/file.h"
 #include "php_fastjson.h"
 #include "fastjson_arginfo.h"
 #include "yyjson.h"
@@ -180,6 +182,33 @@ void fastjson_throw_read_error(const yyjson_read_err *err,
 {
     fastjson_throw_error(fastjson_translate_read_code(err->code), err->msg,
                          "JSON parse error", saved_err);
+}
+
+/* Shared PHP_FUNCTION entry prologue for the decode family: snapshot the
+ * throw-mode error state, then validate $depth exactly as ext/json does
+ * (<= 0 and > INT_MAX both raise ValueError on `depth_argno`). Returns
+ * true on success; on $depth failure raises ValueError and returns false,
+ * in which case the caller must RETURN_THROWS(). `throw_bit` selects the
+ * family's THROW_ON_ERROR flag. Entry points with an intentionally
+ * different contract (fastjson_encode's depth passthrough,
+ * fastjson_validate's ordered checks) keep their own prologues. */
+bool fastjson_entry_prologue(zend_long flags, zend_long throw_bit,
+                             zend_long depth, int depth_argno,
+                             bool *throw_mode_out,
+                             fastjson_error_state *saved_out)
+{
+    bool throw_mode = (flags & throw_bit) != 0;
+    fastjson_throw_mode_init(throw_mode, saved_out);
+    if (depth <= 0) {
+        zend_argument_value_error(depth_argno, "must be greater than 0");
+        return false;
+    }
+    if (depth > INT_MAX) {
+        zend_argument_value_error(depth_argno, "must be less than %d", INT_MAX);
+        return false;
+    }
+    *throw_mode_out = throw_mode;
+    return true;
 }
 
 bool fastjson_byte_is_valid_utf8_start(const char *s, size_t len, size_t pos)
@@ -831,10 +860,12 @@ PHP_FUNCTION(fastjson_validate)
         RETURN_THROWS();
     }
 
-    /* Depth enforcement on the success path is intentionally NOT done
-     * here -- it would require walking the parsed yyjson_doc, which
-     * doubles the success-path cost. yyjson's internal recursion guard
-     * still rejects pathological nesting before stack exhaustion.
+    /* $depth on the success path: the validate-only stub carries no
+     * values (P-002), so the cap is enforced with a single
+     * allocation-free nesting scan over the raw input that skips string
+     * contents and exits early once the cap is reached -- far cheaper
+     * than a tree walk, and exact on well-formed input (validate only
+     * accepts strict JSON here, so no comments can hide brackets).
      *
      * YYJSON_READ_VALIDATE_ONLY (patch P-002) skips val_hdr allocation
      * (~2/3 of peak memory). The returned doc is a stub sentinel. */
@@ -843,6 +874,14 @@ PHP_FUNCTION(fastjson_validate)
                                            YYJSON_READ_VALIDATE_ONLY, &err);
     if (doc == NULL) {
         fastjson_set_read_error(json, json_len, &err);
+        RETURN_FALSE;
+    }
+
+    if (fastjson_json_nesting_reaches(json, json_len, (size_t)depth,
+                                      false)) {
+        yyjson_doc_free(doc);
+        fastjson_set_error_code(FASTJSON_ERROR_DEPTH,
+                                "Maximum stack depth exceeded");
         RETURN_FALSE;
     }
 
@@ -917,13 +956,24 @@ PHP_MINIT_FUNCTION(fastjson)
 {
     register_fastjson_symbols(module_number);
 
-    /* ext/json is a standard built-in module; it loads before fastjson
-     * because we don't declare a dependency. The classes are registered
-     * by ext/json's MINIT, which has already run by the time we get
-     * here. zend_hash_str_find_ptr walks the class table case-folded to
-     * lowercase, so query with the lowercase name. */
+    /* ext/json is a standard built-in module; when present, its MINIT
+     * runs before ours purely because of the ZEND_MOD_OPTIONAL("json")
+     * dependency declared below (a load-ordering guarantee, not a hard
+     * requirement), so the lookups below reliably resolve out of
+     * CG(class_table) regardless of static-vs-shared build or
+     * registration order. zend_hash_str_find_ptr walks the class table
+     * case-folded to lowercase, so query with the lowercase name. */
     fastjson_json_exception_ce = zend_hash_str_find_ptr(CG(class_table),
         "jsonexception", sizeof("jsonexception") - 1);
+    if (fastjson_json_exception_ce == NULL) {
+        /* ext/json absent: register the fastjson-owned fallback so the
+         * throw path still raises an \Exception subclass callers can
+         * catch, instead of \Exception itself. */
+        zend_class_entry ce;
+        INIT_CLASS_ENTRY(ce, "Fastjson\\JsonException", NULL);
+        fastjson_json_exception_ce =
+            zend_register_internal_class_ex(&ce, zend_ce_exception);
+    }
     fastjson_json_serializable_ce = zend_hash_str_find_ptr(CG(class_table),
         "jsonserializable", sizeof("jsonserializable") - 1);
 
@@ -942,12 +992,13 @@ PHP_MINFO_FUNCTION(fastjson)
 /* Declare ext/json as an OPTIONAL dependency. This is purely a
  * load-ordering guarantee: when ext/json is present (every standard
  * PHP build), the engine runs its MINIT before ours, so the
- * JsonException / JsonSerializable lookups in PHP_MINIT_FUNCTION below
+ * JsonException / JsonSerializable lookups in PHP_MINIT_FUNCTION above
  * reliably resolve out of CG(class_table) regardless of static-vs-shared
  * build or registration order. OPTIONAL (not REQUIRED) deliberately
  * preserves the documented degrade-gracefully behavior when ext/json is
- * somehow absent: the class-entry pointers stay NULL and fastjson still
- * loads (throwing \Exception, ignoring JsonSerializable). */
+ * somehow absent: the exception entry falls back to the fastjson-owned
+ * Fastjson\JsonException while the serializable entry stays NULL (the
+ * interface is then ignored), and fastjson still loads. */
 static const zend_module_dep fastjson_deps[] = {
     ZEND_MOD_OPTIONAL("json")
     ZEND_MOD_END

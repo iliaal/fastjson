@@ -1,5 +1,5 @@
 --TEST--
-fastjson_encode: hard errors keep traversing without buffering discarded output
+fastjson_encode: hard errors keep traversing without buffering discarded output or re-entering userland
 --EXTENSIONS--
 fastjson
 --INI--
@@ -51,11 +51,11 @@ var_dump(FastjsonHardErrorCallback::$calls);
 --EXPECT--
 bool(false)
 bool(true)
-int(1)
+int(0)
 bool(true)
 bool(false)
-int(2)
+int(0)
 bool(false)
-int(3)
+int(0)
 bool(false)
-int(4)
+int(0)
