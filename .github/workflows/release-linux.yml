@@ -154,7 +154,7 @@ jobs:
           fi
 
       - name: Build and upload prebuilt binary
-        uses: php/pie-ext-binary-builder@5298761950f63c7e9565ed7004e922b346e4386c # 0.0.3
+        uses: php/pie-ext-binary-builder@cbe134360897f23793f23c2edc7602261d205a25 # 0.0.4
         with:
           release-tag: ${{ github.event.release.tag_name || inputs.release_tag }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
