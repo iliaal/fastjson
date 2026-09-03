@@ -22,11 +22,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The `1e309`-to-`INF` retry keys on the yyjson error code instead of the vendor message wording; the contract is pinned in `scripts/verify-yyjson-patches.sh`.
 - `fastjson_merge_patch()` keeps applying `$depth` to the effective result: a deep branch the patch discards no longer fails the call.
 - Post-hard-error encode cleanup no longer re-invokes `JsonSerializable::jsonSerialize()` or property hooks, and a later `INF` can no longer overwrite the recorded first error. Deliberate divergence, pinned in tests: values `ext/json` would visit after `INF` (e.g. a later `Probe` object) are now skipped, and the first error stands where `ext/json` would report the later one.
-- Test oracles hardened (exact error codes/messages, discriminating goldens, assertion-free setup guards) and temp-file isolation fixed.
+- Release workflow runs the full test gate on the release checkout before uploading prebuilt binaries; macOS build fails on warnings like Linux; ASAN covers PHP 8.1-8.5 (8.6 has no upstream php-src branch yet).
 
 ### Changed
 
-- Release workflow runs the full test gate on the release checkout before uploading prebuilt binaries; macOS build fails on warnings like Linux; ASAN covers PHP 8.1–8.6.
 - `SECURITY.md` supported-versions table and benchmark headline numbers corrected.
 
 ## [0.7.0] - 2026-07-26
