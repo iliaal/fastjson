@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-03
+
 ### Added
 
 - `Fastjson\JsonException`, owned by the extension and used for `JSON_THROW_ON_ERROR` when `ext/json` is absent (previously fell back to `\Exception`, which `catch (JsonException)` misses).
@@ -311,7 +313,8 @@ backed by yyjson 0.12.0.
 - U+2028 / U+2029 line separators emitted as ordinary code points
   (yyjson default). ext/json always escapes for JSONP safety.
 
-[Unreleased]: https://github.com/iliaal/fastjson/compare/0.7.0...HEAD
+[Unreleased]: https://github.com/iliaal/fastjson/compare/0.8.0...HEAD
+[0.8.0]: https://github.com/iliaal/fastjson/releases/tag/0.8.0
 [0.7.0]: https://github.com/iliaal/fastjson/releases/tag/0.7.0
 [0.6.0]: https://github.com/iliaal/fastjson/releases/tag/0.6.0
 [0.5.0]: https://github.com/iliaal/fastjson/releases/tag/0.5.0

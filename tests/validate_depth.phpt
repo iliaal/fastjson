@@ -3,6 +3,9 @@ fastjson_validate: $depth is enforced on the success path like ext/json
 --EXTENSIONS--
 fastjson
 json
+--SKIPIF--
+<?php if (!function_exists('json_validate')) die('skip needs ext/json json_validate (PHP 8.3+)'); ?>
+
 --FILE--
 <?php
 
