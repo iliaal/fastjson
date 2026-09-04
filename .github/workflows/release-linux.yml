@@ -100,15 +100,16 @@ jobs:
           set -euo pipefail
           phpize
           ./configure --enable-fastjson
-          # Same no-warnings bar as the tests.yml Linux job: a warning
-          # fails the release before any binary is uploaded. pipefail
-          # keeps a failing `make` from being swallowed by the tee pipe
-          # (GitHub's default shell does not set pipefail). nproc covers
-          # Linux, sysctl covers the macOS cells in this matrix.
+          # Same compiler-only bar as the tests.yml jobs: 'ld: warning:'
+          # lines are macOS linker deprecation notices, not compiler
+          # output. A warning fails the release before any binary is
+          # uploaded. pipefail keeps a failing `make` from being
+          # swallowed by the tee pipe (GitHub's default shell does not
+          # set pipefail). nproc covers Linux, sysctl covers macOS.
           make -j"$(nproc 2>/dev/null || sysctl -n hw.ncpu)" 2>&1 | tee build.log
-          if grep -q 'warning:' build.log; then
+          if grep 'warning:' build.log | grep -v '^ld: warning:' | grep -q .; then
             echo "::error::Build produced warning(s)"
-            grep 'warning:' build.log || true
+            grep 'warning:' build.log | grep -v '^ld: warning:' || true
             exit 1
           fi
 
