@@ -21,12 +21,7 @@ extern zend_module_entry fastjson_module_entry;
 #include "php.h"
 #include "Zend/zend_smart_str.h"
 
-/* zend_call_stack_overflowed() / EG(stack_limit) are 8.3+, and even on
- * 8.3+ the function is only declared when ZEND_CHECK_STACK_LIMIT is
- * configured (php-src cannot detect stack bounds on every platform).
- * Where either is absent, the remaining_depth counter (default 512)
- * still bounds recursion, so the secondary C-stack check degrades to a
- * no-op. */
+/* Native stack checks require PHP 8.3+ and detectable platform stack bounds. */
 #if PHP_VERSION_ID >= 80300 && defined(ZEND_CHECK_STACK_LIMIT)
 #include "Zend/zend_call_stack.h"
 #define FASTJSON_HAVE_NATIVE_STACK_LIMIT 1
@@ -35,13 +30,7 @@ extern zend_module_entry fastjson_module_entry;
 #define FASTJSON_HAVE_NATIVE_STACK_LIMIT 0
 #endif
 
-/* ext/json compatibility: JSON_ERROR_* values are stable ints. fastjson
- * sets the same numeric codes so callers can use either ext/json's
- * constants or bare ints to compare against fastjson_last_error().
- *
- * Defined here as macros (not constants) to avoid registration
- * collisions when both extensions are loaded -- ext/json owns the
- * constant names; fastjson reuses the values internally. */
+/* Match ext/json's error values without registering its constant names. */
 #define FASTJSON_ERROR_NONE              0
 #define FASTJSON_ERROR_DEPTH             1
 #define FASTJSON_ERROR_STATE_MISMATCH    2
@@ -55,18 +44,11 @@ extern zend_module_entry fastjson_module_entry;
 #define FASTJSON_ERROR_UTF16             10
 #define FASTJSON_ERROR_NON_BACKED_ENUM   11
 
-/* JSON_INVALID_UTF8_IGNORE / _SUBSTITUTE occupy the same two bit
- * positions on the encode and decode sides (they mirror ext/json's
- * shared JSON_* values). The low-level sanitizer and the hot-path check
- * below key off these side-neutral names; the ENCODE_/DECODE_ aliases
- * further down exist for call-site readability and are defined in terms
- * of these so the bit positions live in exactly one place. */
+/* Encode and decode share ext/json's UTF-8 flag bits. */
 #define FASTJSON_INVALID_UTF8_IGNORE          (1 << 20)
 #define FASTJSON_INVALID_UTF8_SUBSTITUTE      (1 << 21)
 
-/* Encode-side flag bits. Values match ext/json's JSON_* constants so
- * a caller passing JSON_PRETTY_PRINT works whether or not ext/json is
- * loaded; we reuse the bit positions on purpose. */
+/* Flag values match ext/json's JSON_* constants. */
 #define FASTJSON_ENCODE_HEX_TAG               (1 << 0)
 #define FASTJSON_ENCODE_HEX_AMP               (1 << 1)
 #define FASTJSON_ENCODE_HEX_APOS              (1 << 2)
@@ -82,40 +64,23 @@ extern zend_module_entry fastjson_module_entry;
 #define FASTJSON_ENCODE_INVALID_UTF8_SUBSTITUTE FASTJSON_INVALID_UTF8_SUBSTITUTE
 #define FASTJSON_ENCODE_THROW_ON_ERROR        (1 << 22)
 
-/* Decode-side flag bits (subset of ext/json's decode flags). */
 #define FASTJSON_DECODE_OBJECT_AS_ARRAY       (1 << 0)
 #define FASTJSON_DECODE_BIGINT_AS_STRING      (1 << 1)
 #define FASTJSON_DECODE_INVALID_UTF8_IGNORE   FASTJSON_INVALID_UTF8_IGNORE
 #define FASTJSON_DECODE_INVALID_UTF8_SUBSTITUTE FASTJSON_INVALID_UTF8_SUBSTITUTE
 #define FASTJSON_DECODE_THROW_ON_ERROR        (1 << 22)
-/* fastjson-only: no ext/json counterpart. Tolerate the JSONC subset
- * (line and block comments, trailing commas, a leading UTF-8 BOM) that
- * ext/json rejects. Bit 23 sits just past ext/json's flag range so it
- * never collides with a JSON_* value a caller might OR in. */
+/* JSONC comments, trailing commas, and a leading UTF-8 BOM; outside ext/json's bits. */
 #define FASTJSON_DECODE_RELAXED               (1 << 23)
 
-/* Cached class entries resolved at MINIT. JsonException comes from ext/json
- * when present; otherwise MINIT registers the fastjson-owned
- * Fastjson\JsonException fallback (an \Exception subclass) so the
- * JSON_THROW_ON_ERROR path always throws an Exception subclass instead of
- * silently degrading to \Exception. JsonSerializable is only ever resolved
- * from ext/json -- NULL when ext/json is absent, in which case fastjson
- * ignores the interface. */
+/* Without ext/json, use Fastjson\JsonException and leave JsonSerializable NULL. */
 extern zend_class_entry *fastjson_json_exception_ce;
 extern zend_class_entry *fastjson_json_serializable_ce;
 
 ZEND_BEGIN_MODULE_GLOBALS(fastjson)
     zend_long last_err_code;
-    /* yyjson's err.msg is a string literal owned by yyjson.c; we store
-     * the pointer directly without copying. NULL means "no error
-     * recorded yet this request" -- last_error_msg() returns "No error"
-     * for both NULL and the success state. */
+    /* Borrowed string literal; NULL reports "No error". */
     const char *last_err_msg;
-    /* Source location of the most recent read error. last_err_pos is a
-     * byte offset into the parsed input (-1 = none/not-applicable, e.g.
-     * encode/IO/depth errors that have no source offset); last_err_line
-     * and last_err_col are 1-based (0 = unknown). Populated by
-     * fastjson_set_read_error via yyjson_locate_pos. */
+    /* Byte offset (-1 = unavailable), then 1-based line/column (0 = unknown). */
     zend_long last_err_pos;
     zend_long last_err_line;
     zend_long last_err_col;
@@ -177,8 +142,6 @@ zend_long fastjson_translate_read_code(yyjson_read_code yy);
 yyjson_write_flag fastjson_translate_write_flags(zend_long php_flags,
                                                  bool with_pretty);
 
-/* Reset module globals to JSON_ERROR_NONE / NULL. Called on every
- * successful fastjson_* call and on each RINIT. */
 void fastjson_clear_error(void);
 
 /* Record a FASTJSON_ERROR_* code directly (no read-code translation). msg may
@@ -189,10 +152,7 @@ void fastjson_set_error_code(zend_long code, const char *msg);
 void fastjson_save_error_state(fastjson_error_state *state);
 void fastjson_restore_error_state(const fastjson_error_state *state);
 
-/* Snapshot global error state and (in non-throw mode) clear it so
- * argument-validation ValueErrors leave last_error as NONE rather than
- * whatever a previous call recorded. Used at the top of every PHP_FUNCTION
- * that participates in the JSON_THROW_ON_ERROR contract. */
+/* Non-throw argument-validation failures must leave last_error as NONE. */
 static zend_always_inline void fastjson_throw_mode_init(
     bool throw_mode, fastjson_error_state *saved)
 {
@@ -300,19 +260,9 @@ char *fastjson_sanitize_utf8(const char *s, size_t len, zend_long flags,
  * flag. */
 bool fastjson_utf8_well_formed(const char *s, size_t len);
 
-/* Splice/string/plan internals (large-string writer, hex post-pass,
- * thresholds, splice status/plan structs) plus the shared entry/IO helper
- * declarations live in fastjson_internal.h so this header stays
- * entry-point surface only. Included here so every existing consumer
- * keeps compiling unchanged. */
 #include "fastjson_internal.h"
 
-/* Absolute cap on RFC 6901 pointer segments accepted by the resolve path,
- * independent of $depth. Bounds the walk steps for adversarial pointers;
- * the parse allocs themselves ride the input size under memory_limit.
- * Exceeding it reports FASTJSON_ERROR_DEPTH like the nsegs-vs-depth
- * gate. 4096 is orders of magnitude above legitimate use (plan_init's
- * depth gate trips far earlier at default depths). */
+/* Bound adversarial pointer walks even without a caller-supplied depth limit. */
 #define FASTJSON_POINTER_MAX_SEGMENTS 4096
 
 /* Depth-gated RFC 6901 resolve: like fastjson_pointer_resolve (declared in

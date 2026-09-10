@@ -10,13 +10,6 @@
   +----------------------------------------------------------------------+
 */
 
-/*
- * fastjson_encode / fastjson_file_encode entry points. The encoder itself
- * lives in fastjson_directwrite.c; this file owns ZPP, the
- * JSON_THROW_ON_ERROR state-preservation contract, fail-path dispatch
- * (false vs \JsonException), and the file-write tail for file_encode.
- */
-
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
@@ -76,11 +69,7 @@ PHP_FUNCTION(fastjson_encode)
         Z_PARAM_LONG(depth)
     ZEND_PARSE_PARAMETERS_END();
 
-    /* ext/json's json_encode does NOT validate $depth up front -- it
-     * lets the recursion check inside the walker trip on the first
-     * container when depth <= 0, returning false + JSON_ERROR_DEPTH.
-     * That's how `json_encode($x, 0, 0)` returns false instead of
-     * raising ValueError (bug81532.phpt). Match the contract. */
+    /* Match ext/json: validate depth at the first container, without ValueError. */
 
     bool throw_mode = (flags & FASTJSON_ENCODE_THROW_ON_ERROR) != 0;
     fastjson_error_state saved_err;
@@ -131,13 +120,8 @@ PHP_FUNCTION(fastjson_file_encode)
         RETURN_FALSE;
     }
 
-    /* Write through the streams layer (wrappers + open_basedir honored).
-     * No REPORT_ERRORS, so a failed open/write emits no warning -- except
-     * an open_basedir denial, whose warning the plain-file wrapper emits
-     * regardless of REPORT_ERRORS (as file_put_contents does); we leave
-     * that security-boundary warning visible. An I/O failure is not a JSON
-     * error, so it never throws even under JSON_THROW_ON_ERROR -- the false
-     * return is unambiguous; we set last_error only for introspection. */
+    /* Omit REPORT_ERRORS; open_basedir warnings still come from the wrapper.
+     * I/O failures return false and set last_error without a JsonException. */
     php_stream_context *context = php_stream_context_from_zval(NULL, 0);
     php_stream *stream = php_stream_open_wrapper_ex(path, "wb", 0, NULL,
                                                     context);

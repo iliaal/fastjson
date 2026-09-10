@@ -10,12 +10,7 @@
   +----------------------------------------------------------------------+
 */
 
-/*
- * Immutable-tree JSON Pointer set: walks a parsed yyjson_doc, emits a
- * smart_str JSON byte stream, and substitutes the value at the pointer
- * path. Avoids yyjson_doc_mut_copy + yyjson_mut_write for the common
- * edit-in-place case (large base doc, small replacement).
- */
+/* Splice into immutable-tree output to avoid copying a large base document. */
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -119,12 +114,8 @@ static bool fj_splice_write_string(fj_splice_ctx *ctx, const char *s, size_t len
 
 static bool fj_splice_write_number(fj_splice_ctx *ctx, const yyjson_val *val)
 {
-    /* yyjson_write_number emits "Infinity"/"NaN" for non-finite reals,
-     * which is invalid JSON. The target may carry such a value: fastjson's
-     * reader retries exponent-overflow numbers (e.g. 1e309) with
-     * ALLOW_INF_AND_NAN to match ext/json's decode-to-INF, so re-emitting
-     * an untouched node here could smuggle Infinity into the output. Reject
-     * it the way the encoder rejects INF/NaN. */
+    /* Overflow-retry parsing can yield INF; yyjson would emit invalid JSON
+     * literals for non-finite reals, so reject them as the encoder does. */
     if (yyjson_is_real(FJ_IMUT_VAL(val))
             && !isfinite(yyjson_get_real(FJ_IMUT_VAL(val)))) {
         ctx->status = FJ_SPLICE_INF_OR_NAN;
@@ -296,10 +287,7 @@ static bool fj_seg_is_index(const fj_ptr_seg *seg, size_t *out_idx)
         if (!isdigit(c)) {
             return false;
         }
-        /* The 19-digit cap above bounds overflow only where size_t is
-         * 64-bit; on a 32-bit build (size_t max ~4.29e9) a 10-digit index
-         * already overflows. Guard the accumulation so an out-of-range
-         * index is rejected rather than silently wrapping to a bogus slot. */
+        /* The 19-digit cap does not prevent size_t overflow on 32-bit builds. */
         size_t digit = (size_t)(c - '0');
         if (idx > ((size_t)-1 - digit) / 10) {
             return false;

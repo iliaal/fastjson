@@ -21,13 +21,11 @@ var_dump(fastjson_decode('[[1, 2], [3, 4], []]'));
 
 echo "---\n";
 
-// Mixed nesting decoded as assoc.
 $json = '{"users":[{"name":"a","age":1},{"name":"b","age":2}],"count":2}';
 var_dump(fastjson_decode($json, true));
 
 echo "---\n";
 
-// fastjson_last_error reports NONE after success.
 var_dump(fastjson_last_error());
 var_dump(fastjson_last_error_msg());
 ?>

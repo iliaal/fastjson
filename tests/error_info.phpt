@@ -5,15 +5,12 @@ fastjson
 --FILE--
 <?php
 
-// Failure: full structure with code/msg/pos/line/col.
 fastjson_decode('{"a": bad}');
 var_dump(fastjson_last_error_info());
 
-// Success: code NONE, msg "No error", location cleared.
 fastjson_decode('{"a":1}');
 var_dump(fastjson_last_error_info());
 
-// The array agrees with the scalar accessors.
 fastjson_decode('[1,');
 $i = fastjson_last_error_info();
 var_dump(

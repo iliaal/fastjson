@@ -184,14 +184,6 @@ void fastjson_throw_read_error(const yyjson_read_err *err,
                          "JSON parse error", saved_err);
 }
 
-/* Shared PHP_FUNCTION entry prologue for the decode family: snapshot the
- * throw-mode error state, then validate $depth exactly as ext/json does
- * (<= 0 and > INT_MAX both raise ValueError on `depth_argno`). Returns
- * true on success; on $depth failure raises ValueError and returns false,
- * in which case the caller must RETURN_THROWS(). `throw_bit` selects the
- * family's THROW_ON_ERROR flag. Entry points with an intentionally
- * different contract (fastjson_encode's depth passthrough,
- * fastjson_validate's ordered checks) keep their own prologues. */
 bool fastjson_entry_prologue(zend_long flags, zend_long throw_bit,
                              zend_long depth, int depth_argno,
                              bool *throw_mode_out,
@@ -240,8 +232,7 @@ bool fastjson_byte_is_valid_utf8_start(const char *s, size_t len, size_t pos)
     return true;
 }
 
-/* Inline helpers mirroring ext/standard/html.c's UTF-8 advance rules.
- * Keeping the helpers static avoids cross-TU calls in the inner loop. */
+/* Match ext/standard/html.c's UTF-8 advance rules. */
 #define FJ_UTF8_TRAIL(c) ((c) >= 0x80 && (c) <= 0xBF)
 #define FJ_UTF8_LEAD(c)  ((c) < 0x80 || ((c) >= 0xC2 && (c) <= 0xF4))
 
@@ -253,15 +244,11 @@ char *fastjson_sanitize_utf8(const char *s, size_t len, zend_long flags,
     bool has_ignore = (flags & FASTJSON_INVALID_UTF8_IGNORE) != 0;
     bool has_subst  = (flags & FASTJSON_INVALID_UTF8_SUBSTITUTE) != 0;
     bool substitute = (mode == FJ_SAN_DECODE)
-        ? has_subst                   /* decode: any SUBSTITUTE wins */
-        : (has_subst && !has_ignore); /* encode: BOTH -> IGNORE strips */
+        ? has_subst
+        : (has_subst && !has_ignore);
 
-    /* Worst-case output: 3 bytes per input byte (each invalid byte
-     * substituted by the 3-byte U+FFFD). IGNORE-only is <= input-sized.
-     * safe_emalloc(nmemb, size, offset) bails the request via PHP's
-     * out-of-memory handler if nmemb * size + offset overflows
-     * size_t -- which lets us cap any caller-controlled `len` without
-     * an explicit (SIZE_MAX-1)/3 check here. */
+    /* Each invalid byte can expand to the three-byte U+FFFD; safe_emalloc
+     * checks multiplication overflow. IGNORE never grows the input. */
     char *out;
     if (substitute) {
         out = safe_emalloc(len, 3, 1);
@@ -270,11 +257,7 @@ char *fastjson_sanitize_utf8(const char *s, size_t len, zend_long flags,
     }
     char *w = out;
 
-    /* Encode side: mirror ext/standard/html.c::get_next_char (UTR-36
-     * strategy 2 maximal-subpart). Decode side: per-byte advance on
-     * invalid (matches the re2c state machine in ext/json's parser).
-     * Both paths share the same per-byte SUBSTITUTE / IGNORE emit
-     * step, only differing in how far they advance after a bad byte. */
+    /* Encode uses UTR-36 maximal-subpart advance; decode advances per byte. */
     bool encode_advance = (mode == FJ_SAN_ENCODE);
     size_t i = 0;
     while (i < len) {
@@ -363,10 +346,7 @@ char *fastjson_sanitize_utf8(const char *s, size_t len, zend_long flags,
 
 bool fastjson_utf8_well_formed(const char *s, size_t len)
 {
-    /* Mirror fastjson_sanitize_utf8's per-codepoint rules without writing
-     * or allocating. Any byte sequence that the sanitizer would have
-     * dropped or substituted returns false here; valid sequences return
-     * true. Two functions, one ruleset -- keep them in lockstep. */
+    /* Keep validation rules in sync with fastjson_sanitize_utf8. */
     size_t i = 0;
     /* Bulk-skip ASCII runs: defensive IGNORE/SUBSTITUTE callers usually
      * pass clean UTF-8; this avoids a per-byte loop on long strings. */
@@ -740,20 +720,8 @@ bool fastjson_apply_hex_escapes(smart_str *buf, zend_long flags,
 bool fastjson_input_has_inf_nan_literal(const char *s, size_t len,
                                         bool allow_comments)
 {
-    /* Walk outside string literals. Inside "..." backslash escapes
-     * the next char. Anywhere unquoted, an ASCII run starting with
-     * I/i + N/n + F/f (Inf or Infinity) or N/n + A/a + N/n (NaN) is
-     * the literal yyjson's ALLOW_INF_AND_NAN accepts and ext/json
-     * doesn't. yyjson also accepts a leading '-'; we still match
-     * either form via the I/N start.
-     *
-     * When the caller decodes with FASTJSON_DECODE_RELAXED, yyjson also
-     * accepts JSONC line/block comments. Their bytes are grammar, not
-     * tokens, so skip them: a comment containing "info" must not read
-     * as an Inf literal (false positive that blocks the legitimate
-     * exponent-overflow retry), and an unbalanced quote inside a comment
-     * must not flip the string state and hide a real bare Inf token
-     * outside it (false negative). */
+    /* Skip strings and JSONC comments: "info" inside a comment must not
+     * block overflow retry, nor may a comment's quote hide a bare Inf token. */
     bool in_str = false;
     bool escape = false;
     for (size_t i = 0; i < len; i++) {
@@ -816,15 +784,8 @@ PHP_FUNCTION(fastjson_validate)
         Z_PARAM_LONG(flags)
     ZEND_PARSE_PARAMETERS_END();
 
-    /* Argument validation order mirrors ext/json's json_validate
-     * verbatim so behavior matches when multiple inputs are out of
-     * spec at once:
-     *   1. $flags check     -> ValueError (allowed flags message)
-     *   2. empty input      -> RETURN_FALSE with SYNTAX error
-     *   3. $depth <= 0      -> ValueError "must be greater than 0"
-     *   4. $depth > INT_MAX -> ValueError "must be less than %d"
-     * In particular: empty input with bad $depth short-circuits to
-     * false before the depth check raises. */
+    /* Match ext/json's validation order: flags, empty input, then depth.
+     * Empty input returns false even when depth would raise ValueError. */
     if (flags & ~(zend_long)FASTJSON_DECODE_INVALID_UTF8_IGNORE) {
         zend_argument_value_error(3,
             "must be a valid flag (allowed flags: JSON_INVALID_UTF8_IGNORE)");
@@ -844,11 +805,7 @@ PHP_FUNCTION(fastjson_validate)
         RETURN_FALSE;
     }
 
-    /* Clear residual last_error state from a prior call before any
-     * argument-validation ValueError can throw. Mirrors ext/json's
-     * json_validate, which resets error state immediately after the
-     * empty-input short-circuit so the post-throw global state is
-     * NONE, not whatever the previous call left behind. */
+    /* Depth ValueErrors must leave last_error as NONE, matching ext/json. */
     fastjson_clear_error();
 
     if (depth <= 0) {
@@ -860,15 +817,8 @@ PHP_FUNCTION(fastjson_validate)
         RETURN_THROWS();
     }
 
-    /* $depth on the success path: the validate-only stub carries no
-     * values (P-002), so the cap is enforced with a single
-     * allocation-free nesting scan over the raw input that skips string
-     * contents and exits early once the cap is reached -- far cheaper
-     * than a tree walk, and exact on well-formed input (validate only
-     * accepts strict JSON here, so no comments can hide brackets).
-     *
-     * YYJSON_READ_VALIDATE_ONLY (patch P-002) skips val_hdr allocation
-     * (~2/3 of peak memory). The returned doc is a stub sentinel. */
+    /* P-002 omits value allocation (~2/3 of peak memory); check depth in
+     * the input after parsing because the returned doc is only a sentinel. */
     yyjson_read_err err;
     yyjson_doc *doc = fastjson_read_doc_ex(json, json_len, flags,
                                            YYJSON_READ_VALIDATE_ONLY, &err);
@@ -956,13 +906,7 @@ PHP_MINIT_FUNCTION(fastjson)
 {
     register_fastjson_symbols(module_number);
 
-    /* ext/json is a standard built-in module; when present, its MINIT
-     * runs before ours purely because of the ZEND_MOD_OPTIONAL("json")
-     * dependency declared below (a load-ordering guarantee, not a hard
-     * requirement), so the lookups below reliably resolve out of
-     * CG(class_table) regardless of static-vs-shared build or
-     * registration order. zend_hash_str_find_ptr walks the class table
-     * case-folded to lowercase, so query with the lowercase name. */
+    /* The optional dependency ensures ext/json's MINIT precedes these lookups. */
     fastjson_json_exception_ce = zend_hash_str_find_ptr(CG(class_table),
         "jsonexception", sizeof("jsonexception") - 1);
     if (fastjson_json_exception_ce == NULL) {
@@ -989,16 +933,7 @@ PHP_MINFO_FUNCTION(fastjson)
     php_info_print_table_end();
 }
 
-/* Declare ext/json as an OPTIONAL dependency. This is purely a
- * load-ordering guarantee: when ext/json is present (every standard
- * PHP build), the engine runs its MINIT before ours, so the
- * JsonException / JsonSerializable lookups in PHP_MINIT_FUNCTION above
- * reliably resolve out of CG(class_table) regardless of static-vs-shared
- * build or registration order. OPTIONAL (not REQUIRED) deliberately
- * preserves the documented degrade-gracefully behavior when ext/json is
- * somehow absent: the exception entry falls back to the fastjson-owned
- * Fastjson\JsonException while the serializable entry stays NULL (the
- * interface is then ignored), and fastjson still loads. */
+/* Permit loading without ext/json, using the MINIT fallback class. */
 static const zend_module_dep fastjson_deps[] = {
     ZEND_MOD_OPTIONAL("json")
     ZEND_MOD_END

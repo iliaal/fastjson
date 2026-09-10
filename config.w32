@@ -9,10 +9,7 @@ if (PHP_FASTJSON != "no") {
 
     var yyjson_src_dir = "vendor\\yyjson";
 
-    // yyjson.h on Windows expands `yyjson_api` to __declspec(dllexport) only
-    // when YYJSON_EXPORTS is defined. We don't define it, so all yyjson
-    // symbols stay internal to the extension DLL by default. Adding the
-    // include path is the only build-flag work needed.
+    // Leave YYJSON_EXPORTS undefined to keep yyjson symbols inside the DLL.
     ADD_FLAG("CFLAGS_FASTJSON",
         "/I" + configure_module_dirname + "\\" + yyjson_src_dir);
 

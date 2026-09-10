@@ -10,15 +10,7 @@
   +----------------------------------------------------------------------+
 */
 
-/* Internal (non-entry-point) declarations: large-string writer, hex
- * post-pass, size thresholds, pretty indent, splice status/plan structs,
- * and the shared entry/IO helpers defined in fastjson.c.
- *
- * Included from the tail of php_fastjson.h; not for direct inclusion --
- * it relies on php.h, Zend/zend_smart_str.h, and yyjson.h, which the
- * public header pulls in above the include point. Every translation unit
- * that includes php_fastjson.h sees these declarations with no source
- * changes elsewhere. */
+/* Include through php_fastjson.h for the required PHP and yyjson types. */
 
 #ifndef PHP_FASTJSON_INTERNAL_H
 #define PHP_FASTJSON_INTERNAL_H
@@ -46,39 +38,22 @@ fj_string_size_status fastjson_write_large_json_string(
 bool fastjson_apply_hex_escapes(smart_str *buf, zend_long flags,
                                 size_t start_pos);
 
-/* Returns true if the value of either UTF-8-handling flag bit is set
- * in `flags`. Folds the two-bit check the encoder/decoder do many
- * times into one named test so the IS_STRING hot path stays a
- * single comparison. */
 #define FASTJSON_HAS_UTF8_HANDLING_FLAG(flags) \
     (((flags) & (FASTJSON_INVALID_UTF8_IGNORE \
                  | FASTJSON_INVALID_UTF8_SUBSTITUTE)) != 0)
 
-/* At and above this length a string is routed to
- * fastjson_write_large_json_string(), which scans for escape candidates and
- * then copies, rather than letting yyjson's writer reserve 6x and fuse both
- * steps into one pass. Trading a second pass for a much smaller reservation
- * is strongly positive on x86_64 (clean 256 KiB ASCII -35%, a late escape
- * -31%) and mildly negative on aarch64 (+8%), where the extra pass costs more
- * than the allocation it saves; by 512 KiB both architectures are ~40% ahead.
- * Kept at 256 KiB deliberately: the x86_64 win is several times the aarch64
- * cost and the crossover is only one step away on ARM. Re-measure on both
- * architectures before moving it. */
+/* Avoid yyjson's 6x reservation: at 256 KiB, clean/late-escape ASCII measured
+ * -35%/-31% on x86_64, +8% on aarch64; both gain ~40% by 512 KiB.
+ * Re-measure both architectures before moving the threshold. */
 #define FASTJSON_EXACT_STRING_THRESHOLD (256 * 1024)
-/* Above this length a string that is not copyable ASCII pays an exact-size
- * preflight (a second full pass over the input) so the writer reserves the
- * real output size instead of the 6x worst case. For anything but clean
- * ASCII that second pass costs about as much as the write itself -- measured
- * +75% (x86_64) and +160% (aarch64) on a 1 MiB UTF-8 string -- so it is only
- * worth paying once the 6x reservation is itself a memory hazard. At 8 MiB
- * the avoided reservation is 48 MiB, which is where it starts to threaten a
- * default 128M memory_limit. Below it, take the 6x reservation and one pass.
- * Clean ASCII never reaches the preflight: the fused scan-and-copy loop in
- * fastjson_write_large_json_string() completes it in a single pass. */
+/* Non-ASCII preflight measured +75%/+160% on x86_64/aarch64 at 1 MiB.
+ * Delay it until the 6x reservation reaches 48 MiB against a 128M memory_limit.
+ * Clean ASCII bypasses preflight via the fused scan-and-copy path. */
 #define FASTJSON_EXACT_NONASCII_THRESHOLD (8 * 1024 * 1024)
 #define FASTJSON_ENCODE_HEX_MASK (FASTJSON_ENCODE_HEX_TAG \
     | FASTJSON_ENCODE_HEX_AMP | FASTJSON_ENCODE_HEX_APOS \
     | FASTJSON_ENCODE_HEX_QUOT)
+/* yyjson_write_number requires at least 21 bytes for integers, 40 for reals. */
 #define FASTJSON_NUM_INT_WORST 24
 #define FASTJSON_NUM_REAL_WORST 40
 

@@ -1,5 +1,3 @@
-dnl config.m4 for extension fastjson
-
 PHP_ARG_ENABLE(fastjson, whether to enable fastjson support,
 [  --enable-fastjson       Enable fastjson (yyjson-backed JSON) support])
 
@@ -8,11 +6,6 @@ PHP_ARG_ENABLE(fastjson-dev, whether to enable developer build flags,
 
 if test "$PHP_FASTJSON" != "no"; then
 
-  dnl 8.1 is the supported floor. On 8.1/8.2 the secondary C-stack
-  dnl overflow guard (zend_call_stack_overflowed, 8.3+) degrades to a
-  dnl no-op; the $depth counter (default 512) still bounds recursion, so
-  dnl deeply-nested input fails cleanly rather than smashing the stack.
-  dnl See the fallback in fastjson_decode.c / fastjson_directwrite.c.
   PHP_VERSION_ID=$($PHP_CONFIG --vernum)
   if test "$PHP_VERSION_ID" -lt "80100"; then
     AC_MSG_ERROR([fastjson requires PHP 8.1.0 or later (found $PHP_VERSION_ID)])
@@ -23,24 +16,9 @@ if test "$PHP_FASTJSON" != "no"; then
   YYJSON_SOURCES="$YYJSON_SRC_DIR/yyjson.c"
   WRAPPER_SOURCES="fastjson.c fastjson_alloc.c fastjson_decode.c fastjson_encode.c fastjson_directwrite.c fastjson_pointer_splice.c"
 
-  dnl -Wall -Wextra are on by default so wrapper regressions get caught
-  dnl in every local build; --enable-fastjson-dev upgrades to -Werror.
-  dnl -Wno-unused-parameter silences PHP MINIT/MSHUTDOWN/MINFO macros
-  dnl whose generated signatures take `type` and `module_number` params
-  dnl we don't use; also covers yyjson static helpers that aren't
-  dnl reachable depending on SIMD / float-conversion build config.
-  dnl
-  dnl -fvisibility=hidden + -Dyyjson_api= keeps yyjson symbols out of
-  dnl the .so's dynamic table. The compiler flag flips the default to
-  dnl hidden, but vendor/yyjson/yyjson.h defines yyjson_api as
-  dnl __attribute__((visibility("default"))) which would override that
-  dnl per-symbol. Pre-defining yyjson_api to empty (the #ifndef guard
-  dnl at yyjson.h:322 lets us win the macro race) drops the explicit
-  dnl default-visibility attribute, leaving the compiler default to
-  dnl apply. ZEND_GET_MODULE separately marks get_module as default-
-  dnl visibility so the loader still finds it. Prevents collisions
-  dnl with another extension (or a future ext/json link) that also
-  dnl vendors yyjson.
+  dnl PHP lifecycle signatures and conditional yyjson helpers cause unused warnings.
+  dnl Empty yyjson_api so its default-visibility attribute cannot override hidden.
+  dnl This avoids collisions with other yyjson users; ZEND_GET_MODULE stays exported.
   FASTJSON_CFLAGS="-fvisibility=hidden -Dyyjson_api= \
     -Wall -Wextra -Wno-unused-parameter -Wno-unused-function"
 

@@ -15,12 +15,8 @@
  * #included for immutable and mutable yyjson values with FJ_WALK_NAME set
  * to the function name, FJ_WALK_MUTABLE selecting the representation, and
  * FJ_WALK_SANITIZE set to a literal 0 or 1. Because
- * FJ_WALK_SANITIZE is a preprocessor constant, the sanitize-only code is
- * physically absent from the fast (0) instantiation -- the two stamped
- * functions are as branch-free and specialized as hand-written copies,
- * but the container / number / depth scaffolding lives in exactly one
- * place. Any change here applies to both walkers by construction, which
- * is the whole point of the shared template.
+ * FJ_WALK_SANITIZE is a preprocessor constant, the fast (0) instantiation
+ * omits sanitize-only code.
  *
  * FJ_WALK_SANITIZE selects the string/key emit strategy only:
  *   0 -> yyjson's bytes go straight into the zval (fast path).
@@ -122,16 +118,12 @@ static bool FJ_WALK_NAME(FJ_WALK_VAL *val, bool assoc,
             return true;
         }
 #endif
-        /* yyjson_get_len is the byte length; ZVAL_STRINGL preserves
-         * embedded NULs that may appear after a \0 escape. */
         ZVAL_STRINGL(out, raw, raw_len);
         return true;
     }
 
     case YYJSON_TYPE_ARR: {
-        /* Stack-overflow guard for runaway recursion (parallel to the
-         * encoder's check; fires when remaining_depth is configured
-         * looser than zend.max_allowed_stack_size allows). */
+        /* $depth can exceed the native stack limit. */
         if (UNEXPECTED(zend_call_stack_overflowed(EG(stack_limit)))) {
             fastjson_set_error_code(FASTJSON_ERROR_DEPTH,
                                     "Maximum stack depth exceeded");
@@ -189,10 +181,7 @@ static bool FJ_WALK_NAME(FJ_WALK_VAL *val, bool assoc,
             ht = Z_ARRVAL_P(out);
         } else {
             object_init(out);
-            /* Z_OBJPROP_P triggers lazy properties HashTable creation
-             * on the freshly-init'd stdClass. zend_hash_update on it
-             * directly avoids the write_property handler dispatch +
-             * zval copy that add_property_zval_ex would impose. */
+            /* Direct HashTable writes avoid stdClass property-handler dispatch. */
             ht = Z_OBJPROP_P(out);
             if (n != 0) {
                 zend_hash_extend(ht, (uint32_t)n, false);
@@ -233,13 +222,9 @@ static bool FJ_WALK_NAME(FJ_WALK_VAL *val, bool assoc,
                 return false;
             }
             if (assoc) {
-                /* zend_symtable_str_update applies PHP's standard
-                 * "0" -> 0 numeric-string-to-int promotion for array
-                 * keys. Empty key is allowed and stored as "". */
+                /* Promote numeric array keys; preserve object keys below. */
                 zend_symtable_str_update(ht, use_key, use_klen, &child);
             } else {
-                /* Object properties keep string keys verbatim; "0"
-                 * stays "0" so $obj->{"0"} works as expected. */
                 zend_string *zk = zend_string_init(use_key, use_klen, 0);
                 zend_hash_update(ht, zk, &child);
                 zend_string_release_ex(zk, 0);

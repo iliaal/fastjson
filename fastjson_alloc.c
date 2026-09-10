@@ -17,10 +17,6 @@
 #include "php.h"
 #include "fastjson_alloc.h"
 
-/* yyjson's realloc signature passes both old_size and new size; emalloc's
- * erealloc only needs the new size, so old_size is ignored. yyjson never
- * passes ptr=NULL or size=0 to realloc -- it routes those to malloc/free
- * itself -- so we don't need to special-case them here. */
 static void *fastjson_alc_malloc(void *ctx, size_t size)
 {
     (void)ctx;
@@ -29,6 +25,7 @@ static void *fastjson_alc_malloc(void *ctx, size_t size)
 
 static void *fastjson_alc_realloc(void *ctx, void *ptr, size_t old_size, size_t size)
 {
+    /* yyjson routes NULL pointers and zero sizes to malloc/free itself. */
     (void)ctx;
     (void)old_size;
     return erealloc(ptr, size);

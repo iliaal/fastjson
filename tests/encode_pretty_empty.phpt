@@ -5,15 +5,7 @@ fastjson
 --FILE--
 <?php
 
-/* Empty arrays / objects must render compact ([] and {}) with no inner
- * newline even under JSON_PRETTY_PRINT, and a non-empty container that
- * holds empty ones must indent only the non-empty levels -- byte-for-byte
- * with ext/json. */
-
-/* A class whose only properties are private/protected serializes to no
- * JSON members, so pretty-print must render it compact ({}) -- the raw
- * property count is non-zero, so emptiness has to be judged by what is
- * actually emitted, not by zend_array_count. */
+/* Raw property count is nonzero, but no members should be emitted. */
 class PrivOnly { private $a = 1; protected $b = 2; }
 
 $cases = [

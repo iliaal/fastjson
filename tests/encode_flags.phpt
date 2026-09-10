@@ -5,32 +5,25 @@ fastjson
 --FILE--
 <?php
 
-// PRETTY_PRINT: 4-space indent, newlines.
 echo fastjson_encode(["a" => [1, 2], "b" => 3], JSON_PRETTY_PRINT), "\n";
 
 echo "---\n";
 
-// Default: forward slashes are escaped (matches ext/json default).
 var_dump(fastjson_encode("a/b/c"));
 
-// UNESCAPED_SLASHES: raw slashes.
 var_dump(fastjson_encode("a/b/c", JSON_UNESCAPED_SLASHES));
 
 echo "---\n";
 
-// Default: non-ASCII as \uXXXX escapes (matches ext/json default).
-// Hex digit case is byte-identical to ext/json via vendor patch P-001
-// (see vendor/yyjson/PATCHES.md). Round-trip via decode for correctness.
+// Vendor patch P-001 aligns escape hex casing with ext/json.
 $encoded = fastjson_encode("héllo");
-var_dump(strpos($encoded, '\u00') !== false);   // some \u escape present
-var_dump(fastjson_decode($encoded) === "héllo"); // round-trips
+var_dump(strpos($encoded, '\u00') !== false);
+var_dump(fastjson_decode($encoded) === "héllo");
 
-// UNESCAPED_UNICODE: raw UTF-8.
 var_dump(fastjson_encode("héllo", JSON_UNESCAPED_UNICODE));
 
 echo "---\n";
 
-// Combined flags.
 $mixed = ["url" => "https://example.com/é", "n" => 1];
 $out = fastjson_encode($mixed,
     JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);

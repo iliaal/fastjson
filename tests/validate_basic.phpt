@@ -5,7 +5,6 @@ fastjson
 --FILE--
 <?php
 
-// Valid cases.
 var_dump(fastjson_validate('null'));
 var_dump(fastjson_validate('true'));
 var_dump(fastjson_validate('false'));
@@ -18,7 +17,6 @@ var_dump(fastjson_validate('{"a": 1, "b": [true, null]}'));
 
 echo "---\n";
 
-// Invalid cases.
 var_dump(fastjson_validate(''));                  // empty
 var_dump(fastjson_validate('{'));                 // unterminated
 var_dump(fastjson_validate('[1,]'));              // trailing comma

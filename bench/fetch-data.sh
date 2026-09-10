@@ -1,16 +1,6 @@
 #!/usr/bin/env bash
-#
-# Fetch canonical JSON benchmark inputs into bench/data/. The files
-# come from crazyxman/simdjson_php's jsonexamples directory -- the
-# nearest cross-comparison surface (simdjson_php is the existing
-# simdjson-backed PHP extension; using their corpus keeps the
-# numbers comparable). Same files are originally from Milo Yip's
-# nativejson-benchmark / simdjson upstream, so the suite is also
-# apples-to-apples with yyjson / RapidJSON / nlohmann published
-# numbers.
-#
-# The data directory is gitignored: ~16MB total when all files are
-# fetched, regenerable on demand.
+# Reuse simdjson_php's corpus (originally nativejson-benchmark/simdjson)
+# for comparable results. bench/data/ is gitignored and regenerable.
 
 set -euo pipefail
 
@@ -46,9 +36,7 @@ FILES=(
     update-center.json
 )
 
-# Smaller files exercise the per-call-overhead regime where function
-# dispatch + zval setup dominates throughput. simdjson_php groups them
-# under jsonexamples/small.
+# Small inputs expose function-dispatch and zval-setup overhead.
 SMALL_FILES=(
     adversarial.json
     demo.json

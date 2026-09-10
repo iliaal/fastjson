@@ -10,37 +10,7 @@
   +----------------------------------------------------------------------+
 */
 
-/*
- * Direct-write encoder: walks PHP zvals straight into a smart_str
- * buffer, emitting JSON tokens inline. One-stage replacement for the
- * (now legacy) two-stage path in fastjson_encode.c that built a
- * yyjson_mut_doc intermediate.
- *
- * Why: profiling encode on the citm_catalog / random workloads showed
- * the two-stage cost (mut_val alloc per JSON value + per-val writer
- * dispatch) dominating when per-value work is small. ext/json wins on
- * those workloads precisely because its smart_str-driven walker is
- * one-stage. Direct-write closes that structural gap.
- *
- * What we reuse from yyjson:
- *   - yyjson_write_number()         — public API, takes a stack-allocated
- *                                     yyjson_val for the number to emit
- *   - yyjson_write_string_to_buf()  — vendor patch P-003, writes a
- *                                     quoted/escaped JSON string into
- *                                     a caller buffer
- *
- * What we implement ourselves:
- *   - Container brackets/commas/colons
- *   - Recursion guards and scoped JsonSerializable/property-hook lifetimes
- *   - Pretty-print indent (when JSON_PRETTY_PRINT is set)
- *   - JSON_HEX_* substitutions (inline; no second pass needed because
- *     we own the byte stream as it's written)
- *   - JSON_NUMERIC_CHECK string-to-number coercion
- *   - JSON_PRESERVE_ZERO_FRACTION integer-valued-double handling
- *   - JSON_FORCE_OBJECT, UNESCAPED_SLASHES, UNESCAPED_UNICODE
- *   - JSON_PARTIAL_OUTPUT_ON_ERROR substitutions
- *   - JSON_THROW_ON_ERROR with the "preserve global state" contract
- */
+/* Write zvals directly to smart_str to avoid per-value yyjson_mut_doc allocation. */
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -58,15 +28,10 @@
 #include "fastjson_alloc.h"
 #include "yyjson.h"
 
-/* Per-call state threaded through the recursive walker. Keeping it
- * struct-pointer keeps the function signature small (one arg vs five
- * positional). */
 typedef struct fastjson_dw_ctx {
     smart_str       buf;
     zend_long       flags;
-    yyjson_write_flag yflags;   /* translated to yyjson's flag enum
-                                 * once at top-level; reused by every
-                                 * call to yyjson_write_string_to_buf */
+    yyjson_write_flag yflags;
     /* PG(serialize_precision) sampled once at entry. ext/json formats every
      * double via zend_gcvt(precision); the default -1 means shortest
      * round-trip, which the yyjson fast path below already matches. */
@@ -74,16 +39,11 @@ typedef struct fastjson_dw_ctx {
     bool            partial_output;
     bool            pretty_print;
     bool            hard_error;
-    /* Set once a discard walk hits an error that ext/json treats as a hard
-     * stop. ext/json propagates that FAILURE out of every enclosing
-     * container, so no further siblings are visited; without this flag each
-     * enclosing level would start its own discard and report an error from a
-     * value ext/json never reached (and re-enter JsonSerializable). */
+    /* Prevent enclosing containers from restarting discard after a hard stop. */
     bool            discard_aborted;
     fastjson_error_state error;
     uint32_t        call_depth;
-    int             indent_level;  /* current pretty-print depth; 0 at
-                                    * top level, +1 per open container */
+    int             indent_level;
 } fastjson_dw_ctx;
 
 static bool dw_encode_zval(fastjson_dw_ctx *ctx, zval *zv,
@@ -166,10 +126,6 @@ static bool dw_reserve(fastjson_dw_ctx *ctx, size_t add_len)
     return true;
 }
 
-/* Small strings keep yyjson's single-pass writer. At the shared threshold,
- * the large-string helper fuses printable-ASCII validation and copying; for
- * special/non-ASCII bytes below 1 MiB it falls back to yyjson's single pass,
- * while larger strings get exact-size preflight to avoid 6x reservations. */
 static bool dw_reserve_string(fastjson_dw_ctx *ctx, size_t len)
 {
     if (UNEXPECTED(len > (ZSTR_MAX_LEN - 2) / 6)) {
@@ -178,11 +134,6 @@ static bool dw_reserve_string(fastjson_dw_ctx *ctx, size_t len)
     return dw_reserve(ctx, len * 6 + 2);
 }
 
-/* Shared write-flag translation (declared in php_fastjson.h). The
- * direct-write encoder passes with_pretty=false because it emits
- * pretty-print indentation itself via smart_str; yyjson-writer callers
- * such as fastjson_pointer_set pass true so PRETTY_PRINT maps to
- * YYJSON_WRITE_PRETTY. */
 yyjson_write_flag fastjson_translate_write_flags(zend_long php_flags,
                                                  bool with_pretty)
 {
@@ -196,46 +147,16 @@ yyjson_write_flag fastjson_translate_write_flags(zend_long php_flags,
     if (with_pretty && (php_flags & FASTJSON_ENCODE_PRETTY_PRINT)) {
         yf |= YYJSON_WRITE_PRETTY;
     }
-    /* IGNORE / SUBSTITUTE: handled by fastjson-side sanitization in
-     * dw_emit_string_ex before yyjson runs. We deliberately do NOT
-     * pass YYJSON_WRITE_ALLOW_INVALID_UNICODE -- yyjson's behavior
-     * there ("emit byte raw, escape with � if needed") doesn't
-     * match ext/json's strip-or-substitute semantics. */
+    /* Sanitize IGNORE/SUBSTITUTE ourselves; yyjson's invalid-Unicode mode
+     * does not match ext/json's strip-or-substitute semantics. */
     return yf;
 }
 
-/* Pretty-print indent emission. ext/json uses 4 spaces per level
- * and inserts a newline + indent before each value/key inside a
- * container. Format mirrors ext/json's byte-for-byte:
- *
- *   {
- *       "key": value,
- *       "key2": [
- *           1,
- *           2
- *       ]
- *   }
- *
- * That is: newline-then-indent BEFORE each item, plus newline-then-
- * indent BEFORE the closing bracket (so the bracket is one level
- * less indented than the contents). Empty containers stay compact
- * ({} and []) -- no inner whitespace. */
 static inline void dw_emit_newline_indent(fastjson_dw_ctx *ctx, int level)
 {
     fastjson_append_newline_indent(&ctx->buf, level);
 }
 
-/* Apply the JSON_HEX_TAG / HEX_AMP / HEX_APOS / HEX_QUOT substitutions
- * to a string buffer region [start_pos, end_pos). Operates on the
- * smart_str's underlying byte buffer; safe because these substitutions
- * only ever lengthen the region.
- *
- * The scan walks JSON escape sequences explicitly: when we see a '\',
- * we consume the whole escape (2 bytes for short escapes, 6 for \uXXXX)
- * before deciding what to do next. Only the '\"' escape is a candidate
- * for HEX_QUOT substitution. Bare '<', '>', '&', '\'' only ever appear
- * as string content (yyjson never escapes them), so HEX_TAG/AMP/APOS
- * substitute every occurrence outside an escape body. */
 static bool dw_apply_hex_escapes(fastjson_dw_ctx *ctx,
                                  size_t start_pos)
 {
@@ -249,18 +170,7 @@ static bool dw_apply_hex_escapes(fastjson_dw_ctx *ctx,
     return true;
 }
 
-/* Number output reservation. yyjson_write_number's documented buffer
- * contract (yyjson.h) is the floor: integers need >= 21 bytes, floats
- * need >= 40. Reserve exactly those (rounded up for the int case) rather
- * than a blanket 64 -- a tighter per-value reservation means smart_str
- * carries less transient headroom between scalars. Do NOT shrink below
- * these; yyjson writes directly into the buffer. */
-/* Returns true on success, false if the caller should abort the encode.
- * On invalid UTF-8 with PARTIAL_OUTPUT, emits "null" (value site) and
- * returns true so the caller continues; without PARTIAL_OUTPUT the
- * buffer is unchanged and the function returns false. Object-key
- * callers want a different partial substitution (`""` not `null`) and
- * therefore pass is_key=true to suppress the substitution here. */
+/* Partial output substitutes an empty string for invalid keys, null for values. */
 static bool dw_emit_string_ex(fastjson_dw_ctx *ctx, const char *s, size_t len,
                               bool is_key)
 {
@@ -288,15 +198,9 @@ static bool dw_emit_string_ex(fastjson_dw_ctx *ctx, const char *s, size_t len,
 
 invalid_utf8:
     {
-        /* yyjson rejected the string as invalid UTF-8. Under IGNORE /
-         * SUBSTITUTE, sanitize and retry; the sanitizer's output is
-         * always valid UTF-8 so the second yyjson call succeeds. We
-         * only allocate the temporary buffer on this slow path, so
-         * the common (valid-UTF-8) case pays nothing extra. */
+        /* Allocate a sanitized copy only after the writer rejects the input. */
         if (FASTJSON_HAS_UTF8_HANDLING_FLAG(ctx->flags)) {
             size_t sane_len;
-            /* Encode-side semantics: IGNORE wins on BOTH-bits;
-             * SUBSTITUTE follows the maximal-subpart advance rule. */
             char *sane = fastjson_sanitize_utf8(s, len, ctx->flags,
                                                 FJ_SAN_ENCODE, &sane_len);
             fj_string_size_status sane_status = FJ_STRING_SIZE_OK;
@@ -324,9 +228,6 @@ invalid_utf8:
             if (sane_status == FJ_STRING_SIZE_TOO_LARGE) {
                 return dw_fail_too_large(ctx);
             }
-            /* Fall through to the error path; sanitization shouldn't
-             * fail, but if yyjson rejects our output we still need a
-             * graceful exit. */
         }
         dw_set_error(ctx, FASTJSON_ERROR_UTF8,
             "Malformed UTF-8 characters, possibly incorrectly encoded");
@@ -465,9 +366,6 @@ static bool dw_emit_double(fastjson_dw_ctx *ctx, double d)
     return true;
 }
 
-/* Helper: substitute the recursive null/0 marker on PARTIAL_OUTPUT
- * paths. Always sets the error code; returns true if we should
- * continue (substitution emitted) and false if we should abort. */
 static bool dw_partial_or_fail(fastjson_dw_ctx *ctx,
                                int error_code,
                                const char *error_msg,
@@ -498,10 +396,7 @@ static bool dw_emit_object_key(fastjson_dw_ctx *ctx, zend_string *key,
             return false;
         }
     } else {
-        /* Integer key: digits + optional minus. No escape needed;
-         * reuse yyjson's digit writer (as dw_emit_long does) instead of
-         * snprintf, avoiding its locale/format-string overhead, and wrap
-         * the written digits in quotes. */
+        /* Integer keys need no escaping; reuse yyjson's digit writer. */
         if (!dw_reserve(ctx, FASTJSON_NUM_INT_WORST + 2)) {
             return false;
         }
@@ -649,12 +544,7 @@ static bool dw_emit_jsonserializable(fastjson_dw_ctx *ctx, zval *zv,
         return dw_partial_or_fail(ctx, FASTJSON_ERROR_RECURSION,
             "Recursion detected", false);
     }
-    /* Hold a reference across the call: jsonSerialize() may drop every
-     * other reference to obj (e.g. unset()-ing the array element being
-     * encoded, bug77843), which would free it out from under the engine
-     * -- the VM's ZEND_FETCH_THIS then reads freed memory. Our own ref
-     * keeps obj alive until we release it below, after which the object
-     * is destroyed if we held the last reference. */
+    /* jsonSerialize() can drop every other reference to obj (bug77843). */
     GC_ADDREF(obj);
     dw_json_guard_protect(&guard);
 
@@ -669,18 +559,9 @@ static bool dw_emit_jsonserializable(fastjson_dw_ctx *ctx, zval *zv,
         return false;
     }
 
-    /* The serialized result is encoded at the object's own depth, not one
-     * level deeper: ext/json's serializable path adds no depth level of its
-     * own (only php_json_encode_array increments encoder->depth), so a
-     * jsonSerialize() returning an M-deep structure needs $depth >= M, same
-     * as returning that structure directly. Passing remaining_depth - 1 here
-     * rejected valid input one level too shallow. */
-
-    /* jsonSerialize() returning $this: ext/json encodes the object's own
-     * properties rather than re-entering jsonSerialize() (which would trip
-     * the recursion guard). Mirror json_encoder.c's `Z_OBJ(retval) == obj`
-     * special case by dropping the callback guard and encoding the property
-     * view directly. The property walker applies its own cycle guard. */
+    /* jsonSerialize() adds no container level; its result keeps the object's depth.
+     * A $this result emits properties without re-entering jsonSerialize();
+     * the property walker supplies its own recursion guard. */
     if (Z_TYPE(retval) == IS_OBJECT && Z_OBJ(retval) == obj) {
         dw_json_guard_unprotect(&guard);
         bool ok;
@@ -715,11 +596,7 @@ static bool dw_emit_object(fastjson_dw_ctx *ctx, zval *zv,
         return dw_emit_jsonserializable(ctx, zv, remaining_depth);
     }
 
-    /* Enums (after the JsonSerializable check, matching ext/json's
-     * dispatch order -- an enum may implement JsonSerializable). A
-     * backed enum serializes as its backing value; a non-backed enum is
-     * an error, exactly like ext/json's php_json_encode_serializable_enum
-     * (which substitutes 0 under PARTIAL_OUTPUT_ON_ERROR). */
+    /* JsonSerializable takes precedence even for enums, matching ext/json. */
     if (Z_OBJCE_P(zv)->ce_flags & ZEND_ACC_ENUM) {
         if (Z_OBJCE_P(zv)->enum_backing_type == IS_UNDEF) {
             return dw_partial_or_fail(ctx, FASTJSON_ERROR_NON_BACKED_ENUM,
@@ -780,12 +657,8 @@ static bool dw_emit_object_props(fastjson_dw_ctx *ctx, zval *zv,
     }
 
     bool pretty = ctx->pretty_print;
-    /* zend_array_count is not a reliable emptiness signal for objects:
-     * mangled (private/protected) keys, IS_UNDEF typed-uninit slots, and
-     * hookless virtual properties all count but emit nothing. Open the
-     * indented pretty body lazily on the first property actually emitted
-     * (body_open) and keep it compact ({}) when none are, matching
-     * json_encode, which renders a private-only object as "{}". */
+    /* Hidden, uninitialized, and hookless virtual properties count but emit
+     * nothing. Delay pretty indentation until the first emitted property. */
     smart_str_appendc(&ctx->buf, '{');
 
     bool first = true;
@@ -793,27 +666,17 @@ static bool dw_emit_object_props(fastjson_dw_ctx *ctx, zval *zv,
     zend_string *key;
     zend_ulong index;
     zval *item;
-    /* Capture the object before any property read enters userland. */
     ZEND_HASH_FOREACH_KEY_VAL(props, index, key, item) {
-        /* Skip protected/private members. zend_get_properties_for with
-         * PURPOSE_JSON already filters these for stdClass, but custom
-         * get_properties_for handlers may still hand back the raw
-         * property table. Mangled keys carry the "\0class\0name" shape;
-         * filter them out the same way ext/json does. */
+        /* Custom property handlers may return mangled private/protected keys. */
         if (key && ZSTR_VAL(key)[0] == '\0' && ZSTR_LEN(key) > 0) {
             continue;
         }
-        /* Declared typed/untyped properties live in
-         * zend_object.properties_table; the get_properties HT stores
-         * IS_INDIRECT zvals pointing to them. Resolve, skip undef. */
+        /* Declared properties use indirect zvals into the object's property table. */
         if (Z_TYPE_P(item) == IS_INDIRECT) {
             item = Z_INDIRECT_P(item);
         }
-        /* PHP 8.4 hooked properties: zend_get_properties_for(JSON)
-         * delivers them as IS_PTR pointing at a zend_property_info.
-         * ext/json invokes the get hook via zend_read_property_ex and
-         * serializes the returned zval; we mirror that. Keep the returned
-         * zval alive until its value has been encoded. */
+        /* PHP 8.4 represents hooks as IS_PTR property metadata; retain hook_rv
+         * until its value has been encoded. */
         zval hook_rv;
         bool release_hook_rv = false;
         if (Z_TYPE_P(item) == IS_PTR) {
@@ -832,10 +695,7 @@ static bool dw_emit_object_props(fastjson_dw_ctx *ctx, zval *zv,
             zval *hooked = zend_read_property_ex(info->ce, obj,
                                                  info->name, true, &hook_rv);
             if (EG(exception)) {
-                /* A partial get hook may have written a refcounted value
-                 * into hook_rv before throwing; release it. No-op when
-                 * the engine returned a borrowed pointer (hook_rv stayed
-                 * IS_UNDEF). */
+                /* A throwing hook may still own a refcounted hook_rv. */
                 zval_ptr_dtor(&hook_rv);
                 if (need_recursion_guard) GC_UNPROTECT_RECURSION(recursion_rc);
                 if (body_open) ctx->indent_level--;
@@ -984,9 +844,7 @@ static bool dw_discard_object_property(fastjson_dw_ctx *ctx,
         item = Z_INDIRECT_P(item);
     }
 
-    /* Hooked properties read userland on the emit path already; invoking
-     * the get hook again here would double-fire getters (and a throw
-     * would mask the recorded hard error). Skip opaquely. */
+    /* Re-entering getters could repeat side effects or mask the hard error. */
     if (Z_TYPE_P(item) == IS_PTR) {
         return true;
     }
@@ -1057,10 +915,8 @@ static bool dw_discard_object_props(fastjson_dw_ctx *ctx, zval *zv,
 static bool dw_discard_jsonserializable(fastjson_dw_ctx *ctx, zval *zv,
                                         zend_long remaining_depth)
 {
-    /* Post-hard-error discard must not re-enter userland: the emit path
-     * already invoked jsonSerialize() once, and a second call would
-     * double-fire stateful serializers (or throw, masking the first
-     * error). Treat the value opaquely; the recorded error stands. */
+    /* Do not re-enter serializers during discard: side effects or exceptions
+     * could replace the recorded error. */
     (void)ctx;
     (void)zv;
     (void)remaining_depth;
@@ -1104,10 +960,7 @@ static bool dw_discard_zval_inner(fastjson_dw_ctx *ctx, zval *zv,
     case IS_LONG:
         return true;
     case IS_DOUBLE:
-        /* A discard-found INF must not overwrite the recorded hard error:
-         * the emit path already published the first failure, and every
-         * other discard error aborts the walk, so this only ever
-         * re-records the same code. */
+        /* Discard-found INF must not overwrite the recorded hard error. */
         if (!isfinite(Z_DVAL_P(zv)) && !ctx->hard_error) {
             dw_set_error(ctx, FASTJSON_ERROR_INF_OR_NAN,
                 "Inf and NaN cannot be JSON encoded");
@@ -1190,19 +1043,13 @@ static bool dw_encode_zval_inner(fastjson_dw_ctx *ctx, zval *zv,
     case IS_DOUBLE:
         return dw_emit_double(ctx, Z_DVAL_P(zv));
     case IS_STRING: {
-        /* NUMERIC_CHECK: if the string parses cleanly as a numeric
-         * literal, emit it as a JSON number instead. Fall back to
-         * string emission for overflow-to-INF (bug64695). */
+        /* Overflow-to-INF remains a string under NUMERIC_CHECK (bug64695). */
         if (ctx->flags & FASTJSON_ENCODE_NUMERIC_CHECK) {
             const char *s = Z_STRVAL_P(zv);
             size_t slen = Z_STRLEN_P(zv);
             if (slen > 0) {
                 unsigned char c0 = (unsigned char)s[0];
-                /* is_numeric_string() skips leading whitespace, so a
-                 * space/tab/newline-prefixed numeric string ("  42") is
-                 * still numeric -- let those fall through to the real
-                 * parse. Only fast-reject a first byte that can never
-                 * begin a numeric literal. */
+                /* is_numeric_string() accepts leading whitespace. */
                 if (!isspace(c0) && c0 != '-' && c0 != '+'
                         && c0 != '.' && !isdigit(c0)) {
                     goto emit_string;
@@ -1225,13 +1072,8 @@ emit_string:
     }
     case IS_ARRAY: {
         bool force_object = (ctx->flags & FASTJSON_ENCODE_FORCE_OBJECT) != 0;
-        /* Hold a reference across the descent: a nested JsonSerializable's
-         * jsonSerialize() may mutate this very array through an aliasing
-         * `&`-reference (refcount 1 -> in-place realloc of arData), which
-         * would dangle the ZEND_HASH_FOREACH cursor in dw_emit_array.
-         * The extra ref forces copy-on-write to separate the mutation onto
-         * a fresh array, leaving the iterated storage stable. Mirrors
-         * ext/json's json_encode_zval IS_ARRAY guard. */
+        /* Force copy-on-write if a nested serializer mutates this array through
+         * an alias; in-place reallocation would invalidate the hash cursor. */
         zval arr_copy;
         ZVAL_COPY(&arr_copy, zv);
         bool ok = dw_emit_array(ctx, Z_ARRVAL(arr_copy), remaining_depth,
@@ -1270,9 +1112,6 @@ static bool dw_encode_zval(fastjson_dw_ctx *ctx, zval *zv,
 #endif
 }
 
-/* Public entry: drives the encode. Caller takes the resulting zend_string
- * and publishes `error_state` according to its own throw contract. Returns
- * NULL on unrecoverable error. */
 zend_string *fastjson_directwrite_encode(zval *value, zend_long flags,
                                          zend_long depth,
                                          fastjson_error_state *error_state)
@@ -1303,9 +1142,6 @@ zend_string *fastjson_directwrite_encode(zval *value, zend_long flags,
     ctx.pretty_print = (flags & FASTJSON_ENCODE_PRETTY_PRINT) != 0;
     fastjson_error_state_clear(&ctx.error);
 
-    /* Reserve a sensible starting buffer. Real overflow growth via
-     * smart_str_alloc; this just avoids the first 2-3 growth doublings
-     * for typical encodes. */
     smart_str_alloc(&ctx.buf, 256, 0);
 
     bool ok = dw_encode_zval(&ctx, value, depth);

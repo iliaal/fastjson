@@ -1,9 +1,6 @@
 <?php
 /*
- * Render docs/baseline.html (the published benchmark page) from a
- * bench/run.php markdown baseline. Two-way: fastjson vs ext/json on the
- * PHP build that produced the markdown. Keeps the page regenerable so it
- * doesn't drift out of date.
+ * Render the fastjson/ext/json benchmark page from bench/run.php output.
  *
  *   php bench/render-baseline-html.php bench/baseline.md > docs/baseline.html
  */
@@ -79,7 +76,6 @@ function hero($tables, $op, $captionExtra = '') {
 <?php return ob_get_clean();
 }
 
-/* Large-corpus per-file table: File, Size, ext/json, fastjson, fastjson vs ext. */
 function table_large($tables, $op) {
     $rows = $tables["Throughput, large corpus||$op"] ?? [];
     $agg  = agg_find($tables, 'Throughput, large corpus', $op) ?? [];
@@ -110,7 +106,6 @@ function table_large($tables, $op) {
 <?php return ob_get_clean();
 }
 
-/* Small-corpus per-file table adds per-call ns. */
 function table_small($tables, $op) {
     $rows = $tables["Throughput, small corpus||$op"] ?? [];
     $agg  = agg_find($tables, 'Throughput, small corpus', $op) ?? [];
@@ -165,11 +160,9 @@ echo '<html lang="en">' . "\n<head>\n";
 echo '<meta charset="utf-8">' . "\n";
 echo '<meta name="viewport" content="width=device-width, initial-scale=1">' . "\n";
 echo '<title>fastjson ' . e($fastVer) . ' baseline</title>' . "\n";
-// CSS block (kept in sync with the page's visual style)
 echo file_get_contents(__DIR__ . '/baseline.css');
 echo "</head>\n<body>\n<div class=\"wrap\">\n\n";
 
-// Aggregate speedups for the takeaway cards.
 $aggLarge = [];
 foreach (['Decode (objects)', 'Encode', 'Validate'] as $op) {
     $aggLarge[$op] = agg_find($tables, 'Throughput, large corpus', $op);

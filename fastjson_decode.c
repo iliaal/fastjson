@@ -190,31 +190,7 @@ static zend_always_inline void fj_mut_raw_to_zval(yyjson_mut_val *val,
     fj_raw_to_zval(&immutable_view, out);
 }
 
-/* Recursive walker: yyjson_val -> zval. Returns true on success, false
- * on FASTJSON_ERROR_DEPTH (the only mid-walk failure mode). On failure
- * `out` is left as a partial zend_array/zend_object whose
- * zval_ptr_dtor in the caller's RETURN_NULL path frees the partially
- * built children correctly.
- *
- * Ownership: every refcounted zval written into `out` is owned by
- * `out` -- callers transfer it into a HashTable bucket via
- * zend_hash_*_insert/update which copies the zval bytes (refcount
- * unchanged), or into return_value via RETVAL_*. The local in this
- * function then goes out of scope; the bucket / return_value owns
- * the value from that point.
- *
- * remaining_depth follows ext/json's convention: starts at the
- * caller's $depth, decrements before recursing into ARR/OBJ children.
- * A top-level scalar at remaining_depth=1 is allowed; a top-level
- * scalar at remaining_depth=0 fails. */
-/* The recursive yyjson_val -> zval walker is generated twice from
- * fastjson_walk.inc: fastjson_yyval_to_zval (fast, no UTF-8 handling)
- * and fastjson_yyval_to_zval_sanitize (runs fastjson_sanitize_utf8 on
- * malformed string values and object keys, invoked only when the caller
- * set JSON_INVALID_UTF8_IGNORE / SUBSTITUTE). The template's
- * FJ_WALK_SANITIZE is a preprocessor literal, so the fast instantiation
- * carries none of the sanitize code -- two branch-free specialized
- * functions, one source of truth for the shared scaffolding. */
+/* Walker ownership and depth invariants are documented in fastjson_walk.inc. */
 #define FJ_WALK_NAME fastjson_yyval_to_zval
 #define FJ_WALK_SANITIZE 0
 #define FJ_WALK_MUTABLE 0
@@ -247,7 +223,6 @@ static zend_always_inline void fj_mut_raw_to_zval(yyjson_mut_val *val,
 #undef FJ_WALK_SANITIZE
 #undef FJ_WALK_MUTABLE
 
-/* Shared by decode, validate, pointer_*, and merge_patch. */
 yyjson_doc *fastjson_read_doc_ex(const char *json, size_t json_len,
                                  zend_long flags,
                                  yyjson_read_flag extra_yflags,
@@ -266,7 +241,6 @@ yyjson_doc *fastjson_read_doc_ex(const char *json, size_t json_len,
                  | FASTJSON_DECODE_INVALID_UTF8_SUBSTITUTE)) {
         yflags |= YYJSON_READ_ALLOW_INVALID_UNICODE;
     }
-    /* RELAXED: tolerate the JSONC subset (comments, trailing commas, BOM). */
     if (flags & FASTJSON_DECODE_RELAXED) {
         yflags |= YYJSON_READ_ALLOW_COMMENTS
                 | YYJSON_READ_ALLOW_TRAILING_COMMAS
@@ -278,15 +252,8 @@ yyjson_doc *fastjson_read_doc_ex(const char *json, size_t json_len,
     if (doc == NULL && err->code == YYJSON_READ_ERROR_INVALID_NUMBER
             && !fastjson_input_has_inf_nan_literal(json, json_len,
                     (flags & FASTJSON_DECODE_RELAXED) != 0)) {
-        /* yyjson reports a double-overflow number like "1e309" under
-         * INVALID_NUMBER; ext/json decodes it to INF. Retry with
-         * ALLOW_INF_AND_NAN to match, unless the input also carries an
-         * unquoted Inf/NaN literal token (which ext/json rejects). Keyed
-         * on the read code rather than yyjson's message wording, so a
-         * vendor rewording cannot silently flip INF to SYNTAX (the
-         * contract is pinned in scripts/verify-yyjson-patches.sh).
-         * Other INVALID_NUMBER failures simply fail the retry the same
-         * way, at the cost of one extra parse. */
+        /* Match ext/json: exponent overflow decodes to INF, but literal Inf/NaN
+         * remains invalid. Retry by error code, independent of message wording. */
         doc = yyjson_read_opts((char *)json, json_len,
                                yflags | YYJSON_READ_ALLOW_INF_AND_NAN,
                                &fastjson_php_alc, err);
@@ -304,19 +271,7 @@ yyjson_doc *fastjson_read_doc_ex(const char *json, size_t json_len,
     return doc;
 }
 
-/* Raw-input container-nesting scan (declared in php_fastjson.h). Counts
- * '{'/'[' outside strings -- and outside line/block comments when
- * allow_comments -- with early exit once `limit` is reached, so the
- * validate success path pays one allocation-free pass instead of a tree
- * walk (the P-002 validate-only stub carries no values). Skipping
- * matches the inputs the scan gates: strict JSON for validate (no
- * comments possible), and yyjson ALLOW_COMMENTS parity ('//' to CR/LF,
- * block comments to the first close delimiter) for RELAXED merge
- * operands. Brackets inside strings/comments can only under- or
- * over-count on inputs the parser then rejects anyway; on well-formed
- * input the count equals the parsed tree's container nesting, which is
- * exactly what the decode walker's remaining_depth rule rejects at
- * nesting >= $depth. */
+/* The validate-only reader retains no tree; scan the parsed input for depth. */
 bool fastjson_json_nesting_reaches(const char *json, size_t len,
                                    size_t limit, bool allow_comments)
 {
@@ -464,20 +419,11 @@ PHP_FUNCTION(fastjson_decode)
         Z_PARAM_LONG(flags)
     ZEND_PARSE_PARAMETERS_END();
 
-    /* JSON_THROW_ON_ERROR contract: on error, throw a JsonException
-     * and leave the GLOBAL fastjson_last_error state unchanged. This
-     * is how ext/json behaves (json_exceptions_error_clearing.phpt).
-     * We snapshot global state at entry and restore it on the throw
-     * path. The success path clears as usual on entry; non-throw
-     * failure path persists the error normally. */
+    /* THROW_ON_ERROR preserves the entry error state on success and failure. */
     bool throw_mode = (flags & FASTJSON_DECODE_THROW_ON_ERROR) != 0;
     fastjson_error_state saved_err;
     fastjson_throw_mode_init(throw_mode, &saved_err);
 
-    /* Match ext/json's argument validation contract verbatim:
-     *   depth <= 0          -> ValueError "must be greater than 0"
-     *   depth > INT_MAX     -> ValueError "must be less than %d"
-     * Both are arg #3 (after $json, $associative). */
     FASTJSON_VALIDATE_DEPTH(depth, 3);
 
     /* ext/json contract: explicit $associative wins; when null, the
@@ -515,30 +461,15 @@ PHP_FUNCTION(fastjson_file_decode)
     fastjson_error_state operation_err;
     fastjson_save_error_state(&operation_err);
 
-    /* $depth is arg #3 here too ($filename, $associative, $depth). */
     FASTJSON_VALIDATE_DEPTH(depth, 3);
 
     bool use_assoc = assoc_is_null
         ? ((flags & FASTJSON_DECODE_OBJECT_AS_ARRAY) != 0)
         : (bool)assoc;
 
-    /* Read through the streams layer (wrappers + open_basedir honored).
-     * No REPORT_ERRORS, so a missing/unreadable file emits no warning --
-     * that failure is surfaced via the null return + last_error, matching
-     * the documented contract. The one exception is an open_basedir denial:
-     * the plain-file wrapper emits its own open_basedir warning regardless
-     * of REPORT_ERRORS (exactly as file_get_contents does), which we let
-     * through rather than suppress -- a security-boundary violation should
-     * stay visible. An I/O failure is NOT a JSON
-     * error, so it never throws even under JSON_THROW_ON_ERROR: there
-     * is no JSON_ERROR_* code for a filesystem fault, and a missing
-     * file should not masquerade as a JsonException. We surface it as
-     * FASTJSON_ERROR_SYNTAX (the closest bucket: "no valid JSON could
-     * be obtained from the source") with a descriptive message. */
-    /* php_stream_context_from_zval(NULL, 0) resolves the request's default
-     * stream context (allocating it lazily), exactly as file_get_contents
-     * does -- so options set via stream_context_set_default() and user
-     * wrappers relying on them are honored. */
+    /* Omit REPORT_ERRORS; open_basedir warnings still come from the wrapper.
+     * I/O failures set SYNTAX and return null without a JsonException.
+     * Honor stream_context_set_default(), as file_get_contents does. */
     php_stream_context *context = php_stream_context_from_zval(NULL, 0);
     php_stream *stream = php_stream_open_wrapper_ex(path, "rb", 0, NULL,
                                                     context);
@@ -647,7 +578,6 @@ static bool fj_splice_dispatch_error(fj_splice_status status,
             return false;
         }
     }
-    /* Unknown status: fall through to generic write failure. */
     if (throw_mode) {
         fastjson_throw_error(FASTJSON_ERROR_SYNTAX,
                              "fastjson_pointer_set write failed", NULL,
@@ -745,23 +675,8 @@ PHP_FUNCTION(fastjson_pointer_get)
     }
 }
 
-/* True if `root` nests at least `limit` containers deep. Walks the
- * PARSED immutable tree iteratively (explicit stack, no C recursion),
- * returning as soon as the limit is reached so the work stack never
- * holds more than `limit` frames.
- *
- * fastjson_merge_patch needs this because the bounded merge
- * (fastjson_merge_patch_bounded via fj_merge_copy_checked) recurses once
- * per nesting level on the C stack BEFORE the depth-capped zval walker
- * runs; an adversarial deeply-nested
- * operand would overflow the stack and crash. Measuring depth on the
- * parsed tree (not the raw source bytes) is immune to comments, quotes,
- * and escapes -- a textual brace-counting scan has to replicate yyjson's
- * full lexer to stay correct, and under RELAXED a stray quote or brace
- * inside a comment silently corrupts the count. Counting matches the
- * walker's: the root container is depth 1, so reject when depth >= the
- * caller's $depth (json_decode("[[[1]]]", true, 3) -> NULL: three nested
- * containers need depth 4). */
+/* Check parsed-tree depth iteratively before recursive merge copying.
+ * A root container counts as depth 1; nesting >= $depth fails the walker. */
 typedef struct {
     bool is_obj;
     union {
@@ -1121,16 +1036,8 @@ PHP_FUNCTION(fastjson_merge_patch)
         ? ((flags & FASTJSON_DECODE_OBJECT_AS_ARRAY) != 0)
         : (bool)assoc;
 
-    /* No raw-input prescan on the operands here, although fastjson_validate
-     * uses one: $depth applies to the effective merge result, not to input
-     * branches the patch discards (a 20-deep target with {"deep":null} must
-     * succeed at depth 5), so any operand-side trip is a false positive.
-     * This is safe because the yyjson reader is iterative (no C recursion
-     * in the parse), the merge itself is depth-bounded below, and tree
-     * allocation runs through the Zend heap under memory_limit. */
-
-    /* Parse both operands as immutable docs first; either failing is a
-     * JSON error surfaced through the usual path. */
+    /* $depth bounds the result, not discarded operand branches. Parsing is
+     * iterative and memory_limit-bound; the merge below bounds recursion. */
     yyjson_read_err err;
     yyjson_doc *tdoc = fastjson_read_doc(target, target_len, flags, &err);
     if (tdoc == NULL) {
@@ -1325,11 +1232,7 @@ PHP_FUNCTION(fastjson_pointer_set)
 
     zend_long value_flags = flags & FASTJSON_POINTER_VALUE_ENCODE_FLAGS;
 
-    /* The replacement lands nsegs containers deep in the output, so its own
-     * nesting budget is what remains of the effective stack depth after the
-     * pointer path. Passing the full depth let pointer_set emit a document
-     * deeper than $depth -- one it would then reject on decode. Subtract the
-     * path (floored at 0; a scalar replacement still encodes at budget 0). */
+    /* Subtract path containers from the replacement budget; scalars allow zero. */
     zend_long repl_depth = (zend_long)output_depth - (zend_long)plan.nsegs - 1;
     if (repl_depth < 0) {
         repl_depth = 0;
