@@ -50,9 +50,9 @@ jobs:
       matrix:
         os: [ubuntu-latest]
         arch: [x86_64]
-        # 8.6 is pre-release; keep it in the source-build gate without
-        # publishing release binaries until PHP declares it stable.
-        php: ['8.1', '8.2', '8.3', '8.4', '8.5', '8.6']
+        # 8.6 builds from the PHP-8.6 branch in the linux-php86 job:
+        # setup-php's '8.6' resolves to a master snapshot, not the branch.
+        php: ['8.1', '8.2', '8.3', '8.4', '8.5']
         # release-linux.yml ships arm64 glibc binaries for 8.4 and 8.5.
         # Build those cells here so a break shows up before the tag rather
         # than in the release workflow, where it silently drops the asset.
@@ -114,6 +114,79 @@ jobs:
           # tee rather than $(...) keeps the summary and diffs visible when
           # run-tests exits non-zero.
           php run-tests.php --show-diff -g FAIL,BORK,LEAK,XLEAK \
+              tests/ tests/upstream-json/ 2>&1 | tee /tmp/test-output.txt
+          run_status=${PIPESTATUS[0]}
+          if ! grep -q 'Number of tests' /tmp/test-output.txt; then
+            echo "::error::run-tests.php produced no summary (aborted?), status $run_status"
+            exit 1
+          fi
+          if grep -qiE 'Tests (failed|leaked|borked)[[:space:]]*:[[:space:]]*[1-9]' /tmp/test-output.txt; then
+            echo "::error::tests failed/leaked/borked"
+            exit 1
+          fi
+          if [ "$run_status" -ne 0 ]; then
+            echo "::error::run-tests.php exited with status $run_status"
+            exit 1
+          fi
+
+  linux-php86:
+    # Pre-release: gate on the PHP-8.6 branch here without publishing
+    # release binaries until PHP declares 8.6 stable.
+    name: PHP 8.6 - Linux x86_64 (PHP-8.6 branch)
+    needs: validate
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y re2c bison autoconf
+
+      - name: Build PHP from the PHP-8.6 branch
+        run: |
+          set -euo pipefail
+          git clone --depth=1 --branch=PHP-8.6 https://github.com/php/php-src.git /tmp/php-src
+          cd /tmp/php-src
+          git log -1 --format='php-src PHP-8.6 at %H (%cs)'
+          ./buildconf --force
+          ./configure \
+            --disable-debug \
+            --disable-zts \
+            --disable-all \
+            --enable-cli \
+            --prefix=/tmp/php-86 \
+            || { echo "==== config.log tail ===="; tail -200 config.log; exit 1; }
+          make -j"$(nproc)"
+          make install
+          /tmp/php-86/bin/php -v
+
+      - name: Build extension
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="/tmp/php-86/bin:$PATH"
+          phpize
+          ./configure --enable-fastjson --with-php-config=/tmp/php-86/bin/php-config
+          make -j"$(nproc)" 2>&1 | tee build.log
+          if grep 'warning:' build.log | grep -v '^ld: warning:' | grep -q .; then
+            echo "::error::Build produced warning(s)"
+            grep 'warning:' build.log | grep -v '^ld: warning:' || true
+            exit 1
+          fi
+
+      - name: Run tests
+        shell: bash
+        run: |
+          set -uo pipefail
+          export TEST_PHP_EXECUTABLE=/tmp/php-86/bin/php
+          export TEST_PHP_ARGS="-d extension=$(pwd)/modules/fastjson.so"
+          export NO_INTERACTION=1
+          mods=$(/tmp/php-86/bin/php $TEST_PHP_ARGS -m)
+          grep -qix fastjson <<< "$mods" \
+            || { echo "::error::fastjson extension failed to load"; exit 1; }
+          /tmp/php-86/bin/php run-tests.php --show-diff -g FAIL,BORK,LEAK,XLEAK \
               tests/ tests/upstream-json/ 2>&1 | tee /tmp/test-output.txt
           run_status=${PIPESTATUS[0]}
           if ! grep -q 'Number of tests' /tmp/test-output.txt; then
@@ -212,8 +285,7 @@ jobs:
         # retval_stash UAF, hooked-property paths) are version-sensitive,
         # so sanitize every supported PHP, not just the newest. 8.1/8.2
         # cover the zend_call_stack_overflowed fallback boundary (8.3+).
-        # No 8.6 cell until php-src has a PHP-8.6 branch to clone.
-        php: ['8.1', '8.2', '8.3', '8.4', '8.5']
+        php: ['8.1', '8.2', '8.3', '8.4', '8.5', '8.6']
 
     env:
       # detect_leaks=1 matches LSan's Linux default; pinning it keeps a
