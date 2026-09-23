@@ -18,6 +18,7 @@ final class ShortWriteStream {
         return 1;
     }
 
+    public function stream_flush(): bool { return true; }
     public function stream_close(): void {}
     public function stream_stat(): array { return []; }
 }
@@ -33,6 +34,7 @@ final class ZeroWriteStream {
         return 0;
     }
 
+    public function stream_flush(): bool { return true; }
     public function stream_close(): void {}
     public function stream_stat(): array { return []; }
 }

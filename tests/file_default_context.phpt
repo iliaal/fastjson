@@ -30,6 +30,7 @@ class CtxProbe
         return $r;
     }
     public function stream_write($data): int { return strlen($data); }
+    public function stream_flush(): bool { return true; }
     public function stream_eof(): bool { return $this->pos >= strlen($this->buf); }
     public function stream_stat() { return []; }
     public function stream_close(): void {}
