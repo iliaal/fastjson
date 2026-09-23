@@ -8,9 +8,7 @@ fastjson
 /* ext/json's serializable path does not increment encoder->depth; only the
  * returned value's containers do. So a jsonSerialize() returning an M-deep
  * structure needs $depth >= M, exactly as returning that structure directly.
- * fastjson previously charged the serialize call an extra level, rejecting
- * valid input one level too shallow -- for both the returns-$this case and
- * the returns-a-fresh-value case. */
+ * Covers both the returns-$this and the returns-a-fresh-value cases. */
 
 class RetThis implements JsonSerializable {
     public int $a = 1;

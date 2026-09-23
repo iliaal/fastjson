@@ -11,7 +11,7 @@ var_dump(fastjson_validate('"é"'));
 
 echo "---\n";
 
-// Lone continuation byte (0x80) inside a JSON string -- yyjson rejects
+// Lone continuation byte (0x80) inside a JSON string; yyjson rejects
 // as INVALID_STRING; we surface that as JSON_ERROR_UTF8.
 $bad = "\"" . "\x80" . "\"";
 var_dump(fastjson_validate($bad));

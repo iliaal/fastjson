@@ -16,21 +16,9 @@ category notes summarize it.
 | Environment-skip (--SKIPIF--) | 0 | none currently |
 | Failing | 0 | clean against current fastjson |
 
-So the harness is **green for everything not on the skiplist**: all 67
-rewritten tests pass. The skiplist is the contract surface; every entry
-names a category plus a one-line reason or TODO reference.
-
-Since v0.1.0 the rewritten set has grown from 53 to 67 as fastjson
-honored more flags. Vendor patch P-001 (lowercase `\uXXXX` hex digits)
-landed the first batch; honoring `JSON_HEX_*`, `JSON_NUMERIC_CHECK`,
-`JSON_PARTIAL_OUTPUT_ON_ERROR`, and `JSON_INVALID_UTF8_IGNORE/SUBSTITUTE`
-moved the next batch; the `jsonSerialize()`-returns-`$this` special case
-moved `json_encode_recursion_01`. The NULL property-view fix moved
-`bug66021`; the NUL-prefixed property-name fix narrowed `bug68546` to a
-message-only divergence; and a skiplist audit moved `json_encode_basic` and
-`json_encode_pretty_print2`. Php-src added `gh22514` and `gh22527`, both exact
-diagnostic divergences. Remaining entries fail for error-message text,
-error-code classification, or explicit documented divergences.
+All 67 rewritten tests pass. Every skiplist entry names a category plus a
+one-line reason or TODO reference. The remaining entries differ in
+error-message text, error-code classification, or documented divergences.
 
 ## Skiplist categories
 
@@ -91,16 +79,14 @@ error-code classification, or explicit documented divergences.
 4. Re-sync (the skiplist is consulted at sync time, so skipped
    tests aren't generated).
 
-## Reaching 100% non-skip pass rate
+## Moving tests off the skiplist
 
-Already there: all 67 rewritten tests pass. Moving more upstream tests off
-the skiplist depends mainly on deciding whether to match ext/json's exact
+Most remaining entries would pass only if fastjson matched ext/json's exact
 error-message text and error-code classification.
 
 ## Reaching parity with full ext/json
 
-Not the goal. ext/json carries 25+ years of edge cases including exact
-error-message formats, error-code numbering, and partial-output legacy
-behavior. fastjson aims to be a fast drop-in for the common path
-(encode + decode + validate + last_error), with documented divergences
-elsewhere.
+Not a goal. ext/json carries 25+ years of edge cases, including exact
+error-message formats, error-code numbering, and legacy partial-output
+behavior. fastjson targets the common path (encode, decode, validate,
+last_error) and documents its divergences elsewhere.

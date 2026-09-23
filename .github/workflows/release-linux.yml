@@ -2,34 +2,27 @@ name: Release Linux & macOS binaries
 
 # Triggered when a GitHub Release is published. Builds .so binaries for
 # Linux glibc (x86_64 + arm64) and macOS (arm64) at the PHP versions in
-# the matrix (NTS only -- ZTS lives in the Windows lane), uploads each
+# the matrix (NTS only; ZTS ships in the Windows lane) and uploads each
 # as a release asset via php/pie-ext-binary-builder using PIE's
 # pre-packaged-binary naming convention.
 #
-# PHP 8.1-8.3 are intentionally absent: PIE's composer-default fallback
-# source-builds for any PHP version not covered by a prebuilt, so those
-# users still get an install path; it just needs a build toolchain. The
-# Windows lane ships all of 8.1-8.5 because php-windows-builder makes the
-# extra versions nearly free; the glibc/macOS lanes follow the
-# established sibling convention (phpser, fastchart) of shipping only the
-# current PHP versions. Drop the 8.4 lane when 8.4 hits EOL.
+# PHP 8.1-8.3 have no prebuilts: PIE's composer-default fallback
+# source-builds them. Windows ships 8.1-8.5 because php-windows-builder
+# makes extra versions cheap; glibc/macOS ship only current PHP versions,
+# like phpser and fastchart. Drop the 8.4 lane when 8.4 hits EOL.
 #
-# macOS Intel (macos-13) is intentionally absent -- GitHub's Intel
-# runner pool is too contended to ship reliably, and macOS 26 drops
-# Intel support anyway. Intel-Mac users source-build via the fallback.
+# No macOS Intel (macos-13): GitHub's Intel runner pool is too contended
+# to ship reliably, and macOS 26 drops Intel. Intel Macs source-build.
 #
-# Linux musl (Alpine) is intentionally absent -- shivammathur/setup-php
-# in Alpine containers needs more setup, and Alpine users get install via
-# PIE's composer-default source-build fallback in the meantime.
+# No Linux musl (Alpine): shivammathur/setup-php needs extra setup in
+# Alpine containers. Alpine users source-build via the PIE fallback.
 #
-# yyjson is vendored (C99, no external deps), so there is no static-codec
-# step here -- the produced .so links only libc/libm/libz, portable
-# across glibc distros without extra work.
+# yyjson is vendored (C99, no external deps), so the .so links only
+# libc/libm/libz and is portable across glibc distros.
 #
-# workflow_dispatch (release_tag input) lets a maintainer build + upload
-# prebuilts for an already-published release -- e.g. to backfill a tag
-# cut before this workflow existed, without re-publishing the release
-# (which would needlessly re-run the Windows lane). The upload target is
+# workflow_dispatch (release_tag input) builds and uploads prebuilts for
+# an already-published release without re-publishing it, which would
+# re-run the Windows lane. The upload target is
 # the dispatch input on manual runs and the event tag on release runs.
 #
 # composer.json declares:
@@ -62,10 +55,9 @@ jobs:
       fail-fast: false
       matrix:
         # ubuntu-24.04 (x86_64), ubuntu-24.04-arm (arm64),
-        # macos-14 (Apple Silicon arm64). Pinned over `*-latest` to
-        # avoid silent runner shifts that would change the toolchain /
-        # glibc baseline on published release assets without a repo
-        # diff.
+        # macos-14 (Apple Silicon arm64). Pinned over `*-latest` so the
+        # toolchain and glibc baseline of release assets change only with
+        # a repo diff.
         os:
           - ubuntu-24.04
           - ubuntu-24.04-arm
@@ -100,12 +92,9 @@ jobs:
           set -euo pipefail
           phpize
           ./configure --enable-fastjson
-          # Same compiler-only bar as the tests.yml jobs: 'ld: warning:'
-          # lines are macOS linker deprecation notices, not compiler
-          # output. A warning fails the release before any binary is
-          # uploaded. pipefail keeps a failing `make` from being
-          # swallowed by the tee pipe (GitHub's default shell does not
-          # set pipefail). nproc covers Linux, sysctl covers macOS.
+          # Same warning gate as tests.yml ('ld: warning:' lines are macOS
+          # linker notices). pipefail keeps tee from swallowing a failing
+          # `make`. nproc covers Linux, sysctl covers macOS.
           make -j"$(nproc 2>/dev/null || sysctl -n hw.ncpu)" 2>&1 | tee build.log
           if grep 'warning:' build.log | grep -v '^ld: warning:' | grep -q .; then
             echo "::error::Build produced warning(s)"
@@ -116,28 +105,21 @@ jobs:
       - name: Run tests
         shell: bash
         run: |
-          # Same gate as the tests.yml jobs: extension load guard plus
-          # run-tests with FAIL,BORK,LEAK,XLEAK checks, on the release
-          # checkout, before any prebuilt binary is uploaded. -uo
-          # pipefail but not -e: the explicit checks below own failure
-          # detection, and -e would abort the tee'd run-tests pipeline
-          # before they run when run-tests exits non-zero.
+          # Same test gate as tests.yml, run on the release checkout before
+          # any upload. No -e: it would abort on run-tests' non-zero exit
+          # before the checks below run.
           set -uo pipefail
           export TEST_PHP_EXECUTABLE=$(which php)
           export TEST_PHP_ARGS="-d extension=$(pwd)/modules/fastjson.so"
           export NO_INTERACTION=1
-          # A bad module ABI loads no extension, so every PHPT SKIPs and
-          # the summary reports 0 failures -- a green run that tested
-          # nothing. Fail fast unless the extension actually loaded.
-          # Capture first, then match: piping `php -m` straight into
-          # `grep -q` lets grep close the pipe on the first hit, SIGPIPEs
-          # php, and trips pipefail.
+          # A bad module ABI loads no extension, so every PHPT skips and the
+          # run reports 0 failures. Capture `php -m` before matching: piping
+          # it into `grep -q` SIGPIPEs php on the first hit.
           mods=$(php $TEST_PHP_ARGS -m)
           grep -qix fastjson <<< "$mods" \
             || { echo "::error::fastjson extension failed to load"; exit 1; }
-          # tee (not $(...)) so the run-tests summary and diffs are always
-          # visible: under set -e a `RESULT=$(...)` assignment aborts before
-          # echo when run-tests exits non-zero, hiding which test failed.
+          # tee rather than $(...) keeps the summary and diffs visible when
+          # run-tests exits non-zero.
           php run-tests.php --show-diff -g FAIL,BORK,LEAK,XLEAK \
               tests/ tests/upstream-json/ 2>&1 | tee /tmp/test-output.txt
           run_status=${PIPESTATUS[0]}

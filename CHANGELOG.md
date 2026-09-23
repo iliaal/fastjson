@@ -129,10 +129,10 @@ Measured against 0.6.0 on PHP 8.4 release builds (x86_64; aarch64 where noted).
 ### Added
 
 - `fastjson_pointer_get(string $json, string $pointer, ?bool $associative = null, int $depth = 512, int $flags = 0): mixed`: read a single value from a JSON document by [RFC 6901](https://www.rfc-editor.org/rfc/rfc6901) JSON Pointer (`/users/0/email`; the empty pointer `""` selects the whole document). Only the referenced subtree is materialized into PHP. A missing path or malformed pointer returns null with the error state left clear (not a JSON error); a parse error returns null with `fastjson_last_error()` set, or throws under `JSON_THROW_ON_ERROR`. `$associative`, `$depth`, and `$flags` (including `FASTJSON_DECODE_RELAXED`) match `fastjson_decode()`.
-- `fastjson_merge_patch(string $target, string $patch, ?bool $associative = null, int $depth = 512, int $flags = 0): mixed`: apply an [RFC 7386](https://www.rfc-editor.org/rfc/rfc7386) JSON Merge Patch and return the merged document as a PHP value. Objects merge recursively, a non-object patch replaces the target wholesale, and a `null` member deletes the corresponding key. Returns a PHP value (not a string) so output flows through the single `fastjson_encode()` path — pass the result to it for byte-consistent JSON. A parse error in either operand returns null with `fastjson_last_error()` set, or throws under `JSON_THROW_ON_ERROR`.
-- `FASTJSON_DECODE_RELAXED` decode flag: tolerate the JSONC subset that `ext/json` rejects — line (`//`) and block (`/* */`) comments, trailing commas, and a leading UTF-8 BOM. fastjson-only; there is no `JSON_*` counterpart. Well-formed JSON decodes identically with or without the flag. Pass it in `$flags`, e.g. `fastjson_decode($jsonc, true, 512, FASTJSON_DECODE_RELAXED)`. Backed by yyjson's `ALLOW_COMMENTS | ALLOW_TRAILING_COMMAS | ALLOW_BOM` read flags, so parsing stays robust rather than relying on a pre-pass scrubber.
+- `fastjson_merge_patch(string $target, string $patch, ?bool $associative = null, int $depth = 512, int $flags = 0): mixed`: apply an [RFC 7396](https://www.rfc-editor.org/rfc/rfc7396) JSON Merge Patch and return the merged document as a PHP value. Objects merge recursively, a non-object patch replaces the target wholesale, and a `null` member deletes the corresponding key. It returns a PHP value rather than a string, so all JSON output goes through `fastjson_encode()`; pass the result to it for byte-consistent JSON. A parse error in either operand returns null with `fastjson_last_error()` set, or throws under `JSON_THROW_ON_ERROR`.
+- `FASTJSON_DECODE_RELAXED` decode flag: tolerate the JSONC subset that `ext/json` rejects: line (`//`) and block (`/* */`) comments, trailing commas, and a leading UTF-8 BOM. fastjson-only; there is no `JSON_*` counterpart. Well-formed JSON decodes identically with or without the flag. Pass it in `$flags`, e.g. `fastjson_decode($jsonc, true, 512, FASTJSON_DECODE_RELAXED)`. The parser handles these through yyjson's `ALLOW_COMMENTS | ALLOW_TRAILING_COMMAS | ALLOW_BOM` read flags, with no pre-pass scrubber.
 - PHP 8.1 support (lowered the minimum from 8.3).
-- `fastjson_file_decode()` and `fastjson_file_encode()`: read or write a JSON file in one call, collapsing the `fastjson_decode(file_get_contents($f), ...)` and `file_put_contents($f, fastjson_encode(...))` patterns. Signatures mirror the in-memory functions, so `$flags` and `$depth` behave identically:
+- `fastjson_file_decode()` and `fastjson_file_encode()`: read or write a JSON file in one call, replacing `fastjson_decode(file_get_contents($f), ...)` and `file_put_contents($f, fastjson_encode(...))`. Signatures mirror the in-memory functions, so `$flags` and `$depth` behave identically:
   - `fastjson_file_decode(string $filename, ?bool $associative = null, int $depth = 512, int $flags = 0): mixed`
   - `fastjson_file_encode(string $filename, mixed $value, int $flags = 0, int $depth = 512): bool`
 
@@ -142,15 +142,15 @@ Measured against 0.6.0 on PHP 8.4 release builds (x86_64; aarch64 where noted).
 
 ### Fixed
 
-- Use-after-free in `fastjson_encode` for PHP 8.4 objects whose property has a SET hook but no GET hook and is not virtual. The engine's trivial-read fast path returns a borrowed pointer to the backing field; the previous stash logic released a refcount it never owned and freed the backing zend_string while the object still pointed at it. ASAN regression added. Surfaced by `/codesage-review` (fnd_f77a591f).
+- Use-after-free in `fastjson_encode` for PHP 8.4 objects whose property has a SET hook but no GET hook and is not virtual. The engine's trivial-read fast path returns a borrowed pointer to the backing field, and the encoder released a refcount it never owned, freeing the backing zend_string while the object still pointed at it. ASAN regression added. Surfaced by `/codesage-review` (fnd_f77a591f).
 - 32-bit `zend_long` overflow in `dw_emit_double`'s integer-valued-double shortcut. On 32-bit PHP, `fastjson_encode(1e10)` could emit INT32-saturated garbage instead of a valid JSON number; the shortcut bound is now gated on `SIZEOF_ZEND_LONG`. Surfaced by `/codesage-review` (fnd_23254098).
 - ext/json parity for integer-valued doubles between `1e15` and `1e17`. The double shortcut bound was `1e15`, so `fastjson_encode(1e16)` fell through to yyjson's REAL writer and emitted `"10000000000000000.0"` while `json_encode(1e16)` emits `"10000000000000000"`. The 64-bit bound now widens to a strict `< 1e17`, matching the cutoff where `php_gcvt` itself switches to scientific notation. `1.5e16`, `2.5e16`, `9.99e16`, and the negative range round-trip byte-identically to `json_encode`.
 
 ### Performance
 
-- `JSON_HEX_TAG`/`HEX_AMP`/`HEX_APOS`/`HEX_QUOT` now scan first and skip the rewrite + temp allocation entirely when no candidates exist. When candidates exist, growth is reserved exactly (5 extra bytes per hit) instead of the 6× worst case. Defensive callers asserting HEX flags on payloads that don't contain the substituted characters no longer pay the rewrite cost. Benchmark: ~4× speedup on the no-hit case (532 µs → 125 µs on 1k strings); ~13% regression on the all-hit case from the extra scan pass. (CR-002)
-- `fastjson_decode` with `JSON_INVALID_UTF8_IGNORE` / `SUBSTITUTE` now scans each string and object key with a no-allocation UTF-8 validator first, and only invokes the sanitizer on byte sequences that actually need replacement. Valid UTF-8 inputs no longer pay a per-string sanitize allocation and copy. Benchmark: ~36% speedup on object-heavy clean-UTF-8 decode with IGNORE (964 µs → 612 µs). (CR-003)
-- `dw_emit_double`'s integer-valued-double shortcut checks the cheap range bound before calling `floor()`. Non-integer or out-of-range doubles in number-heavy arrays no longer pay libm per element. (CR-004)
+- `JSON_HEX_TAG`/`HEX_AMP`/`HEX_APOS`/`HEX_QUOT` scan first and skip the rewrite and temp allocation when no candidates exist. When candidates exist, growth is reserved exactly (5 extra bytes per hit) instead of the 6× worst case. Benchmark: ~4× speedup on the no-hit case (532 µs → 125 µs on 1k strings); ~13% regression on the all-hit case from the extra scan pass. (CR-002)
+- `fastjson_decode` with `JSON_INVALID_UTF8_IGNORE` / `SUBSTITUTE` scans each string and object key with a no-allocation UTF-8 validator first and runs the sanitizer only on strings that need replacement, so valid UTF-8 input skips the per-string allocation and copy. Benchmark: ~36% speedup on object-heavy clean-UTF-8 decode with IGNORE (964 µs → 612 µs). (CR-003)
+- `dw_emit_double`'s integer-valued-double shortcut checks the cheap range bound before calling `floor()`. Non-integer or out-of-range doubles in number-heavy arrays no longer call libm per element. (CR-004)
 
 ## [0.2.1] - 2026-05-11
 
@@ -172,8 +172,8 @@ Measured against 0.6.0 on PHP 8.4 release builds (x86_64; aarch64 where noted).
   does per-byte advance, mirroring ext/json's parser state machine.
   Both sides also reproduce ext/json's asymmetric precedence when both
   bits are set (encode prefers IGNORE, decode prefers SUBSTITUTE).
-  Decode dispatches to a separate sanitizing walker only when a flag
-  is set, keeping the no-flag hot path branch-free.
+  Decode uses a separate sanitizing walker only when a flag is set,
+  so the no-flag path has no extra branches.
 
 ### Fixed
 
@@ -181,19 +181,19 @@ Measured against 0.6.0 on PHP 8.4 release builds (x86_64; aarch64 where noted).
   The post-write substitution scan misread the second byte of an
   escaped `\\` followed by the closing `"` as a `\"` escape. The
   scan now walks JSON escape sequences explicitly.
-- Virtual properties without a get hook (PHP 8.4) were being read by
-  the encoder; `dw_emit_object` now skips them per ext/json.
+- The encoder read virtual properties without a get hook (PHP 8.4);
+  `dw_emit_object` now skips them like ext/json.
 - `fastjson_validate` now classifies a non-ASCII parse-error byte as
   `JSON_ERROR_UTF8` only when the bytes are malformed UTF-8. Valid
   UTF-8 sequences that aren't valid JSON (e.g. bare `é` at top level)
-  stay `JSON_ERROR_SYNTAX`, matching ext/json. Decode shared the same
-  fix.
+  stay `JSON_ERROR_SYNTAX`, matching ext/json. The same fix applies
+  to decode.
 - `fastjson_validate("", -1)` now short-circuits to `false` (matching
   ext/json) instead of raising `ValueError` before the empty-input
   check.
 - `-0.0` now encodes as `"-0"` (or `"-0.0"` with `PRESERVE_ZERO_FRACTION`)
-  instead of `"0"`. The integer-valued-double shortcut had been
-  zero-extending the sign.
+  instead of `"0"`. The integer-valued-double shortcut dropped the
+  sign.
 - `last_error` is cleared before an argument `ValueError` raises on
   bad `$depth`, in both `fastjson_decode` and `fastjson_validate`
   (matches ext/json's `json_decode` / `json_validate` contract).
@@ -201,11 +201,10 @@ Measured against 0.6.0 on PHP 8.4 release builds (x86_64; aarch64 where noted).
 ### Build
 
 - Vendored yyjson symbols no longer leak into the .so dynamic table.
-  `-fvisibility=hidden` was being overridden by yyjson's
-  `__attribute__((visibility("default")))` per-symbol; the build now
-  also passes `-Dyyjson_api=` so the macro's `#ifndef` guard skips
-  the visibility-default branch. After this change `nm -D
-  modules/fastjson.so | grep -v get_module` returns empty.
+  yyjson's per-symbol `__attribute__((visibility("default")))`
+  overrode `-fvisibility=hidden`; the build now passes `-Dyyjson_api=`
+  so the macro's `#ifndef` guard skips that branch. `nm -D
+  modules/fastjson.so | grep -v get_module` now returns nothing.
 
 ### Tests
 
@@ -226,8 +225,8 @@ backed by yyjson 0.12.0.
 ### Added
 
 - `fastjson_encode(mixed $value, int $flags = 0, int $depth = 512): string|false`.
-  Direct-write one-stage encoder: walks zvals straight into a `smart_str`
-  buffer using yyjson's primitives for numbers (`yyjson_write_number`) and
+  One-stage encoder that writes zvals directly into a `smart_str` buffer
+  with yyjson's primitives for numbers (`yyjson_write_number`) and
   strings (`yyjson_write_string_to_buf`). Flags honored: `JSON_PRETTY_PRINT`,
   `JSON_UNESCAPED_SLASHES`, `JSON_UNESCAPED_UNICODE`, `JSON_FORCE_OBJECT`,
   `JSON_PARTIAL_OUTPUT_ON_ERROR`, `JSON_HEX_TAG`, `JSON_HEX_AMP`,
@@ -238,8 +237,8 @@ backed by yyjson 0.12.0.
 - `fastjson_decode(string $json, ?bool $associative = null, int $depth = 512, int $flags = 0): mixed`.
   yyjson_doc → zval walker covering null, bool, int, uint (widens to double
   above `PHP_INT_MAX`), float, string, array, object (`stdClass` or
-  associative array). Object property tables written via `Z_OBJPROP_P` to
-  bypass per-property handler dispatch. Flags honored:
+  associative array). Object property tables are filled through
+  `Z_OBJPROP_P`, bypassing per-property handler dispatch. Flags honored:
   `JSON_BIGINT_AS_STRING`, `JSON_OBJECT_AS_ARRAY`, `JSON_INVALID_UTF8_IGNORE`,
   `JSON_INVALID_UTF8_SUBSTITUTE`, `JSON_THROW_ON_ERROR`.
 
@@ -253,8 +252,8 @@ backed by yyjson 0.12.0.
 
 - `FASTJSON_ERROR_NONE`, `_DEPTH`, `_STATE_MISMATCH`, `_CTRL_CHAR`, `_SYNTAX`,
   `_UTF8`, `_RECURSION`, `_INF_OR_NAN`, `_UNSUPPORTED_TYPE`,
-  `_INVALID_PROPERTY_NAME`, `_UTF16` constants. Values intentionally match
-  `JSON_ERROR_*` so callers can use either set.
+  `_INVALID_PROPERTY_NAME`, `_UTF16` constants. Values match
+  `JSON_ERROR_*`, so callers can use either set.
 
 - `JsonSerializable` and `\JsonException` integration. `jsonSerialize()`
   return values feed back through the encoder; `JSON_THROW_ON_ERROR` raises
@@ -264,8 +263,8 @@ backed by yyjson 0.12.0.
 - Depth and stack-overflow guards on encode and decode. `$depth <= 0` or
   `> INT_MAX` raises `ValueError` on decode/validate; encode follows
   ext/json's lazy-fail contract. Stack walks gated on
-  `zend_call_stack_overflowed(EG(stack_limit))` so deeply chained inputs
-  fail cleanly instead of being killed by the OS.
+  `zend_call_stack_overflowed(EG(stack_limit))`, so deeply nested input
+  fails with an error instead of crashing the process.
 
 - Bundled yyjson 0.12.0 (MIT) with four local patches in
   `vendor/yyjson/PATCHES.md`:
@@ -279,9 +278,9 @@ backed by yyjson 0.12.0.
   - **P-004**: reject raw control characters even when invalid-Unicode
     tolerance is enabled, preserving ext/json's UTF-8 flag semantics.
 
-- yyjson allocator (`fastjson_php_alc`) routes every malloc/realloc/free
-  through Zend's `emalloc`/`erealloc`/`efree`. JSON allocations participate
-  in `memory_limit` accounting and request-scoped cleanup.
+- yyjson allocator (`fastjson_php_alc`) routes malloc/realloc/free
+  through Zend's `emalloc`/`erealloc`/`efree`, so JSON allocations count
+  against `memory_limit` and are freed at request end.
 
 - Benchmark harness at `bench/` measuring encode + decode + validate vs
   ext/json on the simdjson_php canonical corpus (15 large + 6 small files,
@@ -300,8 +299,8 @@ backed by yyjson 0.12.0.
 
 - Decode and validate hold the yyjson doc in memory alongside results.
   Decode peak ≈ 1.7× ext/json. Validate peak ≈ 101× ext/json's streaming
-  validator (constant ~80 bytes), but already 2.7× better than yyjson's
-  stock read path thanks to P-002.
+  validator (constant ~80 bytes); P-002 cuts yyjson's stock read path
+  by 2.7×.
 - Encode is one-stage; peak ≈ 1.06× ext/json.
 
 ### Known divergences from ext/json

@@ -6,7 +6,7 @@ fastjson
 <?php
 
 // ext/json's JSON_BIGINT_AS_STRING is documented as "encodes large
-// integers as their original string value" -- floats are not in scope.
+// integers as their original string value"; floats are not in scope.
 // Exponent-overflow numbers go to INF, not to the raw text.
 
 // Integer overflow -> string (BIGINT_AS_STRING applies).

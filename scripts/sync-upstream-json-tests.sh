@@ -12,8 +12,8 @@
 # - Each generated file carries an `# Generated from <upstream>` header
 #   so reviewers can trace divergences back to the PHP version.
 # - tests/upstream-json/.skiplist documents tests intentionally skipped
-#   (with one-line reasons). The script does NOT auto-modify the
-#   skiplist; it's authored by hand based on harness output.
+#   (with one-line reasons). The skiplist is maintained by hand; this
+#   script never modifies it.
 # - .source-revision and .manifest pin the exact php-src snapshot and its
 #   complete test-name set so additions/removals cannot cancel out in a
 #   count-only metadata check.
@@ -38,7 +38,7 @@ PHP_SOURCE_COMMIT=$(git -C "$PHP_SRC" rev-parse HEAD 2>/dev/null || true)
 PHP_SOURCE_COMMIT="${PHP_SOURCE_COMMIT:-unknown}"
 
 mkdir -p "$DEST_DIR"
-# Wipe existing entries -- they're all regenerable, no manual edits.
+# Every entry is regenerated; none carry manual edits.
 find "$DEST_DIR" -maxdepth 1 -name '*.phpt' -delete
 
 printf '%s\n' "$SRC_DIR"/*.phpt | while IFS= read -r src; do

@@ -23,7 +23,7 @@ echo "---\n";
 
 // Empty input + bad depth: ext/json short-circuits on the empty
 // check before validating depth, returning false. fastjson must
-// match -- raising ValueError here would be a divergence.
+// match; raising ValueError here would be a divergence.
 var_dump(fastjson_validate("", -1));
 var_dump(fastjson_last_error() === FASTJSON_ERROR_SYNTAX);
 

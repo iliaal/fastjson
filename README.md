@@ -8,9 +8,9 @@
 
 ![fastjson: 5.6x encode, 2.6x decode, 5.0x validate vs ext/json](images/fastjson-hero.jpg)
 
-Fast JSON encode, decode, and validate for PHP 8.1+. Drop-in alternative to `ext/json` with a namespaced `fastjson_*` API and `json_last_error`-compatible error reporting. Backed by [yyjson](https://github.com/ibireme/yyjson) 0.12.0, one of the fastest portable JSON libraries. Coexists with `ext/json`; adoption is opt-in per call site.
+Fast JSON encode, decode, and validate for PHP 8.1+. A drop-in alternative to `ext/json` with a `fastjson_*` API and `json_last_error`-compatible error reporting, built on [yyjson](https://github.com/ibireme/yyjson) 0.12.0. It coexists with `ext/json`, so you adopt it one call site at a time.
 
-> **Status:** pre-release. yyjson 0.12.0 is vendored and linked. The `fastjson_encode` / `fastjson_decode` / `fastjson_validate` trio plus `fastjson_last_error` / `_msg` / `_pos` / `_info`, the file helpers `fastjson_file_decode` / `fastjson_file_encode`, and the JSON Pointer / patch helpers `fastjson_pointer_get` / `_exists` / `_set` (RFC 6901) and `fastjson_merge_patch` (RFC 7386) are available. The compat harness against `php-src/ext/json/tests/*.phpt` passes everything targeting features fastjson aims to mirror; the rest is categorized in `tests/upstream-json/.skiplist`.
+> Status: pre-release. Available now: `fastjson_encode` / `fastjson_decode` / `fastjson_validate`, `fastjson_last_error` / `_msg` / `_pos` / `_info`, the file helpers `fastjson_file_decode` / `fastjson_file_encode`, and the JSON Pointer / patch helpers `fastjson_pointer_get` / `_exists` / `_set` (RFC 6901) and `fastjson_merge_patch` (RFC 7396). The compat harness against `php-src/ext/json/tests/*.phpt` passes every test for features fastjson mirrors; `tests/upstream-json/.skiplist` categorizes the rest.
 
 ## 📦 Install
 
@@ -20,7 +20,7 @@ Fast JSON encode, decode, and validate for PHP 8.1+. Drop-in alternative to `ext
 pie install iliaal/fastjson
 ```
 
-On a minimal PHP image (e.g. `php:8.x-cli` from Docker Hub), PIE needs a few build tools installed first:
+On a minimal PHP image (for example `php:8.x-cli` from Docker Hub), install these build tools before running PIE:
 
 ```bash
 # Debian/Ubuntu
@@ -57,7 +57,7 @@ if ($data === null && fastjson_last_error() !== 0) {
 }
 ```
 
-Function signatures track `ext/json` so call sites migrate by search-and-replace from `json_*` to `fastjson_*`. PHP 8.4 property hooks and `JsonSerializable` are honored.
+Function signatures match `ext/json`, so you can migrate a call site by replacing `json_*` with `fastjson_*`. PHP 8.4 property hooks and `JsonSerializable` work as they do in `ext/json`.
 
 **Encode flags:** `JSON_PRETTY_PRINT`, `JSON_UNESCAPED_SLASHES`, `JSON_UNESCAPED_UNICODE`, `JSON_FORCE_OBJECT`, `JSON_HEX_TAG`, `JSON_HEX_AMP`, `JSON_HEX_APOS`, `JSON_HEX_QUOT`, `JSON_NUMERIC_CHECK`, `JSON_PRESERVE_ZERO_FRACTION`, `JSON_PARTIAL_OUTPUT_ON_ERROR`, `JSON_INVALID_UTF8_IGNORE`, `JSON_INVALID_UTF8_SUBSTITUTE`, `JSON_THROW_ON_ERROR`.
 
@@ -65,11 +65,13 @@ Function signatures track `ext/json` so call sites migrate by search-and-replace
 
 **Validate flags:** `JSON_INVALID_UTF8_IGNORE` (other bits raise `ValueError` per ext/json's contract). `$depth` is enforced on the success path like `ext/json`: documents nesting `$depth` or more containers deep validate false with a depth error.
 
-**Beyond the core trio:** `fastjson_file_decode()` / `fastjson_file_encode()` read and write a JSON file in one call through the PHP streams layer (`open_basedir` and stream wrappers apply). `fastjson_file_encode()` opens the destination in write mode, so it is a convenience helper, not an atomic config/state-file update primitive; use your own temp-file + rename flow when partial writes would be unsafe. File I/O failures reuse `FASTJSON_ERROR_SYNTAX` to stay compatible with the `JSON_ERROR_*` code range, so callers that need to separate filesystem faults from parse or encode failures should check `fastjson_last_error_msg()` for the `Failed to ... file` messages. `fastjson_pointer_get()` extracts a single value by [RFC 6901](https://www.rfc-editor.org/rfc/rfc6901) JSON Pointer without materializing the rest of the document; `fastjson_pointer_exists()` reports whether a pointer resolves (distinguishing "present but null" from "absent"); `fastjson_pointer_set()` sets a single value by pointer and returns the re-serialized document, splicing the edit directly into the parsed document so a single edit on a large document skips a full decode/re-encode. Formatting and escaping flags apply to the whole pointer-set output; value-transforming flags apply only to the replacement. Pointer-set rejects an ambiguous target member duplicated in an object. `fastjson_merge_patch()` applies an [RFC 7386](https://www.rfc-editor.org/rfc/rfc7386) merge patch and canonicalizes duplicate members at each merged object using the last value and first insertion position. Merge-patch member matching always uses the raw JSON key bytes. `JSON_INVALID_UTF8_IGNORE` and `JSON_INVALID_UTF8_SUBSTITUTE` sanitize only the materialized PHP result, so malformed and valid key spellings that sanitize to the same PHP key remain distinct during the merge.
+**File helpers:** `fastjson_file_decode()` / `fastjson_file_encode()` read and write a JSON file in one call through the PHP streams layer (`open_basedir` and stream wrappers apply). `fastjson_file_encode()` opens the destination in write mode and does not replace it atomically; if a partial write would be unsafe, write to a temp file and rename it yourself. File I/O failures reuse `FASTJSON_ERROR_SYNTAX` to stay inside the `JSON_ERROR_*` code range. To tell a filesystem fault from a parse or encode failure, check `fastjson_last_error_msg()` for the `Failed to ... file` messages.
 
-**Error location:** beyond `fastjson_last_error()` / `_msg()`, `fastjson_last_error_pos()` returns the byte offset of the most recent parse error (`-1` when none), and `fastjson_last_error_info()` bundles `['code', 'msg', 'pos', 'line', 'col']` (1-based line/column) in one call, useful when a caller, or an agent, needs to point at exactly where malformed JSON broke. Under `JSON_THROW_ON_ERROR` the thrown class is `JsonException` when `ext/json` is present, `Fastjson\JsonException` otherwise.
+**JSON Pointer and merge patch:** `fastjson_pointer_get()` extracts one value by [RFC 6901](https://www.rfc-editor.org/rfc/rfc6901) JSON Pointer without materializing the rest of the document. `fastjson_pointer_exists()` reports whether a pointer resolves, so you can tell "present but null" from "absent". `fastjson_pointer_set()` sets one value by pointer and returns the re-serialized document; it splices the edit into the parsed document, so a single edit on a large document skips a full decode and re-encode. Formatting and escaping flags apply to the whole pointer-set output; value-transforming flags apply only to the replacement. Pointer-set rejects a target member that appears more than once in its object. `fastjson_merge_patch()` applies an [RFC 7396](https://www.rfc-editor.org/rfc/rfc7396) merge patch and collapses duplicate members in each merged object to the last value at the first insertion position. Merge-patch member matching uses the raw JSON key bytes. `JSON_INVALID_UTF8_IGNORE` and `JSON_INVALID_UTF8_SUBSTITUTE` sanitize only the materialized PHP result, so malformed and valid key spellings that sanitize to the same PHP key stay distinct during the merge.
 
-See [`CHANGELOG.md`](CHANGELOG.md) for the full feature list and the divergences from `ext/json` that fastjson does not aim to mirror byte-for-byte.
+**Error location:** `fastjson_last_error_pos()` returns the byte offset of the most recent parse error (`-1` when none). `fastjson_last_error_info()` returns `['code', 'msg', 'pos', 'line', 'col']` (1-based line and column) in one call, so you can point at where malformed JSON broke. Under `JSON_THROW_ON_ERROR` the thrown class is `JsonException` when `ext/json` is loaded, `Fastjson\JsonException` otherwise.
+
+[`CHANGELOG.md`](CHANGELOG.md) has the full feature list and the known divergences from `ext/json` output.
 
 ## 📊 Performance
 
@@ -82,19 +84,19 @@ Throughput vs `ext/json` on the full 14.8 MB / 15-file canonical corpus from sim
 | Encode               | 748 MB/s | 135 MB/s | **5.56x** |
 | Validate             | 994 MB/s | 197 MB/s | **5.04x** |
 
-A visual side-by-side against `ext/json` on PHP 8.4 is published at [**iliaal.github.io/fastjson**](https://iliaal.github.io/fastjson/baseline.html). Methodology, per-file numbers, small-corpus + per-call latency breakdown, and how to reproduce: [`bench/README.md`](bench/README.md) and [`bench/baseline.md`](bench/baseline.md).
+A visual comparison against `ext/json` on PHP 8.4 is at [iliaal.github.io/fastjson](https://iliaal.github.io/fastjson/baseline.html). [`bench/README.md`](bench/README.md) and [`bench/baseline.md`](bench/baseline.md) cover methodology, per-file numbers, small-corpus and per-call latency, and how to reproduce.
 
 ### Memory tradeoff
 
-fastjson trades memory for speed on decode (yyjson's two-stage parser holds the doc alongside the zval tree). Decode peak is ~1.7x ext/json's heap. **Encode runs one-stage** (direct-write into smart_str using yyjson primitives) so encode memory is at near-parity with ext/json (~1.1x). Validate peaks at ~101x: lower than ext/json's true streaming validator (constant ~80 bytes) but already 2.7x better than yyjson's stock read path thanks to vendor patch P-002. See [`vendor/yyjson/PATCHES.md`](vendor/yyjson/PATCHES.md). For most callers the speedup is worth the memory headroom; if you're validate-heavy on giant inputs in tight `memory_limit` settings, it's a real consideration.
+Decode trades memory for speed: yyjson's two-stage parser holds the parsed document alongside the zval tree, so decode peaks at ~1.7x ext/json's heap. Encode writes directly into a smart_str with yyjson primitives, so its memory is close to ext/json (~1.1x). Validate peaks at ~101x ext/json, whose streaming validator uses a constant ~80 bytes; vendor patch P-002 already cuts yyjson's stock read path by 2.7x (see [`vendor/yyjson/PATCHES.md`](vendor/yyjson/PATCHES.md)). If you validate giant inputs under a tight `memory_limit`, budget for this.
 
 ## ✨ What's in the box
 
-- Bundled yyjson 0.12.0 (MIT) with five local patches (P-001 through P-005). Full notes and the mechanically replayable series are in [`vendor/yyjson/PATCHES.md`](vendor/yyjson/PATCHES.md) and [`vendor/yyjson/patches/`](vendor/yyjson/patches/).
-- yyjson allocator routes every malloc/realloc/free through Zend's `emalloc`/`erealloc`/`efree`. JSON allocations participate in `memory_limit` accounting and request-scoped cleanup.
-- `FASTJSON_ERROR_*` constants intentionally match all `JSON_ERROR_*` numeric values, so callers can use either set. yyjson groups raw control-character and invalid-surrogate parse failures under the UTF-8 code; the aliases exist even where fastjson does not currently emit the more specific ext/json category.
-- 67-test compat harness rewritten from `php-src/ext/json/tests/*.phpt` runs alongside the native phpt suite. `tests/upstream-json/.skiplist` and `tests/upstream-json/STATE.md` track which upstream tests fastjson does not aim to pass byte-for-byte.
-- Depth and stack-overflow guards use `zend_call_stack_overflowed` where Zend exposes it and conservative recursion caps elsewhere. Deeply chained inputs fail cleanly instead of being killed by the OS.
+- Bundled yyjson 0.12.0 (MIT) with five local patches (P-001 through P-005). Notes and the replayable series are in [`vendor/yyjson/PATCHES.md`](vendor/yyjson/PATCHES.md) and [`vendor/yyjson/patches/`](vendor/yyjson/patches/).
+- yyjson allocates through Zend's `emalloc`/`erealloc`/`efree`, so JSON allocations count against `memory_limit` and are freed at request end.
+- `FASTJSON_ERROR_*` constants match the `JSON_ERROR_*` numeric values, so you can use either set. yyjson reports raw control-character and invalid-surrogate parse failures under the UTF-8 code; the aliases exist even where fastjson does not emit the more specific ext/json code.
+- 67-test compat harness rewritten from `php-src/ext/json/tests/*.phpt` runs alongside the native phpt suite. `tests/upstream-json/.skiplist` and `tests/upstream-json/STATE.md` list the upstream tests fastjson does not try to match byte-for-byte.
+- Depth and stack-overflow guards use `zend_call_stack_overflowed` where Zend exposes it and conservative recursion caps elsewhere, so deeply nested input fails with an error instead of crashing the process.
 
 ## Roadmap
 
@@ -102,8 +104,6 @@ fastjson trades memory for speed on decode (yyjson's two-stage parser holds the 
 - [ ] Streaming / incremental decode and encode
 
 ## 🔗 Native PHP extensions
-
-Companion native PHP extensions:
 
 - **[php_excel](https://github.com/iliaal/php_excel)**: native Excel I/O via LibXL. 7-10× faster than PhpSpreadsheet, full XLS/XLSX with formulas, formatting, and styling.
 - **[mdparser](https://github.com/iliaal/mdparser)**: native CommonMark + GFM markdown parser via md4c. 15-30× faster than pure-PHP libraries.

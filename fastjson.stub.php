@@ -76,7 +76,7 @@ const FASTJSON_ERROR_NON_BACKED_ENUM = UNKNOWN;
 
 /**
  * Decode flag (fastjson-only, no ext/json equivalent): tolerate the
- * JSONC subset -- line/block comments, trailing commas, leading BOM.
+ * JSONC subset: line/block comments, trailing commas, leading BOM.
  * @var int
  * @cvalue FASTJSON_DECODE_RELAXED
  */
@@ -95,8 +95,7 @@ function fastjson_version(): string {}
  * fastjson_last_error() set). The false-on-failure behavior matches
  * ext/json's json_encode().
  *
- * Supported $flags (all honored at the byte-equality level with
- * ext/json on the common path):
+ * Supported $flags (byte-identical to ext/json on the common path):
  *   JSON_PRETTY_PRINT             - 4-space indented output
  *   JSON_UNESCAPED_SLASHES        - don't escape forward slashes
  *   JSON_UNESCAPED_UNICODE        - emit non-ASCII as raw UTF-8
@@ -118,9 +117,8 @@ function fastjson_version(): string {}
  *                                   false); global error state is
  *                                   preserved per ext/json's contract
  *
- * Byte-equality with ext/json holds on the common path, but very large
- * or very small doubles may render in a different (numerically
- * equivalent) notation: e.g. 1.0e17 encodes as "100000000000000000.0"
+ * Very large or very small doubles may render in a different but
+ * numerically equivalent notation: 1.0e17 encodes as "100000000000000000.0"
  * where json_encode() emits "1.0e+17", and 1.0e-5 as "0.00001" vs
  * "1.0e-5". See CHANGELOG.md for the full divergence list.
  *
@@ -135,10 +133,9 @@ function fastjson_encode(mixed $value, int $flags = 0, int $depth = 512): string
 /**
  * Encodes $value to JSON and writes it to $filename in one call.
  *
- * Convenience wrapper for file_put_contents($filename,
- * fastjson_encode($value, ...)). The file is written through the PHP
- * streams layer, so stream wrappers and open_basedir are honored. The
- * write is NOT atomic. $flags and $depth carry the exact semantics of
+ * Equivalent to file_put_contents($filename, fastjson_encode($value, ...)).
+ * The file is written through the PHP streams layer, so stream wrappers
+ * and open_basedir apply. The write is not atomic. $flags and $depth carry the exact semantics of
  * fastjson_encode().
  *
  * Returns true on success, false on failure (encode error or I/O
@@ -146,9 +143,8 @@ function fastjson_encode(mixed $value, int $flags = 0, int $depth = 512): string
  * the streams layer to report open errors, but open_basedir, individual
  * wrappers, and write callbacks may emit their own warnings, as they do
  * under file_put_contents().
- * I/O failures use FASTJSON_ERROR_SYNTAX because
- * fastjson intentionally stays inside the JSON_ERROR_* code range; use
- * fastjson_last_error_msg() ("Failed to open file for writing" or
+ * I/O failures use FASTJSON_ERROR_SYNTAX to stay inside the JSON_ERROR_*
+ * code range; use fastjson_last_error_msg() ("Failed to open file for writing" or
  * "Failed to write file") to distinguish them from encode failures.
  * JSON_THROW_ON_ERROR throws on an encode error; an I/O failure still
  * returns false.
@@ -160,9 +156,8 @@ function fastjson_file_encode(string $filename, mixed $value, int $flags = 0, in
  *
  * Returns the decoded value (mixed: null, bool, int, float, string,
  * array, or stdClass) on success, or null on parse failure (with
- * fastjson_last_error() set). Since null is also a valid decoded
- * value, callers must check fastjson_last_error() to distinguish a
- * decoded-null from a parse failure.
+ * fastjson_last_error() set). Null is also a valid decoded value, so
+ * check fastjson_last_error() to tell a decoded null from a failure.
  *
  * $associative selects the object representation:
  *   - true:  JSON objects decode to associative arrays.
@@ -196,23 +191,19 @@ function fastjson_decode(string $json, ?bool $associative = null, int $depth = 5
 /**
  * Reads $filename and decodes its contents as JSON in one call.
  *
- * Convenience wrapper for fastjson_decode(file_get_contents($filename),
- * ...). The file is read through the PHP streams layer, so stream
- * wrappers (php://, user-registered wrappers) and open_basedir are
- * honored. $associative, $depth, and $flags carry the exact semantics
+ * Equivalent to fastjson_decode(file_get_contents($filename), ...). The
+ * file is read through the PHP streams layer, so stream wrappers
+ * (php://, user-registered wrappers) and open_basedir apply. $associative, $depth, and $flags carry the exact semantics
  * of fastjson_decode().
  *
- * Returns the decoded value on success, or null on failure -- the same
- * contract as fastjson_decode(): callers check fastjson_last_error() to
- * distinguish a decoded-null from a failure. Failure covers both a
- * file that cannot be read and a JSON parse error. Fastjson does not ask
+ * Returns the decoded value on success, or null on failure, with the same
+ * contract as fastjson_decode(): check fastjson_last_error() to tell a
+ * decoded null from a failure. Failure covers both an unreadable file and
+ * a JSON parse error. Fastjson does not ask
  * the streams layer to report open errors, but open_basedir, individual
  * wrappers, and read callbacks may emit their own warnings, as they do
- * under file_get_contents(). I/O failure sets a non-zero code and a
- * descriptive message; a JSON parse
- * error (translated code as usual). I/O failures use
- * FASTJSON_ERROR_SYNTAX because fastjson intentionally stays inside
- * the JSON_ERROR_* code range; use fastjson_last_error_msg()
+ * under file_get_contents(). I/O failures use FASTJSON_ERROR_SYNTAX to
+ * stay inside the JSON_ERROR_* code range; use fastjson_last_error_msg()
  * ("Failed to open file for reading" or "Failed to read file") to
  * distinguish them from parse errors. JSON_THROW_ON_ERROR throws on a
  * parse error; an I/O failure still returns null (a filesystem error
@@ -224,13 +215,13 @@ function fastjson_file_decode(string $filename, ?bool $associative = null, int $
  * Reads a single value from $json at the given RFC 6901 JSON Pointer.
  *
  * Resolves the pointer against the parsed document and decodes only the
- * referenced subtree into a PHP value -- the rest of the document is
- * never materialized into PHP. Standard pointer syntax: "/users/0/email";
+ * referenced subtree into a PHP value; the rest of the document is never
+ * materialized into PHP. Standard pointer syntax: "/users/0/email";
  * the empty pointer "" selects the whole document.
  *
  * Returns the value at the pointer, or null when the pointer does not
- * resolve (a missing path or a malformed pointer is treated as "no
- * value", not an error -- the error state is left clear). A pointer that
+ * resolve. A missing path or a malformed pointer means "no value" and
+ * leaves the error state clear. A pointer that
  * resolves to a JSON null also returns null; like the rest of the decode
  * family, callers cannot distinguish the two from PHP alone.
  *
@@ -239,8 +230,8 @@ function fastjson_file_decode(string $filename, ?bool $associative = null, int $
  * FASTJSON_ERROR_SYNTAX, or throws under JSON_THROW_ON_ERROR. A pointer
  * carrying $depth or more segments (or above an internal absolute segment
  * cap) fails with FASTJSON_ERROR_DEPTH instead of resolving. JSON parse
- * errors use the same error path. $associative, $depth, and $flags -- including
- * FASTJSON_DECODE_RELAXED -- otherwise carry the same semantics as
+ * errors use the same error path. Otherwise $associative, $depth, and $flags
+ * (including FASTJSON_DECODE_RELAXED) carry the same semantics as
  * fastjson_decode() and apply to the decoded subtree.
  */
 function fastjson_pointer_get(string $json, string $pointer, ?bool $associative = null, int $depth = 512, int $flags = 0): mixed {}
@@ -249,9 +240,8 @@ function fastjson_pointer_get(string $json, string $pointer, ?bool $associative 
  * Reports whether the RFC 6901 JSON Pointer $pointer resolves to a value
  * in $json.
  *
- * Returns true when the pointer resolves (including when it resolves to a
- * JSON null -- unlike fastjson_pointer_get, the bool result disambiguates
- * "present but null" from "absent"), false when the path is missing or the
+ * Returns true when the pointer resolves, including to a JSON null (unlike
+ * fastjson_pointer_get, this tells "present but null" from "absent"), false when the path is missing or the
  * pointer is malformed. Nothing is materialized into PHP.
  *
  * A false return with fastjson_last_error() == FASTJSON_ERROR_NONE means
@@ -267,9 +257,8 @@ function fastjson_pointer_exists(string $json, string $pointer, int $flags = 0):
  * Sets the value at the RFC 6901 JSON Pointer $pointer in $json to $value
  * and returns the re-serialized JSON document.
  *
- * The parsed document is re-emitted by an immutable splice writer -- only
- * $value is materialized from PHP, not the whole input -- so this avoids a full
- * decode/re-encode round-trip for a single edit on a large document. Missing
+ * An immutable splice writer re-emits the parsed document and materializes
+ * only $value from PHP, which avoids a full decode/re-encode round-trip for a single edit on a large document. Missing
  * parent objects are created; the empty pointer "" replaces the whole
  * document. Returns false (or throws under JSON_THROW_ON_ERROR) when $json
  * fails to parse, when $value cannot be encoded, or when the pointer cannot
@@ -297,15 +286,14 @@ function fastjson_pointer_exists(string $json, string $pointer, int $flags = 0):
 function fastjson_pointer_set(string $json, string $pointer, mixed $value, int $depth = 512, int $flags = 0): string|false {}
 
 /**
- * Applies an RFC 7386 JSON Merge Patch ($patch) to $target and returns
+ * Applies an RFC 7396 JSON Merge Patch ($patch) to $target and returns
  * the merged document as a PHP value.
  *
- * Merge semantics (RFC 7386): objects merge recursively; a non-object
+ * Merge semantics (RFC 7396): objects merge recursively; a non-object
  * patch replaces the target wholesale; a null member deletes the
  * corresponding key from the target. Returns a PHP value rather than a
- * JSON string so the result flows through the same single encoder -- pass
- * it to fastjson_encode() for byte-consistent output.
- * RFC 7386 does not define duplicate member handling. Fastjson canonicalizes
+ * JSON string; pass it to fastjson_encode() for byte-consistent output.
+ * RFC 7396 does not define duplicate member handling. Fastjson canonicalizes
  * objects it merges using the last member's value and the first member's
  * insertion position, matching PHP's decoded-object model.
  *
@@ -313,8 +301,8 @@ function fastjson_pointer_set(string $json, string $pointer, mixed $value, int $
  * fastjson_last_error() set (or throws under JSON_THROW_ON_ERROR).
  * $depth bounds the effective merged result: operand subtrees deleted or
  * replaced by the patch need not fit, while every retained subtree must fit.
- * $associative and $flags -- including FASTJSON_DECODE_RELAXED for the operand
- * parse -- otherwise carry the same semantics as fastjson_decode().
+ * Otherwise $associative and $flags (including FASTJSON_DECODE_RELAXED for
+ * the operand parse) carry the same semantics as fastjson_decode().
  */
 function fastjson_merge_patch(string $target, string $patch, ?bool $associative = null, int $depth = 512, int $flags = 0): mixed {}
 
@@ -329,12 +317,10 @@ function fastjson_merge_patch(string $target, string $patch, ?bool $associative 
  * The $depth parameter caps nesting exactly as in fastjson_decode():
  * inputs nesting $depth or more containers deep fail with
  * FASTJSON_ERROR_DEPTH (a scalar needs depth >= 1, "[]" needs
- * depth >= 2, "[[[1]]]" needs depth >= 4). The check is a single
+ * depth >= 2, "[[[1]]]" needs depth >= 4). The check is one
  * allocation-free scan over the raw input that skips string contents
- * and exits early once the cap is reached, so the validate-only fast
- * path keeps its throughput/memory edge. The argument is still
- * validated (positive in-range) and raises ValueError on $depth <= 0
- * or > INT_MAX.
+ * and stops once the cap is reached. $depth <= 0 or > INT_MAX raises
+ * ValueError.
  *
  * The only $flags value accepted is JSON_INVALID_UTF8_IGNORE. Any
  * other bits raise a ValueError, matching ext/json's contract.
@@ -354,8 +340,8 @@ function fastjson_last_error(): int {}
 /**
  * Returns the human-readable error message for the most recent
  * fastjson_* call in this request, or "No error" if no error is
- * recorded. The message is yyjson's diagnostic and is more
- * descriptive than ext/json's static error strings.
+ * recorded. The message is yyjson's diagnostic, which is more
+ * specific than ext/json's static error strings.
  */
 function fastjson_last_error_msg(): string {}
 

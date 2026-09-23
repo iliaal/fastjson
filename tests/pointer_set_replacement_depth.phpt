@@ -8,7 +8,7 @@ fastjson
 /* The replacement lands N containers deep in the output (N = pointer
  * segments), so its own nesting budget is what remains of $depth after
  * the path. Passing the full $depth let pointer_set emit a document
- * deeper than $depth -- one fastjson_decode(..., $depth) then rejects.
+ * deeper than $depth, which fastjson_decode(..., $depth) then rejects.
  * The output must always round-trip at the same $depth. */
 
 // "/a" is one segment; [1] under it makes {"a":[1]} (nesting 2), which

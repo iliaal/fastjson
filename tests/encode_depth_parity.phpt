@@ -7,8 +7,8 @@ fastjson
 
 /* The encoder counts containers (not scalar leaves). This walks the
  * exact boundary against json_encode for several nested shapes at every
- * depth from 1 up to just past what each shape needs -- the encode
- * analogue of decode_depth.phpt. An off-by-one in the container-only
+ * depth from 1 up to just past what each shape needs (the encode
+ * analogue of decode_depth.phpt). An off-by-one in the container-only
  * counting would surface as a mismatch here. */
 
 $shapes = [

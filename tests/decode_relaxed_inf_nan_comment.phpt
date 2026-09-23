@@ -5,17 +5,16 @@ fastjson
 --FILE--
 <?php
 
-/* Regression: the inf/nan prescan that gates the exponent-overflow
- * ALLOW_INF_AND_NAN retry walked the input tracking only string state.
- * Under FASTJSON_DECODE_RELAXED (which enables JSONC comments) it
- * mistook comment bytes for tokens, two ways:
+/* The inf/nan prescan that gates the exponent-overflow ALLOW_INF_AND_NAN
+ * retry must skip JSONC comments under FASTJSON_DECODE_RELAXED. Tracking
+ * only string state misreads comment bytes two ways:
  *
- *  (1) false positive -- "info" in a comment read as an "Inf" literal,
- *      blocking the legitimate retry, so "1e309" decoded to null/SYNTAX
- *      instead of float(INF).
- *  (2) false negative -- an unbalanced quote inside a comment flipped
- *      the string state and hid a real bare Inf literal sitting outside
- *      the comment, so the retry wrongly accepted it as INF. */
+ *  (1) False positive: "info" in a comment reads as an "Inf" literal and
+ *      blocks the retry, so "1e309" decodes to null/SYNTAX instead of
+ *      float(INF).
+ *  (2) False negative: an unbalanced quote inside a comment flips the
+ *      string state and hides a bare Inf literal outside the comment, so
+ *      the retry accepts it as INF. */
 
 $R = FASTJSON_DECODE_RELAXED;
 

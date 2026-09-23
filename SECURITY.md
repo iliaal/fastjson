@@ -1,9 +1,9 @@
 # Security policy
 
-fastjson is a namespaced drop-in alternative to ext/json, backed by a
-vendored, statically compiled yyjson. It encodes, decodes, validates,
-pointer-queries, and merge-patches JSON. The realistic threat surface
-is untrusted JSON, or untrusted RFC 6901 pointers, RFC 7386 patches,
+fastjson is a drop-in alternative to ext/json, backed by a vendored,
+statically compiled yyjson. It encodes, decodes, validates,
+pointer-queries, and merge-patches JSON. The main threat surface is
+untrusted JSON, or untrusted RFC 6901 pointers, RFC 7396 patches,
 and file paths, reaching the native C decode/encode/validate paths,
 which run in-process under the same trust model as ext/json.
 
@@ -11,7 +11,8 @@ which run in-process under the same trust model as ext/json.
 
 | Version | Supported          |
 |---------|--------------------|
-| 0.7.x   | :white_check_mark: |
+| 0.8.x   | :white_check_mark: |
+| 0.7.x   | :x:                |
 | 0.6.x   | :x:                |
 | 0.5.x   | :x:                |
 | 0.4.x   | :x:                |
@@ -64,8 +65,7 @@ In scope:
 Out of scope:
 
 - Parser strictness disagreements. The `FASTJSON_DECODE_RELAXED` flag
-  intentionally accepts comments, trailing commas, and a leading BOM;
-  that widened grammar is by design, not a vulnerability.
+  accepts comments, trailing commas, and a leading BOM by design.
 - Resource exhaustion from decoding intentionally huge documents within
   `memory_limit`. Allocations route through Zend MM and obey
   `memory_limit`; overflow paths that bypass those limits are in scope.

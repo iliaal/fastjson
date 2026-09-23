@@ -1,9 +1,8 @@
 <?php
 /*
- * Focused benchmark for performance ideas that the broad corpus harness
- * does not cover: pointer_set, pretty-print, file_decode, validate, and
- * JsonSerializable. The output is intended for before/after runs on an
- * optimized PHP + optimized fastjson build.
+ * Benchmark for paths the corpus harness does not cover: pointer_set,
+ * pretty-print, file_decode, validate, and JsonSerializable. Use it for
+ * before/after runs on release builds of PHP and fastjson.
  *
  * Usage:
  *   /path/to/release/php -d extension=$(pwd)/modules/fastjson.so \

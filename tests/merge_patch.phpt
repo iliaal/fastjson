@@ -1,5 +1,5 @@
 --TEST--
-fastjson_merge_patch: RFC 7386 JSON Merge Patch semantics
+fastjson_merge_patch: RFC 7396 JSON Merge Patch semantics
 --EXTENSIONS--
 fastjson
 --FILE--

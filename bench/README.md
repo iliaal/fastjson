@@ -18,14 +18,13 @@ php -d extension=$(pwd)/modules/fastjson.so bench/run.php
 php -d extension=... bench/run.php bench/data 200
 ```
 
-The output is markdown. Pipe to a file to capture, or just commit
+The output is markdown. Redirect it to a file, or commit it as
 `bench/baseline.md` after a clean run.
 
 ## Review-performance harness
 
-`bench/run.php` measures the corpus files; it does not cover the paths most
-often touched by tuning work. `bench/review-performance.php` does: large-string
-encode across the threshold boundaries, pointer splice, merge patch, tolerant
+`bench/run.php` measures the corpus files only. `bench/review-performance.php`
+covers the paths tuning work touches most: large-string encode across the threshold boundaries, pointer splice, merge patch, tolerant
 decode, and parse-error position reporting. Its committed reference is
 `bench/review-baseline.md`.
 
@@ -38,7 +37,7 @@ It validates each selected case's result before timing it and exits non-zero on
 an invalid or unmatched filter, so a case that starts returning `false` cannot
 read as a speedup.
 
-**Compare releases, not sessions.** Absolute numbers move with machine load;
+Compare builds within one session. Absolute numbers move with machine load;
 two runs minutes apart can differ by 40% on the same binary. Build the previous
 release and the working tree, then alternate them in one session and take the
 best of each:
@@ -56,35 +55,33 @@ for pass in 1 2; do
 done
 ```
 
-Interleaving the two builds is what makes the comparison trustworthy: it cancels
-thermal drift and background load that a sequential A-then-B run attributes to
-the code. Check ARM too when a change tunes a scan/copy trade-off — the
-crossover points differ from x86_64.
+Interleaving the two builds cancels thermal drift and background load that a
+sequential A-then-B run would attribute to the code. If a change tunes a
+scan/copy trade-off, check ARM too; its crossover points differ from x86_64.
 
 ## Methodology
 
-- **Latest baseline:** 100 iterations of `(encode | decode | validate)` on each
-  file, timed with `hrtime(true)`. Slowest 10% dropped (warmup +
-  scheduler noise). Median reported.
-- **Throughput denominator:** the source JSON byte size (matches the
-  simdjson / yyjson conventions so cross-repo numbers are comparable).
-- **Encode is timed independently from decode:** the harness decodes
-  each file once up front, then times `encode($value)` only. Decode
-  rows time the raw `decode($json)` only. No shared cost.
-- **Side-by-side:** every case is measured against `ext/json` in the
-  same process. Same allocator pressure, same CPU state, same input.
-- **Aggregate row:** sum of per-file medians, NOT a re-run on the
-  concatenated corpus. So the throughput is roughly the
-  size-weighted average rather than the unweighted mean of the
-  per-file numbers.
+- 100 iterations of `(encode | decode | validate)` on each file, timed with
+  `hrtime(true)`. The slowest 10% are dropped (warmup and scheduler noise)
+  and the median is reported.
+- Throughput is divided by the source JSON byte size, the same convention
+  simdjson and yyjson use, so numbers compare across projects.
+- Encode is timed separately from decode: the harness decodes each file
+  once up front, then times `encode($value)` only. Decode rows time
+  `decode($json)` only.
+- Every case runs against `ext/json` in the same process, with the same
+  input.
+- The aggregate row sums per-file medians instead of re-running on the
+  concatenated corpus, so its throughput is roughly the size-weighted
+  average of the per-file numbers.
 
 ## Data
 
 Pulled by `bench/fetch-data.sh` from
 [`crazyxman/simdjson_php/jsonexamples`](https://github.com/crazyxman/simdjson_php/tree/master/jsonexamples).
-That directory mirrors Milo Yip's nativejson-benchmark suite, which is
-the same corpus used by simdjson, yyjson, RapidJSON, nlohmann -- so
-fastjson's numbers are apples-to-apples with their published numbers.
+That directory mirrors Milo Yip's nativejson-benchmark suite, the corpus
+simdjson, yyjson, RapidJSON, and nlohmann use, so fastjson's numbers
+compare directly with theirs.
 
 Subset:
 
@@ -109,12 +106,10 @@ See [`baseline.md`](./baseline.md). Aggregate numbers across the full
 14.8 MB / 15-file large corpus (CPU: i9-13950HX, **release build of
 both PHP and fastjson**: `--disable-debug`, `-O2`, `Debug Build => no`).
 
-> ⚠️ **Build matters**: a debug build of either extension inflates the
-> apparent fastjson speedup by 5-7x because ext/json's hand-rolled
-> scanner gets large gains from `-O2` while yyjson's already-optimized
-> code gets less. Always benchmark with `--disable-debug` builds for
-> meaningful numbers. If the reported speedup looks like 10x+ on
-> decode/encode, your PHP is debug-built.
+> ⚠️ A debug build of either extension inflates the apparent fastjson
+> speedup by 5-7x, because ext/json's hand-rolled scanner gains more
+> from `-O2` than yyjson does. Benchmark with `--disable-debug` builds.
+> If decode or encode shows a 10x+ speedup, your PHP is debug-built.
 
 ### Throughput
 
@@ -135,34 +130,31 @@ both PHP and fastjson**: `--disable-debug`, `-O2`, `Debug Build => no`).
 | Validate              | 14.91 MB | 150.6 KB | **101.40x** |
 
 The validate row reflects vendor patch P-002 (see
-[`vendor/yyjson/PATCHES.md`](../vendor/yyjson/PATCHES.md)) which
-adds a no-tree validation mode to yyjson. Pre-patch numbers were
-40.85 MB / 277x; the patch eliminates the val_hdr buffer
-(~2.7× memory reduction) and incidentally makes validate 2.5×
-faster from removing the alloc + realloc-growth path.
+[`vendor/yyjson/PATCHES.md`](../vendor/yyjson/PATCHES.md)), which
+adds a no-tree validation mode to yyjson. Before the patch the numbers
+were 40.85 MB / 277x. Removing the val_hdr buffer cut memory ~2.7×, and
+dropping its alloc and realloc growth made validate 2.5× faster.
 
-**fastjson trades memory for decode speed.** Decode holds yyjson's parsed
+fastjson trades memory for decode speed. Decode holds yyjson's parsed
 document beside the emerging zval tree, which accounts for the ~1.7x peak.
 Encode does not build a yyjson tree: it writes zvals directly to `smart_str`
 and stays near ext/json's memory use. Validate uses P-002's no-tree parser,
 but yyjson still copies the input into a padded working buffer; ext/json's
 validator streams with nearly constant state, so the ratio remains large.
 
-For most callers this is a fine tradeoff -- modern boxes have RAM,
-JSON-heavy code is CPU-bound, and the aggregate fastjson validate peak
-(14.91 MB across the 15 MB corpus) is
-within typical PHP memory budgets. Worth knowing if you're
-validate-heavy on giant inputs in tight `memory_limit` settings.
+The aggregate validate peak (14.91 MB across the 15 MB corpus) fits
+typical PHP memory budgets. If you validate giant inputs under a tight
+`memory_limit`, budget for it.
 
 Re-run after non-trivial encoder/decoder changes to catch
 regressions; commit the new `baseline.md` alongside the change.
 
 ## Notes on what's being measured
 
-- **Decode** chews PHP's allocator: every decoded value is a zval and
-  every container is a `zend_array` / `zend_object`. fastjson's gain
-  here is yyjson's parser (faster than ext/json's hand-rolled scanner)
-  PLUS the bulk hash-load path (`Z_OBJPROP_P` + `zend_hash_update`
+- **Decode** is allocator-heavy: every decoded value is a zval and
+  every container is a `zend_array` / `zend_object`. fastjson gains
+  from yyjson's parser (faster than ext/json's hand-rolled scanner)
+  and the bulk hash-load path (`Z_OBJPROP_P` + `zend_hash_update`
   bypasses the per-property `write_property` dispatch). Decode is the
   most allocator-bound op; the speedup ceiling is partly set by Zend's
   arena allocator, not yyjson. Memory: ~1.5x ext/json because yyjson
@@ -172,12 +164,12 @@ regressions; commit the new `baseline.md` alongside the change.
 - **Encode** uses the direct-write encoder (`fastjson_directwrite.c`):
   one-stage zval → `smart_str` via yyjson's `write_number` /
   `write_string_to_buf` primitives (no intermediate `yyjson_mut_doc`).
-  Memory is essentially parity with ext/json (~1.06× aggregate in
-  `baseline.md`). Throughput wins come from yyjson's tight scalar
-  writer plus avoiding per-value mut-tree allocation.
+  Memory is close to ext/json (~1.06× aggregate in `baseline.md`).
+  Throughput comes from yyjson's scalar writer and from skipping
+  per-value mut-tree allocation.
 
-- **Validate** is the cleanest *speed* comparison: just the parser, no zval
-  construction. P-002 avoids the yyjson value tree, yielding ~994 MB/s on
+- **Validate** is the cleanest speed comparison: only the parser runs, with
+  no zval construction. P-002 skips the yyjson value tree, giving ~994 MB/s on
   the aggregate here. Its padded input copy still makes memory scale with
   input size, unlike ext/json's streaming validator.
 
@@ -214,7 +206,7 @@ make -j$(nproc)
 # Now CFLAGS = -g -O2 (default for non-debug PHP)
 ```
 
-## Knowingly-not-yet-measured
+## Not yet measured
 
 - ASAN builds (already covered by CI; not a perf measurement target).
 - Thread-safety (ZTS) builds.

@@ -69,7 +69,7 @@ var_dump(fastjson_merge_patch('{}', $ok, true, 512) !== null);
 // RELAXED with a comment and an in-limit depth still merges.
 var_dump(fastjson_merge_patch('{}', '/* c */ ' . $ok, true, 512, FASTJSON_DECODE_RELAXED) !== null);
 
-// Plain RFC 7386 behaviour is unchanged.
+// Plain RFC 7396 behaviour is unchanged.
 echo fastjson_encode(
     fastjson_merge_patch('{"a":1,"b":2}', '{"b":null,"c":3}', true)
 ), "\n";

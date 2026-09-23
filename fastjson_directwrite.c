@@ -266,8 +266,7 @@ static bool dw_emit_double(fastjson_dw_ctx *ctx, double d)
         dw_set_error(ctx, FASTJSON_ERROR_INF_OR_NAN,
             "Inf and NaN cannot be JSON encoded");
         if (ctx->partial_output) {
-            /* ext/json's substitution for INF/NaN is JSON `0` per
-             * inf_nan_error.phpt -- not null. */
+            /* ext/json substitutes JSON `0` for INF/NaN (inf_nan_error.phpt). */
             smart_str_appendc(&ctx->buf, '0');
             return true;
         }
@@ -275,10 +274,8 @@ static bool dw_emit_double(fastjson_dw_ctx *ctx, double d)
         smart_str_free(&ctx->buf);
         return false;
     }
-    /* Negative zero: ext/json emits "-0" (without PRESERVE_ZERO_FRACTION)
-     * or "-0.0" (with). The long-path shortcut would cast (zend_long)-0.0
-     * to 0 and lose the sign; yyjson's writer always emits "-0.0" with
-     * the trailing fraction. Emit the right literal directly. */
+    /* ext/json emits "-0", or "-0.0" with PRESERVE_ZERO_FRACTION. The long
+     * shortcut would drop the sign and yyjson always emits "-0.0". */
     if (d == 0.0 && signbit(d)) {
         if (ctx->flags & FASTJSON_ENCODE_PRESERVE_ZERO_FRACTION) {
             smart_str_appendl(&ctx->buf, "-0.0", 4);
@@ -305,34 +302,20 @@ static bool dw_emit_double(fastjson_dw_ctx *ctx, double d)
         return true;
     }
 
-    /* PRESERVE_ZERO_FRACTION polarity: ext/json's default emits
-     * integer-valued doubles WITHOUT the .0 ("1230.0" -> "1230");
-     * the flag asks to keep .0 (yyjson's default). When the flag is
-     * unset and the value is integer-valued + lossless, route through
-     * the long path. The bound stays strictly inside zend_long so the
-     * cast is defined and lines up with the range where json_encode
-     * itself prefers fixed-notation over scientific.
+    /* Without PRESERVE_ZERO_FRACTION, ext/json emits integer-valued doubles
+     * without ".0", so route lossless ones through the long path.
      *
-     * 64-bit: strict `< 1e17`. php_gcvt at serialize_precision=-1 emits
-     * fixed-notation for integer-valued doubles up to but not including
-     * 1e17 (where it switches to "1.0e+17"). Matching that cutoff means
-     * 1e16, 1.5e16, 2.5e16, 9.99e16 all round-trip byte-identically to
-     * json_encode. Above 1e17 we fall through to yyjson's REAL writer
-     * and accept the residual ".0" divergence -- agreeing with
-     * json_encode there would need a scientific-notation writer.
-     * 1e17 fits in int64_t with room to spare (ZEND_LONG_MAX ~ 9.22e18)
-     * and is well below 2^63, so the cast stays defined; the widely-used
-     * `<= (double)ZEND_LONG_MAX` idiom is unsafe at the boundary because
-     * that conversion rounds to 2^63.
+     * 64-bit: strict `< 1e17`, where php_gcvt at serialize_precision=-1
+     * switches to "1.0e+17"; below it output is byte-identical to
+     * json_encode. Above it yyjson's REAL writer leaves a ".0" divergence
+     * (matching would need a scientific-notation writer). Avoid
+     * `<= (double)ZEND_LONG_MAX` here: that conversion rounds to 2^63 and
+     * the cast would be undefined at the boundary.
      *
-     * 32-bit (zend_long = int32_t, ZEND_LONG_MAX = 2^31 - 1): 2147483647
-     * fits in a double exactly, so the canonical `<= (double)ZEND_LONG_MAX`
-     * idiom is safe and used as-is.
+     * 32-bit: 2^31 - 1 is exact in a double, so that idiom is safe.
      *
-     * Order: cheap flag + bound test first (a single fabs + compare),
-     * then cast and verify integer-ness via (double)l == d. Avoids the
-     * libm floor() call on the common non-integer / out-of-range path
-     * (number-heavy double arrays previously paid floor() per element). */
+     * The bound test runs before the cast and the (double)l == d check to
+     * keep floor() off the non-integer path. */
     if (!(ctx->flags & FASTJSON_ENCODE_PRESERVE_ZERO_FRACTION)
 #if SIZEOF_ZEND_LONG >= 8
             && fabs(d) < 1e17
@@ -437,9 +420,8 @@ static zend_never_inline bool dw_emit_array(fastjson_dw_ctx *ctx, HashTable *ht,
             "Maximum stack depth exceeded", false);
     }
 
-    /* Empty arrays are typically the GC_IMMUTABLE singleton; don't
-     * flip recursion bits on read-only memory. Immutables are by
-     * definition not cyclic. */
+    /* Empty arrays are usually the GC_IMMUTABLE singleton; don't flip
+     * recursion bits on read-only memory. Immutables cannot be cyclic. */
     bool need_recursion_guard = !(GC_FLAGS(ht) & GC_IMMUTABLE);
     if (need_recursion_guard) {
         if (GC_IS_RECURSIVE(ht)) {
@@ -466,14 +448,10 @@ static zend_never_inline bool dw_emit_array(fastjson_dw_ctx *ctx, HashTable *ht,
             if (UNEXPECTED(!dw_encode_zval(
                     ctx, item, remaining_depth - 1))) {
                 if (ctx->hard_error && !ctx->discard_aborted) {
-                    /* Resume at the element after the one that failed.
-                     * ZEND_HASH_FOREACH_VAL expands to
-                     * _ZEND_HASH_FOREACH_VAL, which declares only `_z` (the
-                     * current element) and advances it in the loop's
-                     * increment -- hence the +1. The key/value loops use
-                     * ZEND_HASH_FOREACH_FROM instead, where `__z` is already
-                     * advanced and is not in scope here. The two spellings
-                     * are not interchangeable. */
+                    /* Resume after the failed element. ZEND_HASH_FOREACH_VAL
+                     * declares only `_z` and advances it in the loop
+                     * increment, hence the +1. ZEND_HASH_FOREACH_FROM's
+                     * `__z` is pre-advanced and not in scope here. */
 #if PHP_VERSION_ID < 80200
                     uint32_t from = (uint32_t)((_p + 1) - __ht->arData);
 #else
@@ -626,11 +604,9 @@ static bool dw_emit_object_props(fastjson_dw_ctx *ctx, zval *zv,
                                  zend_long remaining_depth)
 {
     zend_object *obj = Z_OBJ_P(zv);
-    /* Use the JSON-purpose property view so engine objects (DateTime,
-     * ArrayObject, etc.) get the same property set ext/json sees, and
-     * stdClass's protected/private members get filtered out at the
-     * source. Must be paired with zend_release_properties() on every
-     * exit path. */
+    /* The JSON-purpose property view gives engine objects (DateTime,
+     * ArrayObject) the property set ext/json sees. Pair it with
+     * zend_release_properties() on every exit path. */
     HashTable *props = zend_get_properties_for(zv, ZEND_PROP_PURPOSE_JSON);
     if (props == NULL) {
         if (EG(exception)) {
@@ -682,10 +658,8 @@ static bool dw_emit_object_props(fastjson_dw_ctx *ctx, zval *zv,
         if (Z_TYPE_P(item) == IS_PTR) {
             zend_property_info *info = Z_PTR_P(item);
 #if PHP_VERSION_ID >= 80400
-            /* Virtual properties without a get hook contribute no value
-             * to the JSON output (ext/json skips them; otherwise the
-             * read_property would call into hookless storage that
-             * returns undef or throws). */
+            /* ext/json skips virtual properties without a get hook; reading
+             * them would return undef or throw. */
             if ((info->flags & ZEND_ACC_VIRTUAL)
                     && (!info->hooks || !info->hooks[ZEND_PROPERTY_HOOK_GET])) {
                 continue;

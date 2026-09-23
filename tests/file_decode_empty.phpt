@@ -8,7 +8,7 @@ fastjson
 $f = tempnam(sys_get_temp_dir(), 'fjempty');
 file_put_contents($f, '');
 
-// Non-throw: parity with fastjson_decode("") -- null, JSON_ERROR_SYNTAX,
+// Non-throw: parity with fastjson_decode(""): null, JSON_ERROR_SYNTAX,
 // and the SAME error message (yyjson's "input length is 0"), NOT the
 // I/O "Failed to read file".
 $fileR = fastjson_file_decode($f);

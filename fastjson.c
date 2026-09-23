@@ -793,9 +793,8 @@ PHP_FUNCTION(fastjson_validate)
     }
 
     if (json_len == 0) {
-        /* Use the same message yyjson would have produced so the
-         * fast-path return is observationally identical to the parse-
-         * path return for empty input. */
+        /* Same message yyjson produces, so the fast path is
+         * indistinguishable from parsing the empty input. */
         yyjson_read_err err = {
             YYJSON_READ_ERROR_INVALID_PARAMETER,
             "input length is 0",
@@ -895,9 +894,8 @@ PHP_GINIT_FUNCTION(fastjson)
 
 PHP_RINIT_FUNCTION(fastjson)
 {
-    /* Reset on every request -- module globals persist across requests
-     * in non-ZTS builds, so a previous request's error state would
-     * otherwise bleed into the next. */
+    /* Module globals persist across requests in non-ZTS builds; without a
+     * reset, one request's error state would leak into the next. */
     fastjson_clear_error();
     return SUCCESS;
 }
@@ -906,13 +904,12 @@ PHP_MINIT_FUNCTION(fastjson)
 {
     register_fastjson_symbols(module_number);
 
-    /* The optional dependency ensures ext/json's MINIT precedes these lookups. */
+    /* The optional dependency orders ext/json's MINIT before these lookups. */
     fastjson_json_exception_ce = zend_hash_str_find_ptr(CG(class_table),
         "jsonexception", sizeof("jsonexception") - 1);
     if (fastjson_json_exception_ce == NULL) {
-        /* ext/json absent: register the fastjson-owned fallback so the
-         * throw path still raises an \Exception subclass callers can
-         * catch, instead of \Exception itself. */
+        /* Without ext/json, throw a fastjson-owned \Exception subclass so
+         * callers can catch it specifically. */
         zend_class_entry ce;
         INIT_CLASS_ENTRY(ce, "Fastjson\\JsonException", NULL);
         fastjson_json_exception_ce =

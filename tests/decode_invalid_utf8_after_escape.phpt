@@ -9,7 +9,7 @@ fastjson
  * its copy path. On the copy path a byte tolerated by ALLOW_INVALID_UTF8 is
  * copied through and the reader re-enters copy_utf8, which routes the next
  * ordinary ASCII byte to copy_escape. That arm must copy the byte and carry
- * on -- it is not a control character. Vendor patch P-004 must keep rejecting
+ * on, since it is not a control character. Vendor patch P-004 must keep rejecting
  * genuine control bytes without capturing this case. */
 
 $cases = [

@@ -26,7 +26,7 @@ serialize.phpt                # ext-json-internals # JsonSerializable mix
 # passes. The remaining two failures are pure error-message-text
 # divergence (yyjson "unexpected end of data" / "invalid utf-8 encoding
 # in string" vs ext/json "Syntax error near location X:Y" / "Malformed
-# UTF-8 characters, possibly incorrectly encoded") -- same category
+# UTF-8 characters, possibly incorrectly encoded"), the same category
 # as the 10 error_location_* tests above.
 json_decode_exceptions.phpt # ext-json-internals # error-message text divergence
 json_encode_exceptions.phpt # ext-json-internals # error-message text divergence

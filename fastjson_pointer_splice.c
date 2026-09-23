@@ -265,10 +265,9 @@ static bool fj_splice_write_replacement(fj_splice_ctx *ctx,
     return true;
 }
 
-/* RFC 6901 array index: same rules yyjson's ptr_token_to_idx enforces
- * for pointer_get -- a lone "0" or a non-zero run of at most 19 digits
- * (no leading zeros, no overflow). Kept in lockstep so pointer_set and
- * pointer_get/_exists agree on what is a valid array index. */
+/* RFC 6901 array index: a lone "0" or a non-zero run of at most 19 digits
+ * (no leading zeros, no overflow). Keep in sync with yyjson's
+ * ptr_token_to_idx so pointer_set and pointer_get/_exists agree. */
 static bool fj_seg_is_index(const fj_ptr_seg *seg, size_t *out_idx)
 {
     if (seg->len == 0 || seg->len > 19) {
@@ -785,12 +784,10 @@ static bool fj_pointer_walk(yyjson_val *root,
     return true;
 }
 
-/* Shared segment-count gate for the plan and resolve paths. The absolute
+/* Segment-count gate for the plan and resolve paths. The absolute
  * FASTJSON_POINTER_MAX_SEGMENTS cap always applies; the nsegs-vs-depth
- * check additionally applies when check_depth (resolve callers with no
- * $depth pass check_depth false and get the cap only). Both report
- * DEPTH_FAIL so oversized pointers surface as FASTJSON_ERROR_DEPTH,
- * never as a silent "absent". */
+ * check applies only when check_depth. Both return DEPTH_FAIL so an
+ * oversized pointer reports FASTJSON_ERROR_DEPTH, not "absent". */
 static bool fj_pointer_nsegs_ok(size_t nsegs, size_t depth_limit,
                                 bool check_depth,
                                 fj_splice_status *status)

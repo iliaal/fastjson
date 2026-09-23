@@ -29,9 +29,9 @@ require() {
 }
 
 pin_overflow_contract() {
-	# CR-007 contract: fastjson's exponent-overflow (1e309 -> INF) retry
-	# keys on err->code == YYJSON_READ_ERROR_INVALID_NUMBER, never on
-	# yyjson's message wording. Pin both sides of that contract: the
+	# The exponent-overflow (1e309 -> INF) retry keys on
+	# err->code == YYJSON_READ_ERROR_INVALID_NUMBER, never on yyjson's
+	# message wording. Pin both sides: the
 	# vendored overflow diagnostic must still flow through an
 	# INVALID_NUMBER site, and fastjson_decode.c must key on the code.
 	local yyjson_c="${PROJECT_DIR}/vendor/yyjson/yyjson.c"

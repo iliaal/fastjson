@@ -11,10 +11,9 @@
  * If simdjson is loaded, decode + validate rows gain a third column.
  * Encode is fastjson-vs-ext/json only (simdjson is decode-only).
  *
- * The "ext/json" column reflects whatever PHP build is hosting this
- * process. Run against ~/php-install-PHP-8.4-pr120 to compare against
- * the php-src#17734 SIMD-encoded ext/json; against an unpatched build
- * to compare against today's ext/json.
+ * The "ext/json" column measures the PHP build running this script. To
+ * compare against a patched ext/json (e.g. php-src#17734's SIMD encoder),
+ * run under that build.
  *
  * Methodology:
  *   - Throughput: N iterations of encode + decode + validate per
@@ -79,10 +78,9 @@ function bench_time(callable $callable, mixed $input, int $iterations): array
 
 /** Single-call peak heap delta in bytes.
  *
- * Uses memory_get_*_usage() WITHOUT the `true` argument so we measure
- * actual byte-level emalloc accounting, not the 2MB chunks Zend
- * requests from the OS. The `true` argument rounds to chunk
- * granularity which makes most small ops appear as either 0 or 2MB. */
+ * memory_get_*_usage() without `true` reports byte-level emalloc
+ * accounting; `true` rounds to Zend's 2MB chunks, so most small ops
+ * would read as 0 or 2MB. */
 function bench_mem(callable $callable, mixed $input): int
 {
     gc_collect_cycles();

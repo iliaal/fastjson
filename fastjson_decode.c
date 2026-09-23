@@ -28,11 +28,9 @@
 #include "fastjson_alloc.h"
 #include "yyjson.h"
 
-/* Validate the $depth argument exactly as ext/json does: <= 0 and
- * > INT_MAX both raise a ValueError on argument `argno`. Every fastjson_*
- * function that takes a $depth uses this so the message and bounds stay
- * identical across them. Expands a RETURN_THROWS(), so it may only appear
- * inside a PHP_FUNCTION. */
+/* Validate $depth as ext/json does: <= 0 and > INT_MAX raise a ValueError
+ * on argument `argno`. Expands RETURN_THROWS(), so use it only inside a
+ * PHP_FUNCTION. */
 #define FASTJSON_VALIDATE_DEPTH(depth, argno) do { \
     if ((depth) <= 0) { \
         zend_argument_value_error((argno), "must be greater than 0"); \
@@ -108,10 +106,8 @@ static size_t fj_write_sint64_dec(char *buf, int64_t s)
 
 /* yyjson NUM -> zval. Real -> double; uint <= INT64_MAX -> long; a
  * larger uint becomes a decimal string under JSON_BIGINT_AS_STRING and
- * otherwise widens to double (matching ext/json, which never wraps a
- * uint past LONG_MAX into a negative long); sint -> long. Shared by
- * both decode walkers and force-inlined so the hot path stays
- * call-free. */
+ * otherwise widens to double (ext/json never wraps it into a negative
+ * long); sint -> long. Force-inlined for both decode walkers. */
 static zend_always_inline void fj_num_to_zval(yyjson_val *val,
                                               zend_long flags, zval *out)
 {
@@ -151,11 +147,10 @@ static zend_always_inline void fj_num_to_zval(yyjson_val *val,
  *   1. Big integers that overflow int64/uint64. ext/json's
  *      JSON_BIGINT_AS_STRING wants these as strings; passthrough.
  *   2. Floats whose exponent overflows a double (e.g. 1e309).
- *      ext/json decodes those to PHP INF -- BIGINT_AS_STRING does NOT
- *      apply to floats. Re-parse via strtod so we return the same
- *      float ext/json would.
- * Float shape: presence of '.', 'e', or 'E' in the raw text. Shared by
- * both decode walkers and force-inlined to keep the hot path call-free. */
+ *      ext/json decodes those to PHP INF; BIGINT_AS_STRING does not
+ *      apply to floats. Re-parse via strtod to match ext/json.
+ * A raw value is a float if it contains '.', 'e', or 'E'. Force-inlined
+ * for both decode walkers. */
 static zend_always_inline void fj_raw_to_zval(yyjson_val *val, zval *out)
 {
     const char *raw = yyjson_get_raw(val);
@@ -629,16 +624,10 @@ PHP_FUNCTION(fastjson_pointer_get)
         RETURN_NULL();
     }
 
-    /* RFC 6901 JSON Pointer. The resolve additionally enforces the same
-     * nsegs-vs-depth gate plan_init applies (plus an absolute segment
-     * cap): a pointer at/above $depth segments fails with DEPTH rather
-     * than resolving. Unresolvable and malformed pointers (e.g. missing
-     * leading '/') are treated as "no value" -- not a JSON error -- so
-     * we return null with the error state left clear. A pointer that
-     * resolves to a JSON null returns null too (target != NULL); the two
-     * are indistinguishable from PHP, consistent with the decode family's
-     * documented null-ambiguity. The empty pointer "" selects the whole
-     * document per RFC 6901. */
+    /* A pointer with $depth or more segments fails with DEPTH. Unresolvable
+     * and malformed pointers (e.g. no leading '/') mean "no value": return
+     * null with the error state clear. A pointer to a JSON null also returns
+     * null (target != NULL), the decode family's documented ambiguity. */
     yyjson_val *target;
     size_t resolve_depth = (size_t)fastjson_effective_walk_depth(depth);
     fj_splice_status pointer_status = fastjson_pointer_resolve_limited(
@@ -655,10 +644,8 @@ PHP_FUNCTION(fastjson_pointer_get)
     }
     if (target == NULL) {
         yyjson_doc_free(doc);
-        /* Absent/malformed pointer is not a JSON error. The stub documents
-         * this as null + FASTJSON_ERROR_NONE, so clear here even under
-         * THROW_ON_ERROR (which skipped the entry clear to preserve prior
-         * state for a parse-error throw) rather than leak a stale error. */
+        /* The documented result is null + FASTJSON_ERROR_NONE, so clear even
+         * under THROW_ON_ERROR, which skipped the entry clear. */
         fastjson_clear_error();
         RETURN_NULL();
     }
@@ -1149,14 +1136,9 @@ PHP_FUNCTION(fastjson_pointer_exists)
         RETURN_FALSE;
     }
 
-    /* Depth-gated resolve (a path resolving to JSON null still returns
-     * true, so unlike fastjson_pointer_get the bool result is
-     * unambiguous). _exists takes no $depth, so the depth gate is
-     * disabled (0) and only the absolute segment cap can fail here;
-     * either way a failure is a real error, not "absent". The error
-     * state stays clear on a successful parse, so a false return with
-     * last_error() == NONE means "absent", while a false return with an
-     * error set means the JSON itself was malformed. */
+    /* _exists takes no $depth, so only the absolute segment cap can fail
+     * the resolve, and that failure is an error, not "absent". A false
+     * return with last_error() == NONE means absent. */
     yyjson_val *target;
     fj_splice_status pointer_status = fastjson_pointer_resolve_limited(
         yyjson_doc_get_root(doc), pointer, pointer_len, 0, &target);
@@ -1172,9 +1154,8 @@ PHP_FUNCTION(fastjson_pointer_exists)
     bool exists = target != NULL;
     yyjson_doc_free(doc);
     if (!exists) {
-        /* Absent/malformed pointer is the documented false + NONE signal
-         * (fastjson.stub.php); clear even under THROW_ON_ERROR so a prior
-         * error doesn't masquerade as "the JSON was malformed". */
+        /* The documented absent signal is false + NONE; clear even under
+         * THROW_ON_ERROR so a prior error doesn't read as malformed JSON. */
         fastjson_clear_error();
     }
     RETURN_BOOL(exists);

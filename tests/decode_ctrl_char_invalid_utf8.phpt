@@ -21,7 +21,7 @@ foreach ([0, JSON_INVALID_UTF8_IGNORE, JSON_INVALID_UTF8_SUBSTITUTE] as $flag) {
 // A control char in an object key is rejected too.
 var_dump(fastjson_decode("{\"k\x1fey\":1}", true, 512, JSON_INVALID_UTF8_IGNORE));
 
-// Escaped control forms remain valid -- the scan only flags literal bytes.
+// Escaped control forms remain valid; the scan only flags literal bytes.
 var_dump(fastjson_decode("[\"a\\nb\\tc\"]", true, 512, JSON_INVALID_UTF8_IGNORE));
 
 // Genuine invalid UTF-8 is still tolerated (stripped) under IGNORE.
