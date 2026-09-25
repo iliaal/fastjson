@@ -3,3 +3,4 @@
 0003-public-string-writer.patch
 0004-reject-control-characters.patch
 0005-tag-invalid-unicode.patch
+0006-bound-validate-stack-growth.patch

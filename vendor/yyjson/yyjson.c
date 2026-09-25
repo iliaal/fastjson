@@ -6227,17 +6227,28 @@ static yyjson_doc *read_root_validate(u8 *hdr, u8 *cur, u8 *eof,
     return NULL; \
 } while (false)
 
+/* P-006: both the capacity doubling and the byte-size conversion must be
+ * checked against USIZE_MAX before the allocator is called. On a 32-bit
+ * usize a stack_cap of 2^28 doubles to 2^29, whose byte size 2^32 wraps
+ * to 0; the allocator may then return a non-NULL block for that
+ * zero-byte request and the push below would write at the stale 2^28
+ * offset. Overflow now takes the existing memory-allocation error path,
+ * which leaves the old block owned by the alc and writes nothing. */
 #define push_ctn(_is_obj) do { \
     if (unlikely(depth >= stack_cap)) { \
-        usize new_cap = stack_cap * 2; \
+        usize new_cap, new_bytes; \
         u64 *new_buf; \
+        if (unlikely(stack_cap > USIZE_MAX / 2)) goto fail_alloc; \
+        new_cap = stack_cap * 2; \
+        if (unlikely(new_cap > USIZE_MAX / sizeof(u64))) goto fail_alloc; \
+        new_bytes = new_cap * sizeof(u64); \
         if (stack_buf == stack_inline) { \
-            new_buf = (u64 *)alc.malloc(alc.ctx, new_cap * sizeof(u64)); \
+            new_buf = (u64 *)alc.malloc(alc.ctx, new_bytes); \
             if (!new_buf) goto fail_alloc; \
             memcpy(new_buf, stack_inline, stack_cap * sizeof(u64)); \
         } else { \
             new_buf = (u64 *)alc.realloc(alc.ctx, stack_buf, \
-                stack_cap * sizeof(u64), new_cap * sizeof(u64)); \
+                stack_cap * sizeof(u64), new_bytes); \
             if (!new_buf) goto fail_alloc; \
         } \
         stack_buf = new_buf; \

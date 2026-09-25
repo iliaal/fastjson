@@ -1,7 +1,7 @@
 # Patches applied to vendored yyjson sources
 
 The bundled yyjson sources at `vendor/yyjson/yyjson.{c,h}` are
-upstream's tag 0.12.0 with five local modifications documented below.
+upstream's tag 0.12.0 with six local modifications documented below.
 The upstream `vendor/yyjson/LICENSE` and `vendor/yyjson/CHANGELOG.md`
 are unchanged.
 
@@ -299,6 +299,64 @@ compatibility PHPTs. Benchmark strict validation with short strings and tolerant
 decoding with clean strings plus an invalid byte near the end. Strict parsing
 must match the pre-patch path, and tolerant decoding must not retain a redundant
 full-string scan.
+
+## P-006: bound the validate reader's depth-stack growth
+
+**File:** `vendor/yyjson/yyjson.c`
+**Region:** the `push_ctn` macro inside `read_root_validate` (around line
+6237 in the patched tree; introduced by P-002)
+
+**Reason.** P-002's validate-only reader tracks open containers on a heap
+stack that starts at 32 inline slots and doubles on demand. The growth did
+`new_cap = stack_cap * 2` and then asked the allocator for
+`new_cap * sizeof(u64)` with neither conversion checked against
+`USIZE_MAX`. On a 32-bit `usize` a `stack_cap` of 2^28 doubles to 2^29 and
+the byte size 2^32 wraps to 0: the allocator is asked for a zero-byte
+block, may return non-NULL for it, and the push that follows then writes
+at the stale 2^28 offset. Reaching that capacity needs a 256 MiB document
+nested one level per byte, so the overflow is reachable only on ILP32 and
+only with a very large input; the wrap itself is plain 32-bit arithmetic.
+
+Upstream guards the same class of wrap in the value-header growth of
+`read_root_minify` with `if ((sizeof(usize) < 8) && (alc_len >= alc_max))
+goto fail_alloc;`. P-006 applies the check unconditionally and to both
+conversions, since the invariant — never ask the allocator for a size that
+does not fit `usize` — does not depend on the word size.
+
+**Patch.** Two guards ahead of the allocator calls, both routing to the
+existing `fail_alloc` label (`YYJSON_READ_ERROR_MEMORY_ALLOCATION`):
+
+```c
+        usize new_cap, new_bytes; \
+        u64 *new_buf; \
+        if (unlikely(stack_cap > USIZE_MAX / 2)) goto fail_alloc; \
+        new_cap = stack_cap * 2; \
+        if (unlikely(new_cap > USIZE_MAX / sizeof(u64))) goto fail_alloc; \
+        new_bytes = new_cap * sizeof(u64); \
+```
+
+`new_bytes` is used for both the `alc.malloc` and the `alc.realloc`
+request. The pre-existing `if (!new_buf) goto fail_alloc;` checks stay, so
+no code path reaches the push with a null or unwritten-sized block. Growth
+for every capacity that fits is byte-for-byte the same arithmetic as
+before, which keeps validation results and the `$depth` semantics
+unchanged; `USIZE_MAX / sizeof(u64)` is 2^29 - 1 on ILP32, far above any
+capacity a document can reach.
+
+**Re-apply recipe on yyjson upgrade.** Locate `push_ctn` in
+`read_root_validate` and add the two guards plus the `new_bytes` local, as
+shown. If a future yyjson restructures the validate reader, re-check every
+other `alc.realloc`/`alc.malloc` size expression in the file: the same
+unguarded `len * sizeof(...)` pattern is the thing to look for.
+
+**Verification.** `tests/validate_stack_growth_ilp32.phpt` builds this
+macro for real ILP32 (`-m32`, so `usize` is 4 bytes) against a fake
+allocator and a static arena, so the 2^28 case costs a few kilobytes
+instead of 256 MiB; `tests/validate_stack_growth_guard.phpt` runs the same
+harness at the LP64 boundaries, and `tests/validate_stack_growth_depth.phpt`
+covers the growth through `fastjson_validate()`. With the two guards
+removed, the ILP32 harness segfaults on the write past the arena and the
+LP64 harness reports 8 failed checks.
 
 ## Build-flag dependencies (not vendor patches)
 
