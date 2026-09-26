@@ -1,5 +1,5 @@
 --TEST--
-Vendored yyjson validate stack growth: overflow guards hold (LP64)
+Vendored yyjson validate stack growth: overflow guards hold (native width)
 --SKIPIF--
 <?php
 $cc = null;
@@ -68,7 +68,6 @@ echo 'guard probe: ', $code === 0 ? "PASS\n$out\n" : "FAIL\n$out\n";
 @unlink($bin);
 exit($code === 0 ? 0 : 1);
 ?>
---EXPECTF--
+--EXPECTREGEX--
 guard probe: PASS
-usize is %d bits
-PASS: %d checks, 0 failures
+(?:usize is 64 bits\nPASS: 24 checks, 0 failures|unguarded new_cap\*sizeof\(u64\) at cap=2\^28 is 0\nusize is 32 bits\nPASS: 28 checks, 0 failures)
