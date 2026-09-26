@@ -6,6 +6,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Restore decoder and pointer error state after partial-output and throw-mode
+  replacement failures.
+
 ## [0.8.0] - 2026-09-03
 
 ### Added
