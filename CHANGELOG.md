@@ -9,6 +9,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 
 - The validate-only reader's container-stack growth can no longer overflow its allocation size. On a 32-bit build a depth of 2^28 wrapped the `capacity * sizeof(u64)` request to zero bytes, after which the parser wrote at the stale offset. Both conversions are now checked against `SIZE_MAX` and report the memory-allocation error before the allocator is reached (vendor patch P-006). Validation results and `$depth` semantics are unchanged.
+- Restore decoder and pointer error state after partial-output and throw-mode
+  replacement failures.
 
 ## [0.8.0] - 2026-09-03
 

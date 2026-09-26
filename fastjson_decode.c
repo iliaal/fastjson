@@ -534,6 +534,9 @@ PHP_FUNCTION(fastjson_file_decode)
 
     fastjson_decode_into(ZSTR_VAL(contents), ZSTR_LEN(contents), use_assoc,
                          depth, flags, throw_mode, &saved_err, return_value);
+    if (throw_mode && !EG(exception)) {
+        fastjson_restore_error_state(&saved_err);
+    }
     zend_string_release(contents);
 }
 
@@ -1264,5 +1267,10 @@ pointer_set_failed:
         RETURN_FALSE;
     }
 
+    if (throw_mode) {
+        fastjson_restore_error_state(
+            replacement_err.code != FASTJSON_ERROR_NONE
+                ? &replacement_err : &saved_err);
+    }
     RETVAL_STR(out);
 }
