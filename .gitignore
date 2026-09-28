@@ -68,3 +68,4 @@ tests/**/*.php.out
 /CLAUDE.md
 /.review/
 .plan/
+.worktrees
