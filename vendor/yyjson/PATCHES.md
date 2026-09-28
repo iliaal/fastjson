@@ -11,7 +11,7 @@ release, checks its archive digest, applies the series in order, and compares
 the result byte-for-byte with the vendored sources. Run it after any patch or
 vendor update. The prose below records rationale and upgrade caveats.
 
-## P-001: retired on the 0.13.0 upgrade
+## Retired: P-001 lowercase hex table
 
 yyjson 0.13.0 adds `YYJSON_WRITE_LOWERCASE_HEX` and a second hex
 table. `fastjson_translate_write_flags()` always sets that flag, so

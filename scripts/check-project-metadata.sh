@@ -58,6 +58,7 @@ while IFS= read -r name; do
 done < <(awk '!/^[[:space:]]*(#|$)/ { print $1 }' \
     "${upstream_dir}/.skiplist" | sort)
 patches=$(grep -Ec '^## P-[0-9]{3}:' vendor/yyjson/PATCHES.md)
+series=$(grep -Ec '^[0-9]{4}-[a-z0-9-]+\.patch$' vendor/yyjson/patches/series)
 
 stub_hash=$(sha1sum fastjson.stub.php)
 stub_hash=${stub_hash%% *}
@@ -81,11 +82,11 @@ grep -Fq "| Skipped (categorized) | ${skipped} |" "${upstream_dir}/STATE.md"
 grep -Fq "| Rewritten + run | ${generated} |" "${upstream_dir}/STATE.md"
 grep -Fq -- "- ${generated}-test compat harness" README.md
 
-if [[ "${patches}" -ne 6 ]]; then
-    echo "Expected six documented yyjson patches, found ${patches}" >&2
+if [[ "${patches}" -ne "${series}" ]]; then
+    echo "PATCHES.md documents ${patches} yyjson patches, series lists ${series}" >&2
     exit 1
 fi
-grep -Fq 'with six local patches (P-001 through P-006)' README.md
+grep -Fq 'with local patches P-002 through P-008' README.md
 
 # shellcheck disable=SC2312
 mapfile -t unix_sources < <(
