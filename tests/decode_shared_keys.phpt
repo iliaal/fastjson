@@ -3,12 +3,6 @@ decode shares short repeated object keys
 --EXTENSIONS--
 fastjson
 json
---SKIPIF--
-<?php
-if (!function_exists('memory_reset_peak_usage')) {
-    die('skip memory_reset_peak_usage requires PHP 8.2');
-}
-?>
 --INI--
 memory_limit=-1
 --FILE--
@@ -35,13 +29,12 @@ foreach ($cases as $json) {
     same($json, true);
 }
 
-function peak(string $json): int
+function live(string $json): int
 {
     gc_collect_cycles();
     $before = memory_get_usage();
-    memory_reset_peak_usage();
     $value = fastjson_decode($json);
-    $delta = memory_get_peak_usage() - $before;
+    $delta = memory_get_usage() - $before;
     unset($value);
     return $delta;
 }
@@ -55,8 +48,9 @@ for ($i = 0; $i < 4000; $i++) {
 $uniqJson = '[' . implode(',', $uniq) . ']';
 
 /* Same value shape. Sharing the four repeated names drops more than the
- * extra bytes of the unique-key document. */
-var_dump(peak($uniqJson) - peak($rep) > 200000);
+ * extra bytes of the unique-key document. Live usage, not peak: the ASAN
+ * job sets USE_TRACKED_ALLOC, which does not advance memory_get_peak_usage(). */
+var_dump(live($uniqJson) - live($rep) > 200000);
 ?>
 --EXPECT--
 bool(true)
