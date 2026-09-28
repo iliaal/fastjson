@@ -1,8 +1,8 @@
 # Patches applied to vendored yyjson sources
 
 The bundled yyjson sources at `vendor/yyjson/yyjson.{c,h}` are
-upstream's tag 0.13.0 with seven local modifications (P-002 through
-P-008) documented below. The upstream `vendor/yyjson/LICENSE` and
+upstream's tag 0.13.0 with eight local modifications (P-002 through
+P-009) documented below. The upstream `vendor/yyjson/LICENSE` and
 `vendor/yyjson/CHANGELOG.md` are unchanged.
 
 The patch files under `vendor/yyjson/patches/` are the canonical replayable
@@ -355,6 +355,17 @@ truncated-UTF-8 check read only bytes that exist. `NaN`/`Inf` literals
 use the same padded tail. The stub's `str_pool` is NULL, so
 `yyjson_doc_free` does not free the caller's memory. On the release
 build, canada.json validate peak dropped from about 2.25 MB to 64 bytes.
+
+## P-009: alias unescaped decode strings
+
+**Files:** `vendor/yyjson/yyjson.h`, `vendor/yyjson/yyjson.c`
+
+`YYJSON_READ_ALIAS_NOESC` skips the input copy when the buffer contains
+no `\`. Strings point at the caller buffer; `str_pool` stays NULL.
+A buffer that contains `\` uses the copying reader. `fastjson_decode()`
+sets the flag. `fastjson_file_decode()` does not, so it can still drop
+the file buffer before the walk. `JSON_BIGINT_AS_STRING` keeps the copy
+because raw numbers are passed to `strtod()`.
 
 ## Build-flag dependencies (not vendor patches)
 

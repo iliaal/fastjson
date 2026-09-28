@@ -15,7 +15,7 @@ memory_limit=-1
 
 $rows = [];
 for ($i = 0; $i < 8000; $i++) {
-    $rows[] = ['id' => $i, 'name' => 'item-' . $i, 'on' => ($i & 1) === 0];
+    $rows[] = ['id' => $i, 'name' => 'item-' . $i, 'on' => ($i & 1) === 0, 'note' => "a\\b"];
 }
 $json = json_encode($rows);
 if (!is_string($json) || strlen($json) < 100000) {

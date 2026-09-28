@@ -1,0 +1,630 @@
+Subject: [PATCH] P-009: alias unescaped decode strings
+
+YYJSON_READ_ALIAS_NOESC reads a document with no backslash from the
+caller buffer. Strings point at that buffer and str_pool stays NULL.
+A buffer that contains a backslash keeps the copying reader.
+
+diff --git a/vendor/yyjson/yyjson.c b/vendor/yyjson/yyjson.c
+index 26fc13f..dafc749 100644
+--- a/vendor/yyjson/yyjson.c
++++ b/vendor/yyjson/yyjson.c
+@@ -5276,6 +5276,22 @@ copy_utf8:
+  *============================================================================*/
+ 
+ /** Read single value JSON document. */
++static bool read_str_pick(u8 **ptr, u8 *eof, yyjson_read_flag flg,
++                          yyjson_val *val, const char **msg);
++static bool read_num_pick(u8 **cur, u8 *eof, u8 **pre, yyjson_read_flag flg,
++                          yyjson_val *val, const char **msg, yyjson_alc *alc);
++static bool read_true_pick(u8 **cur, u8 *eof, yyjson_read_flag flg, yyjson_val *val);
++static bool read_false_pick(u8 **cur, u8 *eof, yyjson_read_flag flg, yyjson_val *val);
++static bool read_null_pick(u8 **cur, u8 *eof, yyjson_read_flag flg, yyjson_val *val);
++
++#define yy_skip_spaces_after_first() do { \
++    if (has_flg(ALIAS_NOESC)) { \
++        while (++cur < eof && char_is_space(*cur)); \
++    } else { \
++        while (char_is_space(*++cur)); \
++    } \
++} while (0)
++
+ static_noinline yyjson_doc *read_root_single(u8 *hdr, u8 *cur, u8 *eof,
+                                              yyjson_alc alc,
+                                              yyjson_read_flag flg,
+@@ -5314,23 +5330,23 @@ static_noinline yyjson_doc *read_root_single(u8 *hdr, u8 *cur, u8 *eof,
+     val = val_hdr + hdr_len;
+ 
+     if (char_is_num(*cur)) {
+-        if (likely(read_num(&cur, pre, flg, val, &msg))) goto doc_end;
++        if (likely(read_num_pick(&cur, eof, pre, flg, val, &msg, &alc))) goto doc_end;
+         goto fail_number;
+     }
+     if (*cur == '"') {
+-        if (likely(read_str(&cur, eof, flg, val, &msg))) goto doc_end;
++        if (likely(read_str_pick(&cur, eof, flg, val, &msg))) goto doc_end;
+         goto fail_string;
+     }
+     if (*cur == 't') {
+-        if (likely(read_true(&cur, val))) goto doc_end;
++        if (likely(read_true_pick(&cur, eof, flg, val))) goto doc_end;
+         goto fail_literal_true;
+     }
+     if (*cur == 'f') {
+-        if (likely(read_false(&cur, val))) goto doc_end;
++        if (likely(read_false_pick(&cur, eof, flg, val))) goto doc_end;
+         goto fail_literal_false;
+     }
+     if (*cur == 'n') {
+-        if (likely(read_null(&cur, val))) goto doc_end;
++        if (likely(read_null_pick(&cur, eof, flg, val))) goto doc_end;
+         if (has_allow(INF_AND_NAN)) {
+             if (read_nan(&cur, pre, flg, val)) goto doc_end;
+         }
+@@ -5348,7 +5364,7 @@ static_noinline yyjson_doc *read_root_single(u8 *hdr, u8 *cur, u8 *eof,
+ doc_end:
+     /* check invalid contents after json document */
+     if (unlikely(cur < eof) && !has_flg(STOP_WHEN_DONE)) {
+-        while (char_is_space(*cur)) cur++;
++        while (cur < eof && char_is_space(*cur)) cur++;
+         if (has_allow(TRIVIA) && char_is_trivia(*cur)) {
+             if (!skip_trivia(&cur, eof, flg) && cur == eof) {
+                 goto fail_comment;
+@@ -5496,31 +5512,31 @@ arr_val_begin:
+     if (char_is_num(*cur)) {
+         val_incr();
+         ctn_len++;
+-        if (likely(read_num(&cur, pre, flg, val, &msg))) goto arr_val_end;
++        if (likely(read_num_pick(&cur, eof, pre, flg, val, &msg, &alc))) goto arr_val_end;
+         goto fail_number;
+     }
+     if (*cur == '"') {
+         val_incr();
+         ctn_len++;
+-        if (likely(read_str(&cur, eof, flg, val, &msg))) goto arr_val_end;
++        if (likely(read_str_pick(&cur, eof, flg, val, &msg))) goto arr_val_end;
+         goto fail_string;
+     }
+     if (*cur == 't') {
+         val_incr();
+         ctn_len++;
+-        if (likely(read_true(&cur, val))) goto arr_val_end;
++        if (likely(read_true_pick(&cur, eof, flg, val))) goto arr_val_end;
+         goto fail_literal_true;
+     }
+     if (*cur == 'f') {
+         val_incr();
+         ctn_len++;
+-        if (likely(read_false(&cur, val))) goto arr_val_end;
++        if (likely(read_false_pick(&cur, eof, flg, val))) goto arr_val_end;
+         goto fail_literal_false;
+     }
+     if (*cur == 'n') {
+         val_incr();
+         ctn_len++;
+-        if (likely(read_null(&cur, val))) goto arr_val_end;
++        if (likely(read_null_pick(&cur, eof, flg, val))) goto arr_val_end;
+         if (has_allow(INF_AND_NAN)) {
+             if (read_nan(&cur, pre, flg, val)) goto arr_val_end;
+         }
+@@ -5534,7 +5550,7 @@ arr_val_begin:
+         goto fail_trailing_comma;
+     }
+     if (char_is_space(*cur)) {
+-        while (char_is_space(*++cur));
++        yy_skip_spaces_after_first();
+         goto arr_val_begin;
+     }
+     if (has_allow(INF_AND_NAN) &&
+@@ -5566,7 +5582,7 @@ arr_val_end:
+         goto arr_end;
+     }
+     if (char_is_space(*cur)) {
+-        while (char_is_space(*++cur));
++        yy_skip_spaces_after_first();
+         goto arr_val_end;
+     }
+     if (has_allow(TRIVIA) && char_is_trivia(*cur)) {
+@@ -5617,7 +5633,7 @@ obj_key_begin:
+     if (likely(*cur == '"')) {
+         val_incr();
+         ctn_len++;
+-        if (likely(read_str(&cur, eof, flg, val, &msg))) goto obj_key_end;
++        if (likely(read_str_pick(&cur, eof, flg, val, &msg))) goto obj_key_end;
+         goto fail_string;
+     }
+     if (likely(*cur == '}')) {
+@@ -5628,7 +5644,7 @@ obj_key_begin:
+         goto fail_trailing_comma;
+     }
+     if (char_is_space(*cur)) {
+-        while (char_is_space(*++cur));
++        yy_skip_spaces_after_first();
+         goto obj_key_begin;
+     }
+     if (has_allow(SINGLE_QUOTED_STR) && *cur == '\'') {
+@@ -5655,7 +5671,7 @@ obj_key_end:
+         goto obj_val_begin;
+     }
+     if (char_is_space(*cur)) {
+-        while (char_is_space(*++cur));
++        yy_skip_spaces_after_first();
+         goto obj_key_end;
+     }
+     if (has_allow(TRIVIA) && char_is_trivia(*cur)) {
+@@ -5668,13 +5684,13 @@ obj_val_begin:
+     if (*cur == '"') {
+         val++;
+         ctn_len++;
+-        if (likely(read_str(&cur, eof, flg, val, &msg))) goto obj_val_end;
++        if (likely(read_str_pick(&cur, eof, flg, val, &msg))) goto obj_val_end;
+         goto fail_string;
+     }
+     if (char_is_num(*cur)) {
+         val++;
+         ctn_len++;
+-        if (likely(read_num(&cur, pre, flg, val, &msg))) goto obj_val_end;
++        if (likely(read_num_pick(&cur, eof, pre, flg, val, &msg, &alc))) goto obj_val_end;
+         goto fail_number;
+     }
+     if (*cur == '{') {
+@@ -5688,26 +5704,26 @@ obj_val_begin:
+     if (*cur == 't') {
+         val++;
+         ctn_len++;
+-        if (likely(read_true(&cur, val))) goto obj_val_end;
++        if (likely(read_true_pick(&cur, eof, flg, val))) goto obj_val_end;
+         goto fail_literal_true;
+     }
+     if (*cur == 'f') {
+         val++;
+         ctn_len++;
+-        if (likely(read_false(&cur, val))) goto obj_val_end;
++        if (likely(read_false_pick(&cur, eof, flg, val))) goto obj_val_end;
+         goto fail_literal_false;
+     }
+     if (*cur == 'n') {
+         val++;
+         ctn_len++;
+-        if (likely(read_null(&cur, val))) goto obj_val_end;
++        if (likely(read_null_pick(&cur, eof, flg, val))) goto obj_val_end;
+         if (has_allow(INF_AND_NAN)) {
+             if (read_nan(&cur, pre, flg, val)) goto obj_val_end;
+         }
+         goto fail_literal_null;
+     }
+     if (char_is_space(*cur)) {
+-        while (char_is_space(*++cur));
++        yy_skip_spaces_after_first();
+         goto obj_val_begin;
+     }
+     if (has_allow(INF_AND_NAN) &&
+@@ -5739,7 +5755,7 @@ obj_val_end:
+         goto obj_end;
+     }
+     if (char_is_space(*cur)) {
+-        while (char_is_space(*++cur));
++        yy_skip_spaces_after_first();
+         goto obj_val_end;
+     }
+     if (has_allow(TRIVIA) && char_is_trivia(*cur)) {
+@@ -5769,7 +5785,7 @@ obj_end:
+ doc_end:
+     /* check invalid contents after json document */
+     if (unlikely(cur < eof) && !has_flg(STOP_WHEN_DONE)) {
+-        while (char_is_space(*cur)) cur++;
++        while (cur < eof && char_is_space(*cur)) cur++;
+         if (has_allow(TRIVIA) && char_is_trivia(*cur)) {
+             if (!skip_trivia(&cur, eof, flg) && cur == eof) {
+                 goto fail_comment;
+@@ -5938,31 +5954,31 @@ arr_val_begin:
+     if (char_is_num(*cur)) {
+         val_incr();
+         ctn_len++;
+-        if (likely(read_num(&cur, pre, flg, val, &msg))) goto arr_val_end;
++        if (likely(read_num_pick(&cur, eof, pre, flg, val, &msg, &alc))) goto arr_val_end;
+         goto fail_number;
+     }
+     if (*cur == '"') {
+         val_incr();
+         ctn_len++;
+-        if (likely(read_str(&cur, eof, flg, val, &msg))) goto arr_val_end;
++        if (likely(read_str_pick(&cur, eof, flg, val, &msg))) goto arr_val_end;
+         goto fail_string;
+     }
+     if (*cur == 't') {
+         val_incr();
+         ctn_len++;
+-        if (likely(read_true(&cur, val))) goto arr_val_end;
++        if (likely(read_true_pick(&cur, eof, flg, val))) goto arr_val_end;
+         goto fail_literal_true;
+     }
+     if (*cur == 'f') {
+         val_incr();
+         ctn_len++;
+-        if (likely(read_false(&cur, val))) goto arr_val_end;
++        if (likely(read_false_pick(&cur, eof, flg, val))) goto arr_val_end;
+         goto fail_literal_false;
+     }
+     if (*cur == 'n') {
+         val_incr();
+         ctn_len++;
+-        if (likely(read_null(&cur, val))) goto arr_val_end;
++        if (likely(read_null_pick(&cur, eof, flg, val))) goto arr_val_end;
+         if (has_allow(INF_AND_NAN)) {
+             if (read_nan(&cur, pre, flg, val)) goto arr_val_end;
+         }
+@@ -5976,7 +5992,7 @@ arr_val_begin:
+         goto fail_trailing_comma;
+     }
+     if (char_is_space(*cur)) {
+-        while (char_is_space(*++cur));
++        yy_skip_spaces_after_first();
+         goto arr_val_begin;
+     }
+     if (has_allow(INF_AND_NAN) &&
+@@ -6012,7 +6028,7 @@ arr_val_end:
+         goto arr_end;
+     }
+     if (char_is_space(*cur)) {
+-        while (char_is_space(*++cur));
++        yy_skip_spaces_after_first();
+         goto arr_val_end;
+     }
+     if (has_allow(TRIVIA) && char_is_trivia(*cur)) {
+@@ -6077,7 +6093,7 @@ obj_key_begin:
+     if (likely(*cur == '"')) {
+         val_incr();
+         ctn_len++;
+-        if (likely(read_str(&cur, eof, flg, val, &msg))) goto obj_key_end;
++        if (likely(read_str_pick(&cur, eof, flg, val, &msg))) goto obj_key_end;
+         goto fail_string;
+     }
+     if (likely(*cur == '}')) {
+@@ -6088,7 +6104,7 @@ obj_key_begin:
+         goto fail_trailing_comma;
+     }
+     if (char_is_space(*cur)) {
+-        while (char_is_space(*++cur));
++        yy_skip_spaces_after_first();
+         goto obj_key_begin;
+     }
+     if (has_allow(SINGLE_QUOTED_STR) && *cur == '\'') {
+@@ -6119,7 +6135,7 @@ obj_key_end:
+         goto obj_val_begin;
+     }
+     if (char_is_space(*cur)) {
+-        while (char_is_space(*++cur));
++        yy_skip_spaces_after_first();
+         goto obj_key_end;
+     }
+     if (has_allow(TRIVIA) && char_is_trivia(*cur)) {
+@@ -6132,13 +6148,13 @@ obj_val_begin:
+     if (*cur == '"') {
+         val++;
+         ctn_len++;
+-        if (likely(read_str(&cur, eof, flg, val, &msg))) goto obj_val_end;
++        if (likely(read_str_pick(&cur, eof, flg, val, &msg))) goto obj_val_end;
+         goto fail_string;
+     }
+     if (char_is_num(*cur)) {
+         val++;
+         ctn_len++;
+-        if (likely(read_num(&cur, pre, flg, val, &msg))) goto obj_val_end;
++        if (likely(read_num_pick(&cur, eof, pre, flg, val, &msg, &alc))) goto obj_val_end;
+         goto fail_number;
+     }
+     if (*cur == '{') {
+@@ -6152,26 +6168,26 @@ obj_val_begin:
+     if (*cur == 't') {
+         val++;
+         ctn_len++;
+-        if (likely(read_true(&cur, val))) goto obj_val_end;
++        if (likely(read_true_pick(&cur, eof, flg, val))) goto obj_val_end;
+         goto fail_literal_true;
+     }
+     if (*cur == 'f') {
+         val++;
+         ctn_len++;
+-        if (likely(read_false(&cur, val))) goto obj_val_end;
++        if (likely(read_false_pick(&cur, eof, flg, val))) goto obj_val_end;
+         goto fail_literal_false;
+     }
+     if (*cur == 'n') {
+         val++;
+         ctn_len++;
+-        if (likely(read_null(&cur, val))) goto obj_val_end;
++        if (likely(read_null_pick(&cur, eof, flg, val))) goto obj_val_end;
+         if (has_allow(INF_AND_NAN)) {
+             if (read_nan(&cur, pre, flg, val)) goto obj_val_end;
+         }
+         goto fail_literal_null;
+     }
+     if (char_is_space(*cur)) {
+-        while (char_is_space(*++cur));
++        yy_skip_spaces_after_first();
+         goto obj_val_begin;
+     }
+     if (has_allow(INF_AND_NAN) &&
+@@ -6207,7 +6223,7 @@ obj_val_end:
+         goto obj_end;
+     }
+     if (char_is_space(*cur)) {
+-        while (char_is_space(*++cur));
++        yy_skip_spaces_after_first();
+         goto obj_val_end;
+     }
+     if (has_allow(TRIVIA) && char_is_trivia(*cur)) {
+@@ -6239,7 +6255,7 @@ obj_end:
+ doc_end:
+     /* check invalid contents after json document */
+     if (unlikely(cur < eof) && !has_flg(STOP_WHEN_DONE)) {
+-        while (char_is_space(*cur)) cur++;
++        while (cur < eof && char_is_space(*cur)) cur++;
+         if (has_allow(TRIVIA) && char_is_trivia(*cur)) {
+             if (!skip_trivia(&cur, eof, flg) && cur == eof) {
+                 goto fail_comment;
+@@ -6410,6 +6426,7 @@ vskip_cont:
+                 continue;
+             }
+             if (has_allow(INVALID_UNICODE)) {
++                val->tag |= YYJSON_RESERVED_INVALID_UNICODE;
+                 src++;
+                 continue;
+             }
+@@ -6423,6 +6440,31 @@ vskip_cont:
+     return false;
+ }
+ 
++/* No-escape strings alias the caller buffer. Used only when the document
++ * has no '\\', so this never has to unescape. */
++static bool read_str_alias(u8 **ptr, u8 *eof, yyjson_read_flag flg,
++                           yyjson_val *val, const char **msg) {
++    if (*ptr >= eof || **ptr != '"') {
++        *msg = "unexpected character, expected a string";
++        return false;
++    }
++    u8 *start = *ptr + 1;
++    val->tag = 0;
++    if (!read_str_validate(ptr, eof, flg, val, msg)) return false;
++    u8 *quote = *ptr - 1;
++    u64 extra = val->tag & YYJSON_RESERVED_INVALID_UNICODE;
++    val->tag = ((u64)(quote - start) << YYJSON_TAG_BIT)
++        | YYJSON_TYPE_STR | YYJSON_SUBTYPE_NOESC | extra;
++    val->uni.str = (const char *)start;
++    return true;
++}
++
++static bool read_str_pick(u8 **ptr, u8 *eof, yyjson_read_flag flg,
++                          yyjson_val *val, const char **msg) {
++    if (has_flg(ALIAS_NOESC)) return read_str_alias(ptr, eof, flg, val, msg);
++    return read_str(ptr, eof, flg, val, msg);
++}
++
+ /* Bytes read_num / read_inf may consume. A byte outside this set stops
+  * the token, so the one-byte lookahead stays inside the caller buffer. */
+ static bool yy_num_token_has_stop(const u8 *cur, const u8 *eof) {
+@@ -6530,6 +6572,29 @@ static bool read_null_bounded(u8 **cur, u8 *eof, yyjson_val *val) {
+     return read_null(cur, val);
+ }
+ 
++static bool read_num_pick(u8 **cur, u8 *eof, u8 **pre, yyjson_read_flag flg,
++                          yyjson_val *val, const char **msg, yyjson_alc *alc) {
++    if (has_flg(ALIAS_NOESC)) {
++        return read_num_bounded(cur, eof, pre, flg, val, msg, alc);
++    }
++    return read_num(cur, pre, flg, val, msg);
++}
++
++static bool read_true_pick(u8 **cur, u8 *eof, yyjson_read_flag flg, yyjson_val *val) {
++    if (has_flg(ALIAS_NOESC)) return read_true_bounded(cur, eof, val);
++    return read_true(cur, val);
++}
++
++static bool read_false_pick(u8 **cur, u8 *eof, yyjson_read_flag flg, yyjson_val *val) {
++    if (has_flg(ALIAS_NOESC)) return read_false_bounded(cur, eof, val);
++    return read_false(cur, val);
++}
++
++static bool read_null_pick(u8 **cur, u8 *eof, yyjson_read_flag flg, yyjson_val *val) {
++    if (has_flg(ALIAS_NOESC)) return read_null_bounded(cur, eof, val);
++    return read_null(cur, val);
++}
++
+ /*==============================================================================
+  * MARK: - JSON Reader (fastjson patch P-002: validate-only mode)
+  *
+@@ -6946,14 +7011,22 @@ yyjson_doc *yyjson_read_opts(char *dat, usize len,
+     if (unlikely(!dat)) return_err(0, INVALID_PARAMETER, "input data is NULL");
+     if (unlikely(!len)) return_err(0, INVALID_PARAMETER, "input length is 0");
+ 
+-    /* Validate-only does not keep string bytes, so it can read the
+-     * caller's buffer. Readers that would look past eof copy a tail
+-     * onto a padded stack buffer instead. */
+-    if (has_flg(INSITU) || has_flg(VALIDATE_ONLY)) {
++    /* Escapes still need the mutable copy. A document with no '\\'
++     * can alias strings at the caller buffer. */
++    if (has_flg(ALIAS_NOESC) && !has_flg(INSITU)
++            && memchr(dat, '\\', len) != NULL) {
++        flg &= ~YYJSON_READ_ALIAS_NOESC;
++    }
++    bool alias = has_flg(ALIAS_NOESC) && !has_flg(INSITU);
++
++    /* Validate-only and no-escape alias do not keep a private copy.
++     * Readers that would look past eof copy a tail onto a padded
++     * stack buffer instead. */
++    if (has_flg(INSITU) || has_flg(VALIDATE_ONLY) || alias) {
+         hdr = (u8 *)dat;
+         eof = (u8 *)dat + len;
+         cur = (u8 *)dat;
+-        nocopy = has_flg(VALIDATE_ONLY) && !has_flg(INSITU);
++        nocopy = !has_flg(INSITU) && (has_flg(VALIDATE_ONLY) || alias);
+     } else {
+         if (unlikely(len >= USIZE_MAX - YYJSON_PADDING_SIZE)) {
+             return_err(0, MEMORY_ALLOCATION, MSG_MALLOC);
+@@ -6978,7 +7051,7 @@ yyjson_doc *yyjson_read_opts(char *dat, usize len,
+         if (nocopy) {
+             while (cur < eof && char_is_space(*cur)) cur++;
+         } else {
+-            while (char_is_space(*cur)) cur++;
++            while (cur < eof && char_is_space(*cur)) cur++;
+         }
+         if (cur < eof && unlikely(!char_is_ctn(*cur))) {
+             if (has_allow(TRIVIA) && char_is_trivia(*cur)) {
+@@ -7426,6 +7499,7 @@ yyjson_doc *yyjson_incr_read(yyjson_incr_state *state, size_t len,
+     /* restore state saved from the previous call */
+     hdr = state->hdr;
+     end = state->hdr + len;
++    u8 *eof = end;
+     cur = state->cur;
+     flg = state->flg;
+     alc = state->alc;
+@@ -7464,7 +7538,7 @@ yyjson_doc *yyjson_incr_read(yyjson_incr_state *state, size_t len,
+ doc_begin:
+     /* skip empty contents before json document */
+     if (unlikely(!char_is_ctn(*cur))) {
+-        while (char_is_space(*cur)) cur++;
++        while (cur < end && char_is_space(*cur)) cur++;
+         if (unlikely(cur >= end)) goto unexpected_end; /* input data is empty */
+     }
+ 
+@@ -7518,15 +7592,15 @@ doc_begin:
+         goto fail_string;
+     }
+     if (*cur == 't') {
+-        if (likely(read_true(&cur, val))) goto doc_end;
++        if (likely(read_true_pick(&cur, eof, flg, val))) goto doc_end;
+         goto fail_literal_true;
+     }
+     if (*cur == 'f') {
+-        if (likely(read_false(&cur, val))) goto doc_end;
++        if (likely(read_false_pick(&cur, eof, flg, val))) goto doc_end;
+         goto fail_literal_false;
+     }
+     if (*cur == 'n') {
+-        if (likely(read_null(&cur, val))) goto doc_end;
++        if (likely(read_null_pick(&cur, eof, flg, val))) goto doc_end;
+         goto fail_literal_null;
+     }
+ 
+@@ -7587,19 +7661,19 @@ arr_val_continue:
+     if (*cur == 't') {
+         val_incr();
+         ctn_len++;
+-        if (likely(read_true(&cur, val))) goto arr_val_end;
++        if (likely(read_true_pick(&cur, eof, flg, val))) goto arr_val_end;
+         goto fail_literal_true;
+     }
+     if (*cur == 'f') {
+         val_incr();
+         ctn_len++;
+-        if (likely(read_false(&cur, val))) goto arr_val_end;
++        if (likely(read_false_pick(&cur, eof, flg, val))) goto arr_val_end;
+         goto fail_literal_false;
+     }
+     if (*cur == 'n') {
+         val_incr();
+         ctn_len++;
+-        if (likely(read_null(&cur, val))) goto arr_val_end;
++        if (likely(read_null_pick(&cur, eof, flg, val))) goto arr_val_end;
+         goto fail_literal_null;
+     }
+     if (*cur == ']') {
+@@ -7609,7 +7683,7 @@ arr_val_continue:
+         goto fail_trailing_comma;
+     }
+     if (char_is_space(*cur)) {
+-        while (char_is_space(*++cur));
++        yy_skip_spaces_after_first();
+         goto arr_val_continue;
+     }
+     goto fail_character_val;
+@@ -7630,7 +7704,7 @@ arr_val_end:
+         goto arr_end;
+     }
+     if (char_is_space(*cur)) {
+-        while (char_is_space(*++cur));
++        yy_skip_spaces_after_first();
+         goto arr_val_end;
+     }
+     goto fail_character_arr_end;
+@@ -7691,7 +7765,7 @@ obj_key_continue:
+         goto fail_trailing_comma;
+     }
+     if (char_is_space(*cur)) {
+-        while (char_is_space(*++cur));
++        yy_skip_spaces_after_first();
+         goto obj_key_continue;
+     }
+     goto fail_character_obj_key;
+@@ -7703,7 +7777,7 @@ obj_key_end:
+         goto obj_val_begin;
+     }
+     if (char_is_space(*cur)) {
+-        while (char_is_space(*++cur));
++        yy_skip_spaces_after_first();
+         goto obj_key_end;
+     }
+     goto fail_character_obj_sep;
+@@ -7735,23 +7809,23 @@ obj_val_continue:
+     if (*cur == 't') {
+         val++;
+         ctn_len++;
+-        if (likely(read_true(&cur, val))) goto obj_val_end;
++        if (likely(read_true_pick(&cur, eof, flg, val))) goto obj_val_end;
+         goto fail_literal_true;
+     }
+     if (*cur == 'f') {
+         val++;
+         ctn_len++;
+-        if (likely(read_false(&cur, val))) goto obj_val_end;
++        if (likely(read_false_pick(&cur, eof, flg, val))) goto obj_val_end;
+         goto fail_literal_false;
+     }
+     if (*cur == 'n') {
+         val++;
+         ctn_len++;
+-        if (likely(read_null(&cur, val))) goto obj_val_end;
++        if (likely(read_null_pick(&cur, eof, flg, val))) goto obj_val_end;
+         goto fail_literal_null;
+     }
+     if (char_is_space(*cur)) {
+-        while (char_is_space(*++cur));
++        yy_skip_spaces_after_first();
+         goto obj_val_continue;
+     }
+     goto fail_character_val;
+@@ -7772,7 +7846,7 @@ obj_val_end:
+         goto obj_end;
+     }
+     if (char_is_space(*cur)) {
+-        while (char_is_space(*++cur));
++        yy_skip_spaces_after_first();
+         goto obj_val_end;
+     }
+     goto fail_character_obj_end;
+@@ -7801,7 +7875,7 @@ doc_end:
+     if (unlikely(cur < end || len < state->buf_len) &&
+         !has_flg(STOP_WHEN_DONE)) {
+         save_incr_state(doc_end);
+-        while (char_is_space(*cur)) cur++;
++        while (cur < end && char_is_space(*cur)) cur++;
+         if (unlikely(cur < end)) goto fail_garbage;
+         /* the document is complete for the bytes seen so far, but more input
+            is still pending; it may hold trailing content that has to be
+diff --git a/vendor/yyjson/yyjson.h b/vendor/yyjson/yyjson.h
+index a492c04..2c453aa 100644
+--- a/vendor/yyjson/yyjson.h
++++ b/vendor/yyjson/yyjson.h
+@@ -924,6 +924,12 @@ static const yyjson_read_flag YYJSON_READ_JSON5 =
+     effect in validate mode. */
+ static const yyjson_read_flag YYJSON_READ_VALIDATE_ONLY            = 1 << 14;
+ 
++/** [fastjson local patch] Point strings that contain no escapes at the
++    caller buffer instead of a copy. The caller must keep that buffer
++    alive until yyjson_doc_free(). A document that contains '\\' is
++    parsed with the normal copying reader. Ignored with INSITU. */
++static const yyjson_read_flag YYJSON_READ_ALIAS_NOESC              = 1 << 15;
++
+ 
+ 
+ /** Result code for JSON reader. */

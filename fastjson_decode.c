@@ -335,7 +335,14 @@ yyjson_doc *fastjson_read_doc_ex(const char *json, size_t json_len,
 static yyjson_doc *fastjson_read_doc(const char *json, size_t json_len,
                                      zend_long flags, yyjson_read_err *err)
 {
-    return fastjson_read_doc_ex(json, json_len, flags, 0, err);
+    /* The caller string outlives the doc. Skip the input copy when the
+     * document has no escapes. BIGINT_AS_STRING stores raw digits in
+     * that buffer and strtod() needs a terminator, so keep the copy. */
+    yyjson_read_flag extra = 0;
+    if (!(flags & FASTJSON_DECODE_BIGINT_AS_STRING)) {
+        extra = YYJSON_READ_ALIAS_NOESC;
+    }
+    return fastjson_read_doc_ex(json, json_len, flags, extra, err);
 }
 
 /* Convert a resolved/merged immutable subtree into return_value.
@@ -557,14 +564,12 @@ PHP_FUNCTION(fastjson_file_decode)
         RETURN_NULL();
     }
 
-    /* yyjson_read_opts copies the input unless INSITU is set, which this
-     * path never sets. Line/column reporting still needs the original
-     * bytes, so release only after a successful parse or after the error
-     * position has been recorded. The walk then overlaps the doc with the
-     * zval tree and not with the file buffer. */
+    /* This path keeps the copying reader so the file buffer can be
+     * released before the walk. Aliasing strings at `contents` would
+     * use the buffer the walk still has to read. */
     yyjson_read_err err;
-    yyjson_doc *doc = fastjson_read_doc(ZSTR_VAL(contents), ZSTR_LEN(contents),
-                                        flags, &err);
+    yyjson_doc *doc = fastjson_read_doc_ex(ZSTR_VAL(contents), ZSTR_LEN(contents),
+                                           flags, 0, &err);
     if (doc == NULL) {
         if (throw_mode) {
             fastjson_throw_read_error(&err, &saved_err);
