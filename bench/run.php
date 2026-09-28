@@ -138,7 +138,7 @@ $cpu = preg_replace('/\s+/', ' ', $cpu);
 
 echo "# fastjson benchmark\n\n";
 echo "- PHP $phpVersion\n";
-echo "- fastjson $fastVersion (yyjson 0.12.0)\n";
+echo "- fastjson $fastVersion (yyjson 0.13.0)\n";
 echo "- ext/json $jsonVersion\n";
 if ($haveSimdjson) {
     echo "- simdjson $simdjsonVersion (decode + validate only)\n";

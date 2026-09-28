@@ -84,6 +84,10 @@ ZEND_BEGIN_MODULE_GLOBALS(fastjson)
     zend_long last_err_pos;
     zend_long last_err_line;
     zend_long last_err_col;
+    /* Decode key cache for the walk in progress. Module globals are
+     * per-thread under ZTS; a process-global pointer would alias another
+     * thread's stack cache. */
+    void *key_share;
 ZEND_END_MODULE_GLOBALS(fastjson)
 
 ZEND_EXTERN_MODULE_GLOBALS(fastjson)
@@ -201,18 +205,6 @@ bool fastjson_input_has_inf_nan_literal(const char *s, size_t len,
  * unexpected character as a syntax error, but ext/json distinguishes
  * valid-UTF-8-but-not-JSON (SYNTAX) from malformed UTF-8 (UTF8). */
 bool fastjson_byte_is_valid_utf8_start(const char *s, size_t len, size_t pos);
-
-/* Returns true if the raw JSON in [json, json+len) nests containers
- * ('{'/'[') at least `limit` deep. One allocation-free pass with early
- * exit that skips string contents and, when allow_comments, line/block
- * comments (matching yyjson ALLOW_COMMENTS). A limit of 0 always trips.
- * The verdict matches the decode walker's rule (a container at
- * remaining_depth <= 1 fails). Only validate uses it, because the P-002
- * validate-only doc has no values to walk. merge_patch must not: $depth
- * binds the merged result there, and input branches the patch discards
- * would trip it falsely. */
-bool fastjson_json_nesting_reaches(const char *json, size_t len,
-                                   size_t limit, bool allow_comments);
 
 /* Side selector for fastjson_sanitize_utf8. ext/json's encoder and
  * decoder differ in two compatibility-relevant ways:

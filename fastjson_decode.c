@@ -185,6 +185,72 @@ static zend_always_inline void fj_mut_raw_to_zval(yyjson_mut_val *val,
     fj_raw_to_zval(&immutable_view, out);
 }
 
+/* Fixed open-addressed table so a document of unique keys cannot grow
+ * a Zend HashTable for every name. 192 residents leaves probe room. */
+typedef struct {
+    zend_string *str;
+    uint32_t h;
+} fj_key_slot;
+
+typedef struct {
+    fj_key_slot slots[256];
+    uint32_t count;
+} fj_key_cache;
+
+#define FJ_SHARE_KEY_MAX 64
+#define FJ_SHARE_KEY_CAP 192
+
+static fj_key_cache *fj_key_share(void)
+{
+    return (fj_key_cache *)FASTJSON_G(key_share);
+}
+
+static zend_string *fj_share_key(const char *str, size_t len)
+{
+    fj_key_cache *share = fj_key_share();
+    if (share == NULL || len > FJ_SHARE_KEY_MAX) {
+        return zend_string_init(str, len, 0);
+    }
+    uint32_t h = zend_inline_hash_func(str, len);
+    uint32_t i = h & 255;
+    for (uint32_t n = 0; n < 8; n++) {
+        fj_key_slot *slot = &share->slots[i];
+        if (slot->str == NULL) {
+            if (share->count >= FJ_SHARE_KEY_CAP) {
+                return zend_string_init(str, len, 0);
+            }
+            zend_string *fresh = zend_string_init(str, len, 0);
+            slot->str = fresh;
+            slot->h = h;
+            share->count++;
+            return zend_string_copy(fresh);
+        }
+        if (slot->h == h && ZSTR_LEN(slot->str) == len
+                && memcmp(ZSTR_VAL(slot->str), str, len) == 0) {
+            return zend_string_copy(slot->str);
+        }
+        i = (i + 1) & 255;
+    }
+    return zend_string_init(str, len, 0);
+}
+
+static void fj_key_share_push(fj_key_cache *cache, fj_key_cache **prev)
+{
+    memset(cache, 0, sizeof(*cache));
+    *prev = fj_key_share();
+    FASTJSON_G(key_share) = cache;
+}
+
+static void fj_key_share_pop(fj_key_cache *cache, fj_key_cache *prev)
+{
+    for (uint32_t i = 0; i < 256; i++) {
+        if (cache->slots[i].str != NULL) {
+            zend_string_release_ex(cache->slots[i].str, 0);
+        }
+    }
+    FASTJSON_G(key_share) = prev;
+}
+
 /* Walker ownership and depth invariants are documented in fastjson_walk.inc. */
 #define FJ_WALK_NAME fastjson_yyval_to_zval
 #define FJ_WALK_SANITIZE 0
@@ -266,65 +332,6 @@ yyjson_doc *fastjson_read_doc_ex(const char *json, size_t json_len,
     return doc;
 }
 
-/* The validate-only reader retains no tree; scan the parsed input for depth. */
-bool fastjson_json_nesting_reaches(const char *json, size_t len,
-                                   size_t limit, bool allow_comments)
-{
-    if (limit == 0) {
-        return true;
-    }
-    size_t depth = 0;
-    size_t i = 0;
-    while (i < len) {
-        unsigned char c = (unsigned char)json[i];
-        if (c == '"') {
-            i++;
-            while (i < len) {
-                unsigned char s = (unsigned char)json[i];
-                if (s == '\\') {
-                    i += 2;
-                    continue;
-                }
-                i++;
-                if (s == '"') {
-                    break;
-                }
-            }
-            continue;
-        }
-        if (allow_comments && c == '/' && i + 1 < len) {
-            unsigned char n = (unsigned char)json[i + 1];
-            if (n == '/') {
-                i += 2;
-                while (i < len && json[i] != '\n' && json[i] != '\r') {
-                    i++;
-                }
-                continue;
-            }
-            if (n == '*') {
-                i += 2;
-                while (i + 1 < len
-                        && !(json[i] == '*' && json[i + 1] == '/')) {
-                    i++;
-                }
-                i += 2;
-                continue;
-            }
-        }
-        if (c == '{' || c == '[') {
-            if (++depth >= limit) {
-                return true;
-            }
-        } else if (c == '}' || c == ']') {
-            if (depth > 0) {
-                depth--;
-            }
-        }
-        i++;
-    }
-    return false;
-}
-
 static yyjson_doc *fastjson_read_doc(const char *json, size_t json_len,
                                      zend_long flags, yyjson_read_err *err)
 {
@@ -342,9 +349,13 @@ static bool fastjson_walk_doc_into(yyjson_doc *doc, yyjson_val *root,
                                    zval *return_value)
 {
     zend_long walk_depth = fastjson_effective_walk_depth(depth);
+    fj_key_cache key_cache;
+    fj_key_cache *key_prev;
+    fj_key_share_push(&key_cache, &key_prev);
     bool walk_ok = FASTJSON_HAS_UTF8_HANDLING_FLAG(flags)
         ? fastjson_yyval_to_zval_sanitize(root, use_assoc, walk_depth, flags, return_value)
         : fastjson_yyval_to_zval(root, use_assoc, walk_depth, flags, return_value);
+    fj_key_share_pop(&key_cache, key_prev);
     if (!walk_ok) {
         /* The walker set FASTJSON_ERROR_DEPTH and return_value may hold a
          * partial container; reset to a clean null. */
@@ -359,6 +370,31 @@ static bool fastjson_walk_doc_into(yyjson_doc *doc, yyjson_val *root,
     }
     yyjson_doc_free(doc);
     return true;
+}
+
+/* Walk an already-parsed doc into return_value and free it.
+ * $depth must already be validated. The param is named `return_value`
+ * so RETURN_THROWS() expands correctly. Returns from this helper, not
+ * from the PHP_FUNCTION that called it. */
+static void fastjson_finish_decode(yyjson_doc *doc, bool use_assoc,
+                                   zend_long depth, zend_long flags,
+                                   bool throw_mode,
+                                   const fastjson_error_state *saved_err,
+                                   zval *return_value)
+{
+    if (!fastjson_walk_doc_into(doc, yyjson_doc_get_root(doc), use_assoc,
+                                depth, flags, throw_mode, saved_err,
+                                return_value)) {
+        if (throw_mode) {
+            RETURN_THROWS();
+        }
+        return;
+    }
+    /* Match ext/json's THROW_ON_ERROR contract: only clear on the
+     * non-throw success path. */
+    if (!throw_mode) {
+        fastjson_clear_error();
+    }
 }
 
 /* Shared decode core for fastjson_decode and fastjson_file_decode.
@@ -382,19 +418,8 @@ static void fastjson_decode_into(const char *json, size_t json_len,
         RETURN_NULL();
     }
 
-    if (!fastjson_walk_doc_into(doc, yyjson_doc_get_root(doc), use_assoc,
-                                depth, flags, throw_mode, saved_err,
-                                return_value)) {
-        if (throw_mode) {
-            RETURN_THROWS();
-        }
-        return;
-    }
-    /* Match ext/json's THROW_ON_ERROR contract: only clear on the
-     * non-throw success path. */
-    if (!throw_mode) {
-        fastjson_clear_error();
-    }
+    fastjson_finish_decode(doc, use_assoc, depth, flags, throw_mode,
+                           saved_err, return_value);
 }
 
 PHP_FUNCTION(fastjson_decode)
@@ -532,12 +557,32 @@ PHP_FUNCTION(fastjson_file_decode)
         RETURN_NULL();
     }
 
-    fastjson_decode_into(ZSTR_VAL(contents), ZSTR_LEN(contents), use_assoc,
-                         depth, flags, throw_mode, &saved_err, return_value);
+    /* yyjson_read_opts copies the input unless INSITU is set, which this
+     * path never sets. Line/column reporting still needs the original
+     * bytes, so release only after a successful parse or after the error
+     * position has been recorded. The walk then overlaps the doc with the
+     * zval tree and not with the file buffer. */
+    yyjson_read_err err;
+    yyjson_doc *doc = fastjson_read_doc(ZSTR_VAL(contents), ZSTR_LEN(contents),
+                                        flags, &err);
+    if (doc == NULL) {
+        if (throw_mode) {
+            fastjson_throw_read_error(&err, &saved_err);
+        } else {
+            fastjson_set_read_error(ZSTR_VAL(contents), ZSTR_LEN(contents), &err);
+        }
+        zend_string_release(contents);
+        if (throw_mode) {
+            RETURN_THROWS();
+        }
+        RETURN_NULL();
+    }
+    zend_string_release(contents);
+    fastjson_finish_decode(doc, use_assoc, depth, flags, throw_mode,
+                           &saved_err, return_value);
     if (throw_mode && !EG(exception)) {
         fastjson_restore_error_state(&saved_err);
     }
-    zend_string_release(contents);
 }
 
 /* Splice-status to error-code/message mapping for pointer_set and the
@@ -1060,6 +1105,9 @@ PHP_FUNCTION(fastjson_merge_patch)
             mdoc, target_root, patch_root, walk_depth, &depth_failed);
         if (merged != NULL) {
             yyjson_mut_doc_set_root(mdoc, merged);
+            fj_key_cache key_cache;
+            fj_key_cache *key_prev;
+            fj_key_share_push(&key_cache, &key_prev);
             walk_ok = FASTJSON_HAS_UTF8_HANDLING_FLAG(flags)
                 ? fastjson_yymut_to_zval_sanitize(
                     merged, use_assoc, (zend_long)walk_depth, flags,
@@ -1067,6 +1115,7 @@ PHP_FUNCTION(fastjson_merge_patch)
                 : fastjson_yymut_to_zval(
                     merged, use_assoc, (zend_long)walk_depth, flags,
                     return_value);
+            fj_key_share_pop(&key_cache, key_prev);
         }
         yyjson_mut_doc_free(mdoc);
     }

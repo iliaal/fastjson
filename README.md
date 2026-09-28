@@ -8,7 +8,7 @@
 
 ![fastjson: 5.6x encode, 2.6x decode, 5.0x validate vs ext/json](images/fastjson-hero.jpg)
 
-Fast JSON encode, decode, and validate for PHP 8.1+. A drop-in alternative to `ext/json` with a `fastjson_*` API and `json_last_error`-compatible error reporting, built on [yyjson](https://github.com/ibireme/yyjson) 0.12.0. It coexists with `ext/json`, so you adopt it one call site at a time.
+Fast JSON encode, decode, and validate for PHP 8.1+. A drop-in alternative to `ext/json` with a `fastjson_*` API and `json_last_error`-compatible error reporting, built on [yyjson](https://github.com/ibireme/yyjson) 0.13.0. It coexists with `ext/json`, so you adopt it one call site at a time.
 
 > Status: pre-release. Available now: `fastjson_encode` / `fastjson_decode` / `fastjson_validate`, `fastjson_last_error` / `_msg` / `_pos` / `_info`, the file helpers `fastjson_file_decode` / `fastjson_file_encode`, and the JSON Pointer / patch helpers `fastjson_pointer_get` / `_exists` / `_set` (RFC 6901) and `fastjson_merge_patch` (RFC 7396). The compat harness against `php-src/ext/json/tests/*.phpt` passes every test for features fastjson mirrors; `tests/upstream-json/.skiplist` categorizes the rest.
 
@@ -92,7 +92,7 @@ Decode trades memory for speed: yyjson's two-stage parser holds the parsed docum
 
 ## ✨ What's in the box
 
-- Bundled yyjson 0.12.0 (MIT) with six local patches (P-001 through P-006). Notes and the replayable series are in [`vendor/yyjson/PATCHES.md`](vendor/yyjson/PATCHES.md) and [`vendor/yyjson/patches/`](vendor/yyjson/patches/).
+- Bundled yyjson 0.13.0 (MIT) with local patches P-002 through P-008. Notes and the replayable series are in [`vendor/yyjson/PATCHES.md`](vendor/yyjson/PATCHES.md) and [`vendor/yyjson/patches/`](vendor/yyjson/patches/).
 - yyjson allocates through Zend's `emalloc`/`erealloc`/`efree`, so JSON allocations count against `memory_limit` and are freed at request end.
 - `FASTJSON_ERROR_*` constants match the `JSON_ERROR_*` numeric values, so you can use either set. yyjson reports raw control-character and invalid-surrogate parse failures under the UTF-8 code; the aliases exist even where fastjson does not emit the more specific ext/json code.
 - 67-test compat harness rewritten from `php-src/ext/json/tests/*.phpt` runs alongside the native phpt suite. `tests/upstream-json/.skiplist` and `tests/upstream-json/STATE.md` list the upstream tests fastjson does not try to match byte-for-byte.

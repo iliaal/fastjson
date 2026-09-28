@@ -42,14 +42,20 @@ bool fastjson_apply_hex_escapes(smart_str *buf, zend_long flags,
     (((flags) & (FASTJSON_INVALID_UTF8_IGNORE \
                  | FASTJSON_INVALID_UTF8_SUBSTITUTE)) != 0)
 
-/* Avoid yyjson's 6x reservation: at 256 KiB, clean/late-escape ASCII measured
- * -35%/-31% on x86_64, +8% on aarch64; both gain ~40% by 512 KiB.
- * Re-measure both architectures before moving the threshold. */
-#define FASTJSON_EXACT_STRING_THRESHOLD (256 * 1024)
+/* Use the exact-size writer once a 6x reserve would exceed the Zend
+ * small-bin smart_str (~256 bytes including the header). Below that the
+ * one-pass reserve stays in the initial allocation. At 256 KiB the exact
+ * path was -35%/-31% on x86_64 and +8% on aarch64 versus 6x; do not raise
+ * this without re-measuring both. */
+#define FASTJSON_EXACT_STRING_THRESHOLD 32
 /* Non-ASCII preflight measured +75%/+160% on x86_64/aarch64 at 1 MiB.
  * Delay it until the 6x reservation reaches 48 MiB against a 128M memory_limit.
  * Clean ASCII bypasses preflight via the fused scan-and-copy path. */
 #define FASTJSON_EXACT_NONASCII_THRESHOLD (8 * 1024 * 1024)
+/* An escaped string shorter than this keeps the one-pass 6x reserve.
+ * At 8 KiB that reserve is 48 KiB; above it the reserve is the peak
+ * (a 137 KiB PHP source string measured 828 KiB). */
+#define FASTJSON_EXACT_ESCAPE_THRESHOLD (8 * 1024)
 #define FASTJSON_ENCODE_HEX_MASK (FASTJSON_ENCODE_HEX_TAG \
     | FASTJSON_ENCODE_HEX_AMP | FASTJSON_ENCODE_HEX_APOS \
     | FASTJSON_ENCODE_HEX_QUOT)

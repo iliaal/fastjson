@@ -1,9 +1,9 @@
 # Patches applied to vendored yyjson sources
 
 The bundled yyjson sources at `vendor/yyjson/yyjson.{c,h}` are
-upstream's tag 0.12.0 with six local modifications documented below.
-The upstream `vendor/yyjson/LICENSE` and `vendor/yyjson/CHANGELOG.md`
-are unchanged.
+upstream's tag 0.13.0 with seven local modifications (P-002 through
+P-008) documented below. The upstream `vendor/yyjson/LICENSE` and
+`vendor/yyjson/CHANGELOG.md` are unchanged.
 
 The patch files under `vendor/yyjson/patches/` are the canonical replayable
 series. `scripts/verify-yyjson-patches.sh` downloads the pinned pristine
@@ -11,42 +11,12 @@ release, checks its archive digest, applies the series in order, and compares
 the result byte-for-byte with the vendored sources. Run it after any patch or
 vendor update. The prose below records rationale and upgrade caveats.
 
-## P-001: lowercase hex digits in `\uXXXX` escape table
+## P-001: retired on the 0.13.0 upgrade
 
-**File:** `vendor/yyjson/yyjson.c`
-**Region:** `static const u8 esc_hex_char_table[512] = { ... };`
-(starts around line 8442 in 0.12.0)
-
-**Reason.** Upstream emits uppercase hex (`é`); ext/json emits
-lowercase (`é`). Both are spec-equivalent (RFC 8259 §7), but
-fastjson's parity goal with `ext/json` makes byte-equality a target.
-yyjson exposes no flag for case selection; the table is hardcoded.
-
-**Patch.** In-place sed over the table region, replacing single-quoted
-uppercase letters with their lowercase equivalents.
-
-Reproducible from a clean upstream import:
-
-```sh
-START=$(grep -n 'esc_hex_char_table\[512\]' vendor/yyjson/yyjson.c | head -1 | cut -d: -f1)
-END=$(awk -v s=$START 'NR>=s && /^};/ { print NR; exit }' vendor/yyjson/yyjson.c)
-sed -i "${START},${END}{s/'A'/'a'/g; s/'B'/'b'/g; s/'C'/'c'/g; s/'D'/'d'/g; s/'E'/'e'/g; s/'F'/'f'/g}" vendor/yyjson/yyjson.c
-```
-
-The range-bounded sed only touches the table; surrounding code that
-uses single-quoted uppercase letters for other purposes is unaffected.
-
-**Verification.**
-
-```sh
-make && php -d extension=$(pwd)/modules/fastjson.so -r '
-    var_dump(json_encode("héllo") === fastjson_encode("héllo"));
-'
-# expect: bool(true)
-```
-
-The upstream-json compat harness adds ~25 newly-passing tests after
-this patch lands.
+yyjson 0.13.0 adds `YYJSON_WRITE_LOWERCASE_HEX` and a second hex
+table. `fastjson_translate_write_flags()` always sets that flag, so
+`\uXXXX` stays lowercase without editing the tables. The old
+`0001-lowercase-hex-escapes.patch` is not in the series.
 
 ## P-002: `YYJSON_READ_VALIDATE_ONLY`, no-tree validate mode
 
@@ -83,6 +53,10 @@ values.
 - vs ext/json memory: ratio drops from 277.78× to 101.40×. The
   remaining ratio is the input-buffer copy yyjson always makes when
   `YYJSON_READ_INSITU` is not set. That's the next ceiling.
+- The stub doc's `val_read` is the maximum container nesting counted
+  while parsing (the root container counts as 1; a top-level scalar
+  does not use this stub). `fastjson_validate` reads that field instead
+  of scanning the input a second time. The stub still must not be walked.
 
 **How to apply.** The patch is two-sided (header + impl) and structural
 enough that a sed reproducer is impractical. Re-applying after a
@@ -110,9 +84,9 @@ re-port.
 - `YYJSON_READ_NUMBER_AS_RAW` and `YYJSON_READ_BIGNUM_AS_RAW` are
   honored at the parse level (validation accepts them) but their
   side-effects (writing raw text into the doc) are no-ops.
-- Top-level scalars defer to `read_root_single` (the existing yyjson
-  function) which allocates a tiny ~32-byte doc; not a meaningful
-  cost.
+- Top-level scalars stay inside `read_root_validate` (P-008).
+  `read_root_single` writes a NUL into the buffer, which the no-copy
+  path cannot do.
 
 ## P-003: expose `yyjson_write_string_to_buf()` public API
 
@@ -147,8 +121,10 @@ char *yyjson_write_string_to_buf(char *cur, const char *str, size_t str_len,
     bool esc = has_flg(ESCAPE_UNICODE);
     bool inv = has_flg(ALLOW_INVALID_UNICODE);
     const char_enc_type *enc_table = get_enc_table_with_flag(flg);
+    const u8 *hex_table = get_hex_table_with_flag(flg);
     return (char *)write_str((u8 *)cur, esc, inv,
-                             (const u8 *)str, (usize)str_len, enc_table);
+                             (const u8 *)str, (usize)str_len,
+                             enc_table, hex_table);
 }
 ```
 
@@ -162,9 +138,8 @@ to fit worst-case `\uXXXX` expansion plus surrounding quotes.
 2. Apply the implementation verbatim immediately before the
    `#undef has_flg` lines that close the writer block in yyjson.c
    (search for `#endif /* YYJSON_DISABLE_WRITER */`).
-3. Confirm `get_enc_table_with_flag()` and `write_str()` still have
-   the signatures shown above. Upstream has been API-stable on these
-   internals across recent releases but verify on each upgrade.
+3. Confirm `get_enc_table_with_flag()`, `get_hex_table_with_flag()`,
+   and `write_str()` still have the signatures shown above.
 
 **Caveats.**
 - The wrapper does NOT take an allocator argument. It writes into
@@ -357,6 +332,29 @@ harness at the LP64 boundaries, and `tests/validate_stack_growth_depth.phpt`
 covers the growth through `fastjson_validate()`. With the two guards
 removed, the ILP32 harness segfaults on the write past the arena and the
 LP64 harness reports 8 failed checks.
+
+## P-007: record validate nesting on the stub doc
+
+**File:** `vendor/yyjson/yyjson.c` (`read_root_validate`)
+
+The validate reader already counts open containers. `val_read` on the
+stub doc is that maximum (the root container counts as 1). A top-level
+scalar does not use the stub. `fastjson_validate` reads the field
+instead of scanning the input again. `push_ctn` itself is unchanged.
+
+## P-008: validate without copying the input
+
+**File:** `vendor/yyjson/yyjson.c`
+
+`YYJSON_READ_VALIDATE_ONLY` reads the caller buffer. Strings go through
+`read_str_validate`, which does not write a NUL over the closing quote.
+Numbers and `true`/`false`/`null` near `eof` use a stack tail with the
+usual 4-byte pad. A number that runs to `eof` is copied too, because
+`read_num` looks one byte past the token. The UTF-8 BOM check and the
+truncated-UTF-8 check read only bytes that exist. `NaN`/`Inf` literals
+use the same padded tail. The stub's `str_pool` is NULL, so
+`yyjson_doc_free` does not free the caller's memory. On the release
+build, canada.json validate peak dropped from about 2.25 MB to 64 bytes.
 
 ## Build-flag dependencies (not vendor patches)
 

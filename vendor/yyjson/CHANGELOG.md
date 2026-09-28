@@ -1,6 +1,28 @@
-# Changelog
+# Changelog {#changelog}
 All notable changes to this project will be documented in this file.
 
+
+
+## 0.13.0 (2026-09-08)
+#### Added 
+- Add a set of `write_buf()` functions for writing JSON to a buffer without allocation.
+- Add `YYJSON_FREESTANDING` compile-time option to build without libc (e.g. wasm).
+- Add `YYJSON_DISABLE_FILE` compile-time option to disable file/fp read and write APIs.
+- Add `YYJSON_READER_DEPTH_LIMIT` and `YYJSON_WRITER_DEPTH_LIMIT` compile-time options.
+- Add `YYJSON_WRITE_LOWERCASE_HEX` flag to write `\uXXXX` escapes in lowercase: #264.
+- Add Swift Package Manager traits for compile-time configuration: #245.
+
+#### Changed
+- Change `set_int()` parameter type from `int` to `int64_t`: #240.
+- Add `const` qualifier to parameters of read-only functions: #248.
+
+#### Fixed
+- Fix `tinycc` preprocessor error: #233.
+- Fix an uninitialized read when parsing numbers: OSS-Fuzz #498706935.
+- Fix integer truncation when parsing extremely large numbers.
+- Fix `incr_read()` when a value is split across input chunks.
+- Fix `iter_remove()` when called twice in a row.
+- Handle read errors from non-seekable streams and writing empty files.
 
 
 ## 0.12.0 (2025-08-18)
@@ -25,8 +47,8 @@ All notable changes to this project will be documented in this file.
 ## 0.11.0 (2025-05-05)
 #### Added
 - Add `YYJSON_READ_ALLOW_BOM` flag to allow UTF-8 BOM.
-- Add `YYJSON_WRITE_FP_TO_FLOAT` flag to write real numbers using single-precison.
-- Add `YYJSON_WRITE_FP_TO_FIXED(prec)` flag to write real numbers using fix-point notation.
+- Add `YYJSON_WRITE_FP_TO_FLOAT` flag to write real numbers using single-precision.
+- Add `YYJSON_WRITE_FP_TO_FIXED(prec)` flag to write real numbers using fixed-point notation.
 - Add `set_fp_to_float()` and `set_fp_to_fixed()` functions to control the output format of a specific number.
 - Add `set_str_noesc()` function to skip escaping for a specific string during writing.
 - Add `yyjson_incr_read()`, `yyjson_incr_new()`, `yyjson_incr_free()` functions for incremental DOM reading.
@@ -113,7 +135,7 @@ All notable changes to this project will be documented in this file.
 - Add a placeholder allocator if `yyjson_alc_pool_init()` fails.
 
 #### Fixed
-- Fix quite NaN on MIPS and HPPA arch.
+- Fix quiet NaN on MIPS and HPPA arch.
 - Fixed compile error before `GCC 4.5`, which doesn't support empty optional extended asm label.
 - When the built-in floating point conversion is disabled, the `sprintf()` output for floating point numbers is missing a decimal point, for example 123 should be 123.0.
 
@@ -121,7 +143,7 @@ All notable changes to this project will be documented in this file.
 ## 0.5.1 (2022-06-17)
 #### Fixed
 - Fix run-time error when compiling as cpp and 32-bit (g++-5 -m32 -fPIC) #85
-- Fix incurrect output number format, remove unnecessary digits (e.g. 2.0e34 -> 2e34).
+- Fix incorrect output number format, remove unnecessary digits (e.g. 2.0e34 -> 2e34).
 
 
 ## 0.5.0 (2022-05-25)
@@ -150,7 +172,7 @@ All notable changes to this project will be documented in this file.
 ## 0.4.0 (2021-12-12)
 #### Added
 - Add `YYJSON_WRITE_INF_AND_NAN_AS_NULL` flag for JSON writer.
-- Add `yyjson_merge_patch()` function for JSON Merge-Path API (RFC 7386).
+- Add `yyjson_merge_patch()` function for JSON Merge Patch API (RFC 7386).
 - Add `yyjson_mut_obj_replace()` and `yyjson_mut_obj_insert()` functions for object modification.
 - Add `yyjson_obj_iter_get()` and `yyjson_mut_obj_iter_get()` functions for faster object search.
 - Add `yyjson_version()` function.

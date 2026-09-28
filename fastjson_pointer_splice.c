@@ -979,7 +979,8 @@ zend_string *fastjson_imut_pointer_set_write(yyjson_val *root,
     ctx.pretty = (flags & FASTJSON_ENCODE_PRETTY_PRINT) != 0;
     ctx.replacement = replacement;
     ctx.status = FJ_SPLICE_OK;
-    smart_str_alloc(&ctx.buf, 256, 0);
+    /* 256 is past Zend's small-bin start length and lands on a 4KB page. */
+    smart_str_alloc(&ctx.buf, 32, 0);
 
     bool ok;
     if (plan->nsegs == 0) {

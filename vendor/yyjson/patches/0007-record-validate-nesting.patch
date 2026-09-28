@@ -1,0 +1,64 @@
+Subject: [PATCH] P-007: record validate container nesting on the stub doc
+
+The validate reader already tracks open containers. Store the maximum
+nesting in the stub doc's val_read (the root container counts as 1) so
+fastjson_validate does not scan the input again. The push_ctn macro is
+unchanged; the stack-growth harness compiles it alone.
+
+diff --git a/vendor/yyjson/yyjson.c b/vendor/yyjson/yyjson.c
+--- a/vendor/yyjson/yyjson.c
++++ b/vendor/yyjson/yyjson.c
+@@ -6270,6 +6270,7 @@ static yyjson_doc *read_root_validate(u8 *hdr, u8 *cur, u8 *eof,
+     u64 *stack_buf = stack_inline;
+     usize stack_cap = INLINE_DEPTH;
+     usize depth = 0;
++    usize max_ctn = 0;
+     u8 is_obj = 0;
+     usize ctn_len = 0;
+     yyjson_val dummy;
+@@ -6285,10 +6286,12 @@ static yyjson_doc *read_root_validate(u8 *hdr, u8 *cur, u8 *eof,
+     if (*cur == '{') {
+         cur++;
+         is_obj = 1;
++        max_ctn = 1;
+         goto obj_key_begin;
+     } else if (*cur == '[') {
+         cur++;
+         is_obj = 0;
++        max_ctn = 1;
+         goto arr_val_begin;
+     } else {
+         /* Top-level scalar — defer to read_root_single. It allocates a
+@@ -6298,8 +6301,8 @@ static yyjson_doc *read_root_validate(u8 *hdr, u8 *cur, u8 *eof,
+     }
+ 
+ arr_val_begin:
+-    if (*cur == '{') { cur++; push_ctn(1); goto obj_key_begin; }
+-    if (*cur == '[') { cur++; push_ctn(0); goto arr_val_begin; }
++    if (*cur == '{') { cur++; push_ctn(1); if (depth + 1 > max_ctn) max_ctn = depth + 1; goto obj_key_begin; }
++    if (*cur == '[') { cur++; push_ctn(0); if (depth + 1 > max_ctn) max_ctn = depth + 1; goto arr_val_begin; }
+     if (char_is_num(*cur)) {
+         ctn_len++;
+         if (likely(read_num(&cur, pre, flg, val, &msg))) goto arr_val_end;
+@@ -6429,8 +6432,8 @@ obj_val_begin:
+         if (likely(read_num(&cur, pre, flg, val, &msg))) goto obj_val_end;
+         goto fail_number;
+     }
+-    if (*cur == '{') { cur++; push_ctn(1); goto obj_key_begin; }
+-    if (*cur == '[') { cur++; push_ctn(0); goto arr_val_begin; }
++    if (*cur == '{') { cur++; push_ctn(1); if (depth + 1 > max_ctn) max_ctn = depth + 1; goto obj_key_begin; }
++    if (*cur == '[') { cur++; push_ctn(0); if (depth + 1 > max_ctn) max_ctn = depth + 1; goto arr_val_begin; }
+     if (*cur == 't') {
+         if (likely(read_true(&cur, val))) goto obj_val_end;
+         goto fail_literal_true;
+@@ -6505,6 +6508,10 @@ doc_end:
+     memset(doc, 0, sizeof(yyjson_doc));
+     doc->alc = alc;
+     doc->str_pool = has_flg(INSITU) ? NULL : (char *)hdr;
++    /* Stub only: val_read is the maximum container nesting (root counts
++     * as 1, a scalar document never gets here). fastjson_validate reads
++     * it instead of scanning the input again. Do not walk this doc. */
++    doc->val_read = max_ctn;
+     if (stack_buf != stack_inline) alc.free(alc.ctx, stack_buf);
+     return doc;
+ 

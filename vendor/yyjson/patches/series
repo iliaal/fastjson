@@ -1,6 +1,7 @@
-0001-lowercase-hex-escapes.patch
 0002-validate-only-reader.patch
 0003-public-string-writer.patch
 0004-reject-control-characters.patch
 0005-tag-invalid-unicode.patch
 0006-bound-validate-stack-growth.patch
+0007-record-validate-nesting.patch
+0008-validate-without-input-copy.patch

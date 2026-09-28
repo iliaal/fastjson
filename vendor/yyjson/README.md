@@ -1,7 +1,7 @@
 
 # Introduction
 
-[![Build](https://img.shields.io/github/actions/workflow/status/ibireme/yyjson/cmake.yml?branch=master&style=flat-square)](https://github.com/ibireme/yyjson/actions/workflows/cmake.yml)
+[![Build](https://img.shields.io/github/actions/workflow/status/ibireme/yyjson/checks.yml?branch=master&style=flat-square)](https://github.com/ibireme/yyjson/actions/workflows/checks.yml)
 [![Codecov](https://img.shields.io/codecov/c/github/ibireme/yyjson/master?style=flat-square)](https://codecov.io/gh/ibireme/yyjson)
 [![License](https://img.shields.io/github/license/ibireme/yyjson?color=blue&style=flat-square)](https://github.com/ibireme/yyjson/blob/master/LICENSE)
 [![Version](https://img.shields.io/github/v/release/ibireme/yyjson?color=orange&style=flat-square)](https://github.com/ibireme/yyjson/releases)
@@ -11,18 +11,18 @@ A high performance JSON library written in ANSI C.
 
 # Features
 - **Fast**: can read or write gigabytes of JSON data per second on modern CPUs.
-- **Portable**: complies with ANSI C (C89) for cross-platform compatibility.
+- **Portable**: complies with ANSI C (C89), no explicit SIMD.
 - **Strict**: complies with [RFC 8259](https://datatracker.ietf.org/doc/html/rfc8259) JSON standard, ensuring strict number formats and UTF-8 validation.
-- **Extendable**: offers options to enable individual [JSON5](https://json5.org) features and custom allocator.
+- **Extendable**: offers options to enable individual [JSON5](https://json5.org) features and a custom allocator.
 - **Accuracy**: can accurately read and write `int64`, `uint64`, and `double` numbers.
 - **Flexible**: supports unlimited JSON nesting levels, `\u0000` characters, and non-null-terminated strings.
 - **Manipulation**: supports querying and modifying with [JSON Pointer](https://datatracker.ietf.org/doc/html/rfc6901), [JSON Patch](https://datatracker.ietf.org/doc/html/rfc6902), and [JSON Merge Patch](https://datatracker.ietf.org/doc/html/rfc7386).
 - **Developer-Friendly**: easy integration with just one `.h` and one `.c` file.
 
 # Limitations
-- An array or object is stored as a [data structure](https://ibireme.github.io/yyjson/doc/doxygen/html/md_doc__data_structure.html) such as linked list, which makes accessing elements by index or key slower than using an iterator.
+- An array or object is stored as a [data structure](https://ibireme.github.io/yyjson/doc/doxygen/html/data-structures.html) such as linked list, which makes accessing elements by index or key slower than using an iterator.
 - Duplicate keys are allowed in an object, and the order of the keys is preserved.
-- JSON parsing result is immutable, requiring a `mutable copy` for modification.
+- JSON parsing results are immutable, requiring a mutable copy for modification.
 
 # Performance
 Benchmark project and dataset: [yyjson_benchmark](https://github.com/ibireme/yyjson_benchmark)
@@ -59,7 +59,7 @@ This benchmark project only checks the DOM API, a new benchmark will be added la
 |cjson|0.48|0.33|
 |jansson|0.09|0.24|
 
-More benchmark reports with interactive charts (update 2020-12-12)
+More benchmark reports with interactive charts (last updated 2020-12-12)
 
 |Platform|CPU|Compiler|OS|Report|
 |---|---|---|---|---|
@@ -181,7 +181,7 @@ while ((key = yyjson_mut_obj_iter_next(&iter))) {
     }
 }
 
-// Write the json pretty, escape unicode
+// Write the JSON with pretty printing, escape unicode
 yyjson_write_flag flg = YYJSON_WRITE_PRETTY | YYJSON_WRITE_ESCAPE_UNICODE;
 yyjson_write_err err;
 yyjson_mut_write_file("/tmp/config.json", doc, flg, NULL, &err);
@@ -198,14 +198,14 @@ yyjson_mut_doc_free(doc);
 The latest (unreleased) documentation can be accessed in the [doc](https://github.com/ibireme/yyjson/tree/master/doc) directory.
 The pre-generated Doxygen HTML for the release version can be viewed here:
 * [Home Page](https://ibireme.github.io/yyjson/doc/doxygen/html/)
-    * [Build and test](https://ibireme.github.io/yyjson/doc/doxygen/html/md_doc__build_and_test.html)
-    * [API and sample code](https://ibireme.github.io/yyjson/doc/doxygen/html/md_doc__a_p_i.html)
-    * [Data structure](https://ibireme.github.io/yyjson/doc/doxygen/html/md_doc__data_structure.html)
-    * [Changelog](https://ibireme.github.io/yyjson/doc/doxygen/html/md__c_h_a_n_g_e_l_o_g.html)
+    * [Build and test](https://ibireme.github.io/yyjson/doc/doxygen/html/building-and-testing.html)
+    * [API and sample code](https://ibireme.github.io/yyjson/doc/doxygen/html/api.html)
+    * [Data structure](https://ibireme.github.io/yyjson/doc/doxygen/html/data-structures.html)
+    * [Changelog](https://ibireme.github.io/yyjson/doc/doxygen/html/changelog.html)
 
 # Packaging status
 
-[![Packaging status](https://repology.org/badge/vertical-allrepos/yyjson.svg?columns=2)](https://repology.org/project/yyjson/versions)
+[![Packaging status](https://repology.org/badge/vertical-allrepos/yyjson.svg?columns=3)](https://repology.org/project/yyjson/versions)
 
 # Built With yyjson
 
@@ -213,20 +213,27 @@ A non-exhaustive list of projects that expose yyjson to other languages or
 use yyjson internally for a major feature. If you have a project that uses
 yyjson, feel free to open a PR to add it to this list.
 
-| Project         | Language | Description                                                                              |
-|-----------------|----------|------------------------------------------------------------------------------------------|
-| [py_yyjson][]   | Python   | Python bindings for yyjson                                                               |
-| [orjson][]      | Python   | JSON library for Python with an optional yyjson backend                                  |
-| [cpp-yyjson][]  | C++      | C++ JSON library with a yyjson backend                                                   |
-| [reflect-cpp][] | C++      | C++ library for serialization through automated field name retrieval from structs        |
-| [yyjsonr][]     | R        | R binding for yyjson                                                                     |
-| [Ananda][]      | Swift    | JSON model decoding based on yyjson                                                      |
-| [duckdb][]      | C++      | DuckDB is an in-process SQL OLAP Database Management System                              |
-| [fastfetch][]   | C        | A neofetch-like tool for fetching system information and displaying them in a pretty way |
-| [Zrythm][]      | C        | Digital Audio Workstation that uses yyjson to serialize JSON project files               |
-| [bemorehuman][] | C        | Recommendation engine with a focus on uniqueness of the person receiving the rec         |
-| [mruby-yyjson][]| mruby    | Efficient JSON parsing and serialization library for mruby using yyjson                  |
-| [YYJSON.jl][]   | Julia    | Julia bindings for yyjson                                                                |
+| Project          | Language     | Description                                                                                          |
+|------------------|--------------|------------------------------------------------------------------------------------------------------|
+| [ssrJSON][]      | Python       | A SIMD boosted high-performance and correct Python JSON parsing library, built on top of yyjson      |
+| [py_yyjson][]    | Python       | Python bindings for yyjson                                                                           |
+| [orjson][]       | Python       | JSON library for Python with an optional yyjson backend                                              |
+| [serin][]        | C++ / Python | A C++ and Python serialization library supporting TOON, JSON, and YAML with cross-format conversion. |
+| [cpp-yyjson][]   | C++          | C++ JSON library with a yyjson backend                                                               |
+| [reflect-cpp][]  | C++          | C++ library for serialization through automated field name retrieval from structs                    |
+| [xyjson][]       | C++          | C++ proxy and wrapper for yyjson with convenient operator overloading                                |
+| [yyjsonr][]      | R            | R binding for yyjson                                                                                 |
+| [Ananda][]       | Swift        | JSON model decoding based on yyjson                                                                  |
+| [ReerJSON][]     | Swift        | A faster version of JSONDecoder based on yyjson                                                      |
+| [swift-yyjson][] | Swift        | A fast JSON library for Swift, powered by yyjson                                                     |
+| [duckdb][]       | C++          | DuckDB is an in-process SQL OLAP Database Management System                                          |
+| [fastfetch][]    | C            | A neofetch-like tool for fetching system information and displaying it in a pretty way             |
+| [Zrythm][]       | C            | Digital Audio Workstation that uses yyjson to serialize JSON project files                           |
+| [bemorehuman][]  | C            | Recommendation engine with a focus on uniqueness of the person receiving the rec                     |
+| [mruby-yyjson][] | mruby        | Efficient JSON parsing and serialization library for mruby using yyjson                              |
+| [YYJSON.jl][]    | Julia        | Julia bindings for yyjson                                                                            |
+| [yyjson-go][]    | Go           | yyjson for Go, transpiled, CGo-free, 2-4x faster.                                                    |
+| [nim-yyjson][]   | Nim          | Thin Nim bindings for yyjson                                                                         |
 
 # TODO for v1.0
 * [x] Add documentation page.
@@ -236,6 +243,7 @@ yyjson, feel free to open a PR to add it to this list.
 * [x] Add `RAW` type for JSON reader and writer.
 * [x] Add option to limit real number output precision.
 * [x] Add option to support JSON5.
+* [ ] Add streaming JSON API.
 * [ ] Add functions to diff two JSON documents.
 * [ ] Add documentation on performance optimizations.
 * [ ] Ensure ABI stability.
@@ -243,15 +251,22 @@ yyjson, feel free to open a PR to add it to this list.
 # License
 This project is released under the MIT license.
 
+[ssrJSON]: https://github.com/Antares0982/ssrJSON
 [py_yyjson]: https://github.com/tktech/py_yyjson
 [orjson]: https://github.com/ijl/orjson
+[serin]: https://github.com/mohammadraziei/serin
 [cpp-yyjson]: https://github.com/yosh-matsuda/cpp-yyjson
 [reflect-cpp]: https://github.com/getml/reflect-cpp
+[xyjson]: https://github.com/lymslive/xyjson
 [yyjsonr]: https://github.com/coolbutuseless/yyjsonr
 [Ananda]: https://github.com/nixzhu/Ananda
+[ReerJSON]: https://github.com/reers/ReerJSON
+[swift-yyjson]: https://github.com/mattt/swift-yyjson
 [duckdb]: https://github.com/duckdb/duckdb
 [fastfetch]: https://github.com/fastfetch-cli/fastfetch
 [Zrythm]: https://github.com/zrythm/zrythm
 [bemorehuman]: https://github.com/BeMoreHumanOrg/bemorehuman
 [mruby-yyjson]: https://github.com/buty4649/mruby-yyjson
 [YYJSON.jl]: https://github.com/bhftbootcamp/YYJSON.jl
+[yyjson-go]: https://github.com/dwisiswant0/yyjson
+[nim-yyjson]: https://github.com/zystem/nim-yyjson

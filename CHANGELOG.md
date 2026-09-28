@@ -6,6 +6,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Bundled yyjson is 0.13.0. Lowercase `\uXXXX` now comes from upstream
+  `YYJSON_WRITE_LOWERCASE_HEX` (the old hex-table patch is gone). The
+  remaining local patches are P-002 through P-008.
+
 ### Fixed
 
 - The validate-only reader's container-stack growth can no longer overflow its allocation size. On a 32-bit build a depth of 2^28 wrapped the `capacity * sizeof(u64)` request to zero bytes, after which the parser wrote at the stale offset. Both conversions are now checked against `SIZE_MAX` and report the memory-allocation error before the allocator is reached (vendor patch P-006). Validation results and `$depth` semantics are unchanged.

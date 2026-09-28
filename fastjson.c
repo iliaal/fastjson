@@ -429,6 +429,104 @@ static zend_always_inline bool fastjson_ascii_byte_needs_escape(
         || (c == '/' && (flags & YYJSON_WRITE_ESCAPE_SLASHES));
 }
 
+/* Write one JSON string in chunks so a large escaped value does not
+ * reserve len*6 up front. The scratch buffer is one chunk's worst case
+ * and is freed before return. A chunk never splits a UTF-8 sequence. */
+static size_t fastjson_json_chunk_len(const char *s, size_t len,
+                                      size_t pos, size_t want)
+{
+    size_t n = want;
+    if (n > len - pos) {
+        n = len - pos;
+    }
+    if (n == 0 || pos + n >= len) {
+        return n;
+    }
+    /* s[i - 1] is the lead of the codepoint that touches the cut.
+     * Continuations are 10xxxxxx; measuring one of those as a lead
+     * always asks for 2 bytes and drops the real lead from the chunk. */
+    size_t i = pos + n;
+    while (i > pos && ((unsigned char)s[i - 1] & 0xC0) == 0x80) {
+        i--;
+    }
+    if (i == pos) {
+        return n;
+    }
+    unsigned char lead = (unsigned char)s[i - 1];
+    if (lead < 0x80) {
+        return n;
+    }
+    size_t need = lead < 0xE0 ? 2 : (lead < 0xF0 ? 3 : 4);
+    size_t have = (pos + n) - (i - 1);
+    if (have >= need) {
+        return n;
+    }
+    if (i - 1 > pos) {
+        return (i - 1) - pos;
+    }
+    if (pos + need <= len) {
+        return need;
+    }
+    return n;
+}
+
+static fj_string_size_status fastjson_write_json_string_chunked(
+    smart_str *buf, const char *s, size_t len, yyjson_write_flag flags)
+{
+    size_t current = buf->s ? ZSTR_LEN(buf->s) : 0;
+    enum { CHUNK = 8192 };
+    const size_t tmp_size = (size_t)CHUNK * 6 + 2;
+    char *tmp;
+    if (UNEXPECTED(current > ZSTR_MAX_LEN - 2
+            || len > ZSTR_MAX_LEN - current - 2)) {
+        return FJ_STRING_SIZE_TOO_LARGE;
+    }
+    tmp = emalloc(tmp_size);
+    smart_str_alloc(buf, len + 2, 0);
+    char *dst = ZSTR_VAL(buf->s);
+    size_t out = current;
+    dst[out++] = '"';
+    ZSTR_LEN(buf->s) = out;
+
+    size_t pos = 0;
+    while (pos < len) {
+        size_t n = fastjson_json_chunk_len(s, len, pos, CHUNK);
+        char *end;
+        size_t wrote;
+        if (UNEXPECTED(n == 0)) {
+            ZSTR_LEN(buf->s) = current;
+            efree(tmp);
+            return FJ_STRING_SIZE_INVALID_UTF8;
+        }
+        end = yyjson_write_string_to_buf(tmp, s + pos, n, flags);
+        if (UNEXPECTED(end == NULL)) {
+            ZSTR_LEN(buf->s) = current;
+            efree(tmp);
+            return FJ_STRING_SIZE_INVALID_UTF8;
+        }
+        wrote = (size_t)(end - tmp);
+        if (UNEXPECTED(wrote < 2 || wrote - 2 > ZSTR_MAX_LEN - out - 1)) {
+            ZSTR_LEN(buf->s) = current;
+            efree(tmp);
+            return wrote < 2 ? FJ_STRING_SIZE_INVALID_UTF8
+                             : FJ_STRING_SIZE_TOO_LARGE;
+        }
+        wrote -= 2;
+        smart_str_alloc(buf, wrote, 0);
+        dst = ZSTR_VAL(buf->s);
+        memcpy(dst + out, tmp + 1, wrote);
+        out += wrote;
+        ZSTR_LEN(buf->s) = out;
+        pos += n;
+    }
+    smart_str_alloc(buf, 1, 0);
+    dst = ZSTR_VAL(buf->s);
+    dst[out++] = '"';
+    ZSTR_LEN(buf->s) = out;
+    efree(tmp);
+    return FJ_STRING_SIZE_OK;
+}
+
 static bool fastjson_string_is_copyable_ascii(const char *s, size_t len,
                                               yyjson_write_flag flags,
                                               size_t *prefix_len)
@@ -564,6 +662,9 @@ fj_string_size_status fastjson_write_large_json_string(
             end--;
             ZSTR_LEN(buf->s) = (size_t)(end - ZSTR_VAL(buf->s));
             return FJ_STRING_SIZE_OK;
+        }
+        if (len >= FASTJSON_EXACT_ESCAPE_THRESHOLD) {
+            return fastjson_write_json_string_chunked(buf, s, len, flags);
         }
         if (UNEXPECTED(len > (ZSTR_MAX_LEN - current - 2) / 6)) {
             return FJ_STRING_SIZE_TOO_LARGE;
@@ -816,8 +917,8 @@ PHP_FUNCTION(fastjson_validate)
         RETURN_THROWS();
     }
 
-    /* P-002 omits value allocation (~2/3 of peak memory); check depth in
-     * the input after parsing because the returned doc is only a sentinel. */
+    /* P-002 omits the value tree. The stub doc's val_read is the
+     * container nesting from that parse. */
     yyjson_read_err err;
     yyjson_doc *doc = fastjson_read_doc_ex(json, json_len, flags,
                                            YYJSON_READ_VALIDATE_ONLY, &err);
@@ -826,8 +927,11 @@ PHP_FUNCTION(fastjson_validate)
         RETURN_FALSE;
     }
 
-    if (fastjson_json_nesting_reaches(json, json_len, (size_t)depth,
-                                      false)) {
+    /* The validate stub's val_read is the container nesting counted
+     * during the parse (root counts as 1). A top-level scalar comes
+     * back from read_root_single with a real root and nesting 0. */
+    size_t nesting = doc->root == NULL ? doc->val_read : 0;
+    if (nesting >= (size_t)depth) {
         yyjson_doc_free(doc);
         fastjson_set_error_code(FASTJSON_ERROR_DEPTH,
                                 "Maximum stack depth exceeded");
@@ -890,13 +994,17 @@ PHP_GINIT_FUNCTION(fastjson)
     fastjson_globals->last_err_pos = -1;
     fastjson_globals->last_err_line = 0;
     fastjson_globals->last_err_col = 0;
+    fastjson_globals->key_share = NULL;
 }
 
 PHP_RINIT_FUNCTION(fastjson)
 {
     /* Module globals persist across requests in non-ZTS builds; without a
-     * reset, one request's error state would leak into the next. */
+     * reset, one request's error state would leak into the next. A bailout
+     * during decode skips fj_key_share_pop, so drop the dangling cache
+     * pointer before the next request. */
     fastjson_clear_error();
+    FASTJSON_G(key_share) = NULL;
     return SUCCESS;
 }
 

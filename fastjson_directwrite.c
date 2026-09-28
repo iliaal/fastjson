@@ -144,6 +144,9 @@ yyjson_write_flag fastjson_translate_write_flags(zend_long php_flags,
     if (!(php_flags & FASTJSON_ENCODE_UNESCAPED_UNICODE)) {
         yf |= YYJSON_WRITE_ESCAPE_UNICODE;
     }
+    /* ext/json writes \uXXXX with lowercase hex. 0.13 selects that
+     * table with this flag, including control-character escapes. */
+    yf |= YYJSON_WRITE_LOWERCASE_HEX;
     if (with_pretty && (php_flags & FASTJSON_ENCODE_PRETTY_PRINT)) {
         yf |= YYJSON_WRITE_PRETTY;
     }
@@ -1116,7 +1119,8 @@ zend_string *fastjson_directwrite_encode(zval *value, zend_long flags,
     ctx.pretty_print = (flags & FASTJSON_ENCODE_PRETTY_PRINT) != 0;
     fastjson_error_state_clear(&ctx.error);
 
-    smart_str_alloc(&ctx.buf, 256, 0);
+    /* 256 is past Zend's small-bin start length and lands on a 4KB page. */
+    smart_str_alloc(&ctx.buf, 32, 0);
 
     bool ok = dw_encode_zval(&ctx, value, depth);
     *error_state = ctx.error;
