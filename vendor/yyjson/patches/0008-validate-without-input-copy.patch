@@ -16,7 +16,7 @@ Inf/NaN is accepted under ALLOW_INF_AND_NAN, an unclosed trailing
 comment is an error, and an input that is only a BOM is still empty.
 
 diff --git a/vendor/yyjson/yyjson.c b/vendor/yyjson/yyjson.c
-index aa63329..be5d291 100644
+index e6280b8..58f44bb 100644
 --- a/vendor/yyjson/yyjson.c
 +++ b/vendor/yyjson/yyjson.c
 @@ -3400,7 +3400,7 @@ static_noinline bool skip_trivia(u8 **ptr, u8 *eof, yyjson_read_flag flg) {
@@ -420,12 +420,7 @@ index aa63329..be5d291 100644
          }
          goto fail_literal_null;
      }
-@@ -6422,17 +6716,17 @@ arr_val_begin:
-         cur++;
-         if (likely(ctn_len == 0)) goto arr_end;
-         if (has_allow(TRAILING_COMMAS)) goto arr_end;
--        while (*cur != ',') cur--;
-+        while (cur >= eof || *cur != ',') cur--;
+@@ -6426,13 +6720,13 @@ arr_val_begin:
          goto fail_trailing_comma;
      }
      if (char_is_space(*cur)) {
@@ -454,7 +449,7 @@ index aa63329..be5d291 100644
          goto arr_val_end;
      }
      if (has_allow(TRIVIA) && char_is_trivia(*cur)) {
-@@ -6466,20 +6761,21 @@ arr_end:
+@@ -6466,9 +6761,10 @@ arr_end:
      else goto arr_val_end;
  
  obj_key_begin:
@@ -466,11 +461,7 @@ index aa63329..be5d291 100644
          goto fail_string;
      }
      if (likely(*cur == '}')) {
-         cur++;
-         if (likely(ctn_len == 0)) goto obj_end;
-         if (has_allow(TRAILING_COMMAS)) goto obj_end;
--        while (*cur != ',') cur--;
-+        while (cur >= eof || *cur != ',') cur--;
+@@ -6479,7 +6775,7 @@ obj_key_begin:
          goto fail_trailing_comma;
      }
      if (char_is_space(*cur)) {

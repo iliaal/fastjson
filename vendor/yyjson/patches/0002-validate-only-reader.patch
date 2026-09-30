@@ -133,7 +133,7 @@ index bdd9365..300e075 100644
 +
 +#define pop_ctn() do { \
 +    u64 _saved = stack_buf[--depth]; \
-+    ctn_len = (usize)(_saved >> 1); \
++    ctn_len = 1; /* the closed container is an element of its parent */ \
 +    is_obj = (u8)(_saved & 1); \
 +} while (false)
 +
@@ -204,7 +204,7 @@ index bdd9365..300e075 100644
 +        cur++;
 +        if (likely(ctn_len == 0)) goto arr_end;
 +        if (has_allow(TRAILING_COMMAS)) goto arr_end;
-+        while (*cur != ',') cur--;
++        do { cur--; } while (*cur != ',');
 +        goto fail_trailing_comma;
 +    }
 +    if (char_is_space(*cur)) {
@@ -257,7 +257,7 @@ index bdd9365..300e075 100644
 +        cur++;
 +        if (likely(ctn_len == 0)) goto obj_end;
 +        if (has_allow(TRAILING_COMMAS)) goto obj_end;
-+        while (*cur != ',') cur--;
++        do { cur--; } while (*cur != ',');
 +        goto fail_trailing_comma;
 +    }
 +    if (char_is_space(*cur)) {

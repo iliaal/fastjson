@@ -6613,7 +6613,7 @@ static yyjson_doc *read_root_validate(u8 *hdr, u8 *cur, u8 *eof,
 
 #define pop_ctn() do { \
     u64 _saved = stack_buf[--depth]; \
-    ctn_len = (usize)(_saved >> 1); \
+    ctn_len = 1; /* the closed container is an element of its parent */ \
     is_obj = (u8)(_saved & 1); \
 } while (false)
 
@@ -6716,7 +6716,7 @@ arr_val_begin:
         cur++;
         if (likely(ctn_len == 0)) goto arr_end;
         if (has_allow(TRAILING_COMMAS)) goto arr_end;
-        while (cur >= eof || *cur != ',') cur--;
+        do { cur--; } while (*cur != ',');
         goto fail_trailing_comma;
     }
     if (char_is_space(*cur)) {
@@ -6771,7 +6771,7 @@ obj_key_begin:
         cur++;
         if (likely(ctn_len == 0)) goto obj_end;
         if (has_allow(TRAILING_COMMAS)) goto obj_end;
-        while (cur >= eof || *cur != ',') cur--;
+        do { cur--; } while (*cur != ',');
         goto fail_trailing_comma;
     }
     if (char_is_space(*cur)) {

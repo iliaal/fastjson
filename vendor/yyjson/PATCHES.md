@@ -78,6 +78,18 @@ The function's structure tracks `read_root_minify` 1:1: labels
 upstream's, so a side-by-side diff of the two functions is the easiest
 re-port.
 
+Two details must follow upstream on a re-port. A closed nested
+container is an element of its parent, as upstream saves `ctn_len + 1`
+at `arr_begin`/`obj_begin`. `pop_ctn` sets `ctn_len` to 1, since the
+count is only tested against 0. Restoring the saved count left it 0
+after a leading nested container, so `[[],]` validated. With GCC 11
+`-O2`, setting it at pop instead of incrementing before `push_ctn`
+kept numeric documents 1-2% cheaper under callgrind. The
+trailing-comma scan starts before the
+closing bracket (`do { cur--; } while (*cur != ',');`, the 0.13.0
+form); starting at the bracket's successor reports the comma after it
+in `[[1,],`.
+
 **Caveats.**
 - Caller must pass `YYJSON_READ_VALIDATE_ONLY` AND must not walk the
   returned doc. Ungated use of the returned `yyjson_doc *` segfaults.

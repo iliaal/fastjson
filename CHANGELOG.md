@@ -32,6 +32,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   replacement failures.
 - `fastjson_validate()` reports "expected a string key" and "expected ':'
   after key" like `fastjson_decode()`, instead of its own shorter wording.
+- `fastjson_validate()` rejects a trailing comma in an array whose elements
+  are all arrays or objects. `[[],]`, `[{},]`, and `[{"a":1},]` returned
+  `true`, while `json_validate()` and `fastjson_decode()` reject them
+  (vendor patch P-002).
 
 ## [0.8.0] - 2026-09-03
 
