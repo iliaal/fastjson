@@ -17,6 +17,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The validate-only reader's container-stack growth can no longer overflow its allocation size. On a 32-bit build a depth of 2^28 wrapped the `capacity * sizeof(u64)` request to zero bytes, after which the parser wrote at the stale offset. Both conversions are now checked against `SIZE_MAX` and report the memory-allocation error before the allocator is reached (vendor patch P-006). Validation results and `$depth` semantics are unchanged.
 - Restore decoder and pointer error state after partial-output and throw-mode
   replacement failures.
+- `fastjson_validate()` reports the same error message and position as
+  `fastjson_decode()`. Invalid UTF-8, the surrogate-pair escape errors, and
+  a bad object key or missing `:` used different messages (vendor patch
+  P-008).
+- Under `FASTJSON_DECODE_RELAXED`, an input that is only a UTF-8 BOM again
+  reports "input data is empty" at position 0.
 
 ## [0.8.0] - 2026-09-03
 

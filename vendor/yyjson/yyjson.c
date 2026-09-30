@@ -3400,7 +3400,7 @@ static_noinline bool skip_trivia(u8 **ptr, u8 *eof, yyjson_read_flag flg) {
         u8 *loop_begin = cur;
 
         /* skip standard whitespace */
-        while(char_is_space(*cur)) cur++;
+        while (cur < eof && char_is_space(*cur)) cur++;
 
         /* skip extended whitespace */
         if (has_allow(EXT_WHITESPACE)) {
@@ -3410,8 +3410,9 @@ static_noinline bool skip_trivia(u8 **ptr, u8 *eof, yyjson_read_flag flg) {
             }
         }
 
-        /* skip comment, do not validate encoding */
-        if (has_allow(COMMENTS) && cur[0] == '/') {
+        /* skip comment, do not validate encoding. Bytes past eof are
+         * never loaded: validate reads the caller buffer unpadded. */
+        if (has_allow(COMMENTS) && cur + 1 < eof && cur[0] == '/') {
             if (cur[1] == '/') { /* single-line comment */
                 cur += 2;
                 if (has_allow(EXT_WHITESPACE)) {
@@ -3427,8 +3428,8 @@ static_noinline bool skip_trivia(u8 **ptr, u8 *eof, yyjson_read_flag flg) {
                 }
             } else if (cur[1] == '*') { /* multi-line comment */
                 cur += 2;
-                while (!byte_match_2(cur, "*/") && cur < eof) cur++;
-                if (cur == eof) {
+                while (cur + 1 < eof && !byte_match_2(cur, "*/")) cur++;
+                if (cur + 1 >= eof) {
                     *ptr = eof;
                     return false; /* unclosed comment */
                 }
@@ -3581,7 +3582,7 @@ static_noinline bool is_truncated_end(u8 *hdr, u8 *cur, u8 *eof,
             return true;
         }
         if (code == YYJSON_READ_ERROR_UNEXPECTED_CHARACTER &&
-            *cur == '/' && cur + 1 == eof) {
+            cur + 1 == eof && *cur == '/') {
             /* truncated beginning of comment */
             return true;
         }
@@ -6281,7 +6282,10 @@ fail_depth:             return_err(cur, DEPTH, MSG_DEPTH);
 
 /* Non-mutating string check for YYJSON_READ_VALIDATE_ONLY. The normal
  * reader writes a NUL over the closing quote, which forces a copy of the
- * whole input. This one only looks, and it does not read past eof. */
+ * whole input. This one only looks, and it does not read past eof. Error
+ * messages and positions match read_str: its padded reads see zero bytes
+ * past eof, and it spells the UTF-8 message differently before and after
+ * the first escape in a string. */
 static bool yy_hex4(const u8 *s, u32 *out) {
     u32 u = 0;
     for (int k = 0; k < 4; k++) {
@@ -6300,6 +6304,7 @@ static bool yy_hex4(const u8 *s, u32 *out) {
 static bool read_str_validate(u8 **ptr, u8 *eof, yyjson_read_flag flg,
                               yyjson_val *val, const char **msg) {
     u8 *src = *ptr;
+    const char *utf8_msg = "invalid UTF-8 encoding in string";
     (void)val;
     if (src >= eof || *src != '"') {
         *msg = "unexpected character, expected a string";
@@ -6332,10 +6337,11 @@ vskip_cont:
         }
         if (*src == '\\') {
             u8 *esc = src;
+            utf8_msg = MSG_ERR_UTF8;
             src++;
             if (src >= eof) {
                 *ptr = esc;
-                *msg = "unclosed string";
+                *msg = "invalid escaped sequence in string";
                 return false;
             }
             switch (*src) {
@@ -6352,19 +6358,25 @@ vskip_cont:
                     return false;
                 }
                 src += 4;
-                if (u >= 0xD800 && u <= 0xDBFF) {
-                    if (src + 6 > eof || src[0] != '\\' || src[1] != 'u'
-                            || !yy_hex4(src + 2, &u2)
-                            || u2 < 0xDC00 || u2 > 0xDFFF) {
-                        *ptr = esc;
-                        *msg = MSG_ERR_UTF8;
+                if ((u & 0xF800) == 0xD800) {
+                    *ptr = esc;
+                    if ((u & 0xFC00) != 0xD800) {
+                        *msg = "invalid high surrogate in string";
+                        return false;
+                    }
+                    if (src + 2 > eof || src[0] != '\\' || src[1] != 'u') {
+                        *msg = "no low surrogate in string";
+                        return false;
+                    }
+                    if (src + 6 > eof || !yy_hex4(src + 2, &u2)) {
+                        *msg = "invalid escape in string";
+                        return false;
+                    }
+                    if ((u2 & 0xFC00) != 0xDC00) {
+                        *msg = "invalid low surrogate in string";
                         return false;
                     }
                     src += 6;
-                } else if (u >= 0xDC00 && u <= 0xDFFF) {
-                    *ptr = esc;
-                    *msg = MSG_ERR_UTF8;
-                    return false;
                 }
                 break;
             }
@@ -6414,7 +6426,7 @@ vskip_cont:
                 continue;
             }
             *ptr = src;
-            *msg = MSG_ERR_UTF8;
+            *msg = utf8_msg;
             return false;
         }
     }
@@ -6656,7 +6668,13 @@ static yyjson_doc *read_root_validate(u8 *hdr, u8 *cur, u8 *eof,
         }
         if (*cur == 'n') {
             if (likely(read_null_bounded(&cur, eof, val))) goto doc_end;
+            if (has_allow(INF_AND_NAN)) {
+                if (read_nan_bounded(&cur, eof, pre, flg, val)) goto doc_end;
+            }
             goto fail_literal_null;
+        }
+        if (has_allow(INF_AND_NAN)) {
+            if (read_inf_or_nan_bounded(&cur, eof, pre, flg, val)) goto doc_end;
         }
         goto fail_character_val;
     }
@@ -6698,7 +6716,7 @@ arr_val_begin:
         cur++;
         if (likely(ctn_len == 0)) goto arr_end;
         if (has_allow(TRAILING_COMMAS)) goto arr_end;
-        while (*cur != ',') cur--;
+        while (cur >= eof || *cur != ',') cur--;
         goto fail_trailing_comma;
     }
     if (char_is_space(*cur)) {
@@ -6753,7 +6771,7 @@ obj_key_begin:
         cur++;
         if (likely(ctn_len == 0)) goto obj_end;
         if (has_allow(TRAILING_COMMAS)) goto obj_end;
-        while (*cur != ',') cur--;
+        while (cur >= eof || *cur != ',') cur--;
         goto fail_trailing_comma;
     }
     if (char_is_space(*cur)) {
@@ -6860,26 +6878,23 @@ doc_end:
     if (unlikely(cur < eof) && !has_flg(STOP_WHEN_DONE)) {
         while (cur < eof && char_is_space(*cur)) cur++;
         if (cur < eof && has_allow(TRIVIA) && char_is_trivia(*cur)) {
-            if (!skip_trivia(&cur, eof, flg) && cur != eof) {
+            if (!skip_trivia(&cur, eof, flg) && cur == eof) {
                 goto fail_comment;
             }
         }
         if (cur < eof) goto fail_garbage;
     }
     /* Successful validation. Allocate a stub doc (~64 bytes total).
-     * yyjson_doc_free() needs:
-     *   - doc->alc (set to the alc used to malloc this stub)
-     *   - doc->str_pool (set to hdr, the input copy yyjson_read_opts
-     *     malloc'd when INSITU was not set; doc_free will alc.free it
-     *     and otherwise we'd leak ~input-size bytes per validate call). */
+     * yyjson_doc_free() needs doc->alc (the alc used to malloc this stub).
+     * Validate reads the caller buffer (P-008), so there is no input copy
+     * and str_pool stays NULL: yyjson_doc_free must not free caller memory. */
     doc = (yyjson_doc *)alc.malloc(alc.ctx, sizeof(yyjson_doc));
     if (unlikely(!doc)) goto fail_alloc;
     memset(doc, 0, sizeof(yyjson_doc));
     doc->alc = alc;
-    doc->str_pool = has_flg(INSITU) ? NULL : (char *)hdr;
     /* Stub only: val_read is the maximum container nesting (root counts
-     * as 1, a scalar document never gets here). fastjson_validate reads
-     * it instead of scanning the input again. Do not walk this doc. */
+     * as 1, a top-level scalar leaves it 0). fastjson_validate reads it
+     * instead of scanning the input again. Do not walk this doc. */
     doc->val_read = max_ctn;
     if (stack_buf != stack_inline) alc.free(alc.ctx, stack_buf);
     return doc;
@@ -6891,27 +6906,27 @@ fail_number:
 fail_alloc:
     return_err_v(cur, MEMORY_ALLOCATION, MSG_MALLOC);
 fail_trailing_comma:
-    return_err_v(cur, JSON_STRUCTURE, "trailing comma is not allowed");
+    return_err_v(cur, JSON_STRUCTURE, MSG_COMMA);
 fail_literal_true:
-    return_err_v(cur, LITERAL, "invalid literal, expected 'true'");
+    return_err_v(cur, LITERAL, MSG_CHAR_T);
 fail_literal_false:
-    return_err_v(cur, LITERAL, "invalid literal, expected 'false'");
+    return_err_v(cur, LITERAL, MSG_CHAR_F);
 fail_literal_null:
-    return_err_v(cur, LITERAL, "invalid literal, expected 'null'");
+    return_err_v(cur, LITERAL, MSG_CHAR_N);
 fail_character_val:
-    return_err_v(cur, UNEXPECTED_CHARACTER, "unexpected character, expected a JSON value");
+    return_err_v(cur, UNEXPECTED_CHARACTER, MSG_CHAR);
 fail_character_arr_end:
-    return_err_v(cur, UNEXPECTED_CHARACTER, "unexpected character, expected ',' or ']'");
+    return_err_v(cur, UNEXPECTED_CHARACTER, MSG_ARR_END);
 fail_character_obj_key:
-    return_err_v(cur, UNEXPECTED_CHARACTER, "unexpected character, expected a string");
+    return_err_v(cur, UNEXPECTED_CHARACTER, MSG_OBJ_KEY);
 fail_character_obj_sep:
-    return_err_v(cur, UNEXPECTED_CHARACTER, "unexpected character, expected ':'");
+    return_err_v(cur, UNEXPECTED_CHARACTER, MSG_OBJ_SEP);
 fail_character_obj_end:
-    return_err_v(cur, UNEXPECTED_CHARACTER, "unexpected character, expected ',' or '}'");
+    return_err_v(cur, UNEXPECTED_CHARACTER, MSG_OBJ_END);
 fail_comment:
-    return_err_v(cur, INVALID_COMMENT, "unclosed multiline comment");
+    return_err_v(cur, INVALID_COMMENT, MSG_COMMENT);
 fail_garbage:
-    return_err_v(cur, UNEXPECTED_CONTENT, "unexpected content after document");
+    return_err_v(cur, UNEXPECTED_CONTENT, MSG_GARBAGE);
 
 #undef push_ctn
 #undef pop_ctn
@@ -6974,12 +6989,8 @@ yyjson_doc *yyjson_read_opts(char *dat, usize len,
     }
 
     /* skip empty contents before json document */
-    if (cur < eof && unlikely(!char_is_ctn(*cur))) {
-        if (nocopy) {
-            while (cur < eof && char_is_space(*cur)) cur++;
-        } else {
-            while (char_is_space(*cur)) cur++;
-        }
+    if (cur >= eof || unlikely(!char_is_ctn(*cur))) {
+        while (cur < eof && char_is_space(*cur)) cur++;
         if (cur < eof && unlikely(!char_is_ctn(*cur))) {
             if (has_allow(TRIVIA) && char_is_trivia(*cur)) {
                 if (!skip_trivia(&cur, eof, flg) && cur == eof) {
