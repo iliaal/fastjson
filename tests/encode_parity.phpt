@@ -43,7 +43,7 @@ echo "round-trip OK\n";
 echo "---\n";
 
 // Parity vs ext/json: byte-equality across the board. \uXXXX hex case
-// is normalized to lowercase via vendor patch P-001; UNESCAPED_UNICODE
+// is normalized to lowercase via YYJSON_WRITE_LOWERCASE_HEX; UNESCAPED_UNICODE
 // is also exercised below for raw non-ASCII output.
 $flags_cases = [
     [["a" => 1, "b" => [2, 3]], 0],

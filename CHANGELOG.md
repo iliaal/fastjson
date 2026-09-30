@@ -14,19 +14,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `fastjson_validate()` reads the input in place and records container
   nesting during the parse, instead of copying the input and scanning it a
   second time for `$depth` (vendor patches P-007 and P-008). Its peak memory
-  no longer grows with the input, and it runs 45-70% faster on the bench
-  corpus.
+  no longer grows with the input (64 bytes on every bench file, down from
+  up to 3.3 MB), and it executes about 30% fewer instructions across the bench
+  corpus, from 3% on number-heavy files to 64% on string-heavy ones.
 - Decode shares one string per repeated object key of up to 64 bytes within
   a call, for inputs of 4 KiB or more. Record arrays and other key-heavy
-  documents peak about 15% lower.
+  documents peak about 15% lower and decode 3-4% faster. A document with
+  more than 256 distinct repeated names, or with mostly unique names, pays
+  3-5% more decode time.
 - `fastjson_file_decode()` releases the file contents before building the
-  result, which lowers its peak by 20-30%.
+  result, which lowers its peak by 9-33% on the bench corpus.
 - Encode writes an escaped string of 8 KiB or more in 2 KiB chunks instead
-  of reserving six times its length, and a lone short string no longer
-  takes a 4 KiB buffer. A 1 MiB escaped string peaks about 47% lower.
+  of reserving six times its length. A 1 MiB string with ordinary escaping
+  peaks 60-80% lower; one made only of control characters, which expands
+  six times, still peaks at the one-pass size.
 
 ### Fixed
 
+- The "trailing comma is not allowed" position from decode, the pointer
+  functions, and `fastjson_merge_patch()` now points at the comma itself
+  rather than a later one (yyjson 0.13.0).
 - The validate-only reader's container-stack growth can no longer overflow its allocation size. On a 32-bit build a depth of 2^28 wrapped the `capacity * sizeof(u64)` request to zero bytes, after which the parser wrote at the stale offset. Both conversions are now checked against `SIZE_MAX` and report the memory-allocation error before the allocator is reached (vendor patch P-006). Validation results and `$depth` semantics are unchanged.
 - Restore decoder and pointer error state after partial-output and throw-mode
   replacement failures.

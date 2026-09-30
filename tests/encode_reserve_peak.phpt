@@ -1,5 +1,5 @@
 --TEST--
-encode does not keep a 6x reserve or a 4KB page for small strings
+encode writes long escaped strings without a 6x reserve
 --EXTENSIONS--
 fastjson
 --SKIPIF--
@@ -31,22 +31,18 @@ function peak(string $value): int {
     return $delta;
 }
 
-$small = str_repeat('a', 40);
 $escaped = "\"\n" . str_repeat('b', 20000);
 
 $chunked = "\"\n" . str_repeat('b', 8190);
 
-$smallPeak = peak($small);
 $escapedPeak = peak($escaped);
 $chunkedPeak = peak($chunked);
 
-var_dump($smallPeak < 1024);
 var_dump($escapedPeak < 4 * strlen($escaped));
 /* 8 KiB is the first chunked length: the input plus 12 KiB of chunk
  * headroom, where a 6x reserve took 52 KiB. */
 var_dump($chunkedPeak < 40 * 1024);
 ?>
 --EXPECT--
-bool(true)
 bool(true)
 bool(true)

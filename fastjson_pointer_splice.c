@@ -979,9 +979,7 @@ zend_string *fastjson_imut_pointer_set_write(yyjson_val *root,
     ctx.pretty = (flags & FASTJSON_ENCODE_PRETTY_PRINT) != 0;
     ctx.replacement = replacement;
     ctx.status = FJ_SPLICE_OK;
-    /* Stay in smart_str's initial 256-byte block; asking for 256 bytes
-     * moved the first allocation to a 4 KiB page. */
-    smart_str_alloc(&ctx.buf, 32, 0);
+    smart_str_alloc(&ctx.buf, 256, 0);
 
     bool ok;
     if (plan->nsegs == 0) {

@@ -88,7 +88,7 @@ A visual comparison against `ext/json` on PHP 8.4 is at [iliaal.github.io/fastjs
 
 ### Memory tradeoff
 
-Decode trades memory for speed: yyjson's two-stage parser holds the parsed document alongside the zval tree, so decode peaks at 1.4x to 2.0x ext/json's heap (1.4x on `twitter.json`, 2.0x on number-heavy `mesh.json`). Repeated short object keys share one string per walk, which took `twitter.json` from 1.66x to 1.39x. Encode writes directly into a smart_str with yyjson primitives, so its peak matches ext/json. Validate reads the caller's buffer and keeps no value tree, so its peak is a few dozen bytes, like ext/json's streaming validator.
+Decode trades memory for speed: yyjson's two-stage parser holds the parsed document alongside the zval tree, so decode peaks at 1.2x to 3.1x ext/json's heap (1.65x across the bench corpus; number-heavy documents sit at the top). Repeated short object keys share one string per walk, which took `twitter.json` from 1.66x to 1.39x. Encode writes directly into a smart_str with yyjson primitives, so its peak is within 9% of ext/json on the bench corpus. A single escaped string of 8 KiB to a few tens of KiB can peak up to 40% higher, because the chunked writer keeps 12 KiB of headroom. Validate reads the caller's buffer and keeps no value tree, so its peak is a few dozen bytes, like ext/json's streaming validator.
 
 ## ✨ What's in the box
 

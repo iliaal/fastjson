@@ -1121,9 +1121,7 @@ zend_string *fastjson_directwrite_encode(zval *value, zend_long flags,
     ctx.pretty_print = (flags & FASTJSON_ENCODE_PRETTY_PRINT) != 0;
     fastjson_error_state_clear(&ctx.error);
 
-    /* Stay in smart_str's initial 256-byte block; asking for 256 bytes
-     * moved the first allocation to a 4 KiB page. */
-    smart_str_alloc(&ctx.buf, 32, 0);
+    smart_str_alloc(&ctx.buf, 256, 0);
 
     bool ok = dw_encode_zval(&ctx, value, depth);
     *error_state = ctx.error;

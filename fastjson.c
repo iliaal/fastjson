@@ -506,10 +506,15 @@ static fj_string_size_status fastjson_write_json_string_chunked(
         }
         if (buf->a - out < need) {
             /* Project the rest at the expansion ratio seen so far, plus
-             * an eighth, so heavy escaping reallocates about once. */
+             * an eighth, so heavy escaping reallocates about once. The
+             * 6x ceiling keeps the total at or under a one-pass reserve. */
+            double left = (double)(len - pos - n);
             double ratio = pos ? (double)(out - current) / (double)pos : 1.0;
-            double rest = (double)(len - pos - n) * ratio;
-            double want = (double)need + rest + rest / 8;
+            double rest = left * ratio * 1.125;
+            if (rest > left * 6) {
+                rest = left * 6;
+            }
+            double want = (double)need + rest;
             size_t grow = want >= (double)(ZSTR_MAX_LEN - out)
                 ? ZSTR_MAX_LEN - out : (size_t)want;
             smart_str_alloc(buf, grow, 0);

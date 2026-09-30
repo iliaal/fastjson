@@ -165,7 +165,7 @@ to fit worst-case `\uXXXX` expansion plus surrounding quotes.
 **File:** `vendor/yyjson/yyjson.c` (the string reader `read_string`)
 **Region:** the `else` branch that handles a non-escape, non-quote byte,
 carrying the `"unexpected control character in string"` message (around
-line 4937 in 0.12.0).
+line 5009 in the patched 0.13.0).
 
 **Reason.** ext/json rejects raw control characters (byte `< 0x20`)
 inside JSON strings as `JSON_ERROR_CTRL_CHAR`, *regardless* of its

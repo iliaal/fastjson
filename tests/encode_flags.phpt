@@ -15,7 +15,7 @@ var_dump(fastjson_encode("a/b/c", JSON_UNESCAPED_SLASHES));
 
 echo "---\n";
 
-// Vendor patch P-001 aligns escape hex casing with ext/json.
+// YYJSON_WRITE_LOWERCASE_HEX aligns escape hex casing with ext/json.
 $encoded = fastjson_encode("héllo");
 var_dump(strpos($encoded, '\u00') !== false);
 var_dump(fastjson_decode($encoded) === "héllo");
