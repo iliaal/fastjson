@@ -934,9 +934,9 @@ PHP_FUNCTION(fastjson_validate)
     }
 
     /* The validate stub's val_read is the container nesting counted
-     * during the parse (root counts as 1). A top-level scalar comes
-     * back from read_root_single with a real root and nesting 0. */
-    size_t nesting = doc->root == NULL ? doc->val_read : 0;
+     * during the parse (root counts as 1, a top-level scalar leaves
+     * it 0). The stub has no root and must not be walked. */
+    size_t nesting = doc->val_read;
     if (nesting >= (size_t)depth) {
         yyjson_doc_free(doc);
         fastjson_set_error_code(FASTJSON_ERROR_DEPTH,
