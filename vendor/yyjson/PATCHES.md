@@ -385,7 +385,9 @@ message, and container nesting. `read_str_validate` reproduces
 `read_str`'s messages, including the four surrogate-pair messages and
 the UTF-8 message, which `read_str` spells "invalid UTF-8 encoding in
 string" before the first escape in a string and "invalid utf-8 encoding
-in string" after it. The validate failure labels use the reader's
+in string" after it. It picks the spelling on the error path (a `\`
+earlier in the string means an escape came first), so the scan loop
+carries no extra state. The validate failure labels use the reader's
 `MSG_*` strings. The leading-content check still reports an input that
 is only a UTF-8 BOM (under `ALLOW_BOM`) as empty. To re-check after an
 upgrade, run every prefix of a corpus through validate and through the

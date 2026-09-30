@@ -6285,7 +6285,8 @@ fail_depth:             return_err(cur, DEPTH, MSG_DEPTH);
  * whole input. This one only looks, and it does not read past eof. Error
  * messages and positions match read_str: its padded reads see zero bytes
  * past eof, and it spells the UTF-8 message differently before and after
- * the first escape in a string. */
+ * the first escape in a string. The spelling is picked on the error path
+ * so the scan loop carries no extra state. */
 static bool yy_hex4(const u8 *s, u32 *out) {
     u32 u = 0;
     for (int k = 0; k < 4; k++) {
@@ -6304,7 +6305,6 @@ static bool yy_hex4(const u8 *s, u32 *out) {
 static bool read_str_validate(u8 **ptr, u8 *eof, yyjson_read_flag flg,
                               yyjson_val *val, const char **msg) {
     u8 *src = *ptr;
-    const char *utf8_msg = "invalid UTF-8 encoding in string";
     (void)val;
     if (src >= eof || *src != '"') {
         *msg = "unexpected character, expected a string";
@@ -6337,7 +6337,6 @@ vskip_cont:
         }
         if (*src == '\\') {
             u8 *esc = src;
-            utf8_msg = MSG_ERR_UTF8;
             src++;
             if (src >= eof) {
                 *ptr = esc;
@@ -6425,8 +6424,10 @@ vskip_cont:
                 src++;
                 continue;
             }
+            /* Any '\\' before src in this string belongs to an escape. */
+            *msg = memchr(*ptr, '\\', (usize)(src - *ptr)) ? MSG_ERR_UTF8
+                : "invalid UTF-8 encoding in string";
             *ptr = src;
-            *msg = utf8_msg;
             return false;
         }
     }
@@ -6547,10 +6548,9 @@ static bool read_null_bounded(u8 **cur, u8 *eof, yyjson_val *val) {
  *
  * Forks the read_root_minify state machine but uses an auxiliary stack
  * for container-type tracking instead of slot-based parent-offset
- * tracking, eliminating the O(N values) val_hdr buffer. Memory peak
- * drops from ~3x input size to ~1x input size (the input copy yyjson
- * already makes when YYJSON_READ_INSITU is not set, plus a ~256 B
- * inline depth stack that grows on demand).
+ * tracking, eliminating the O(N values) val_hdr buffer. Since P-008
+ * it reads the caller buffer without a copy, so the only memory is a
+ * ~256 B inline depth stack that grows on demand and the stub doc.
  *
  * The shared `dummy` yyjson_val is the sink for read_str / read_num /
  * read_true / read_false / read_null / read_inf_or_nan. Their writes
