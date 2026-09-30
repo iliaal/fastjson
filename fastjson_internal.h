@@ -48,7 +48,8 @@ bool fastjson_apply_hex_escapes(smart_str *buf, zend_long flags,
  * plus a 6x tail, and writes any other string in 2 KiB chunks, which
  * reserve the input length plus 12 KiB instead of 6x (a 137 KiB PHP
  * source string peaked at 828 KiB under the 6x reserve). From 8 MiB it
- * measures the exact output first. Shorter strings, and reserves that
+ * copies clean ASCII in one fused scan and measures the exact output of
+ * anything else first. Shorter strings, and reserves that
  * already fit, keep yyjson's one-pass writer, which is faster and whose
  * headroom costs at most 48 KiB. From 256 KiB the sized writer is always
  * used: it measured -35%/-31% on x86_64 and +8% on aarch64 versus 6x at
