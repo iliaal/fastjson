@@ -924,12 +924,6 @@ static const yyjson_read_flag YYJSON_READ_JSON5 =
     effect in validate mode. */
 static const yyjson_read_flag YYJSON_READ_VALIDATE_ONLY            = 1 << 14;
 
-/** [fastjson local patch] Point strings that contain no escapes at the
-    caller buffer instead of a copy. The caller must keep that buffer
-    alive until yyjson_doc_free(). A document that contains '\\' is
-    parsed with the normal copying reader. Ignored with INSITU. */
-static const yyjson_read_flag YYJSON_READ_ALIAS_NOESC              = 1 << 15;
-
 
 
 /** Result code for JSON reader. */

@@ -92,7 +92,7 @@ Decode trades memory for speed: yyjson's two-stage parser holds the parsed docum
 
 ## ✨ What's in the box
 
-- Bundled yyjson 0.13.0 (MIT) with local patches P-002 through P-009. Notes and the replayable series are in [`vendor/yyjson/PATCHES.md`](vendor/yyjson/PATCHES.md) and [`vendor/yyjson/patches/`](vendor/yyjson/patches/).
+- Bundled yyjson 0.13.0 (MIT) with local patches P-002 through P-008. Notes and the replayable series are in [`vendor/yyjson/PATCHES.md`](vendor/yyjson/PATCHES.md) and [`vendor/yyjson/patches/`](vendor/yyjson/patches/).
 - yyjson allocates through Zend's `emalloc`/`erealloc`/`efree`, so JSON allocations count against `memory_limit` and are freed at request end.
 - `FASTJSON_ERROR_*` constants match the `JSON_ERROR_*` numeric values, so you can use either set. yyjson reports raw control-character and invalid-surrogate parse failures under the UTF-8 code; the aliases exist even where fastjson does not emit the more specific ext/json code.
 - 67-test compat harness rewritten from `php-src/ext/json/tests/*.phpt` runs alongside the native phpt suite. `tests/upstream-json/.skiplist` and `tests/upstream-json/STATE.md` list the upstream tests fastjson does not try to match byte-for-byte.

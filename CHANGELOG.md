@@ -10,11 +10,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Bundled yyjson is 0.13.0. Lowercase `\uXXXX` now comes from upstream
   `YYJSON_WRITE_LOWERCASE_HEX` (the old hex-table patch is gone). The
-  remaining local patches are P-002 through P-009.
-- In-memory decode of a document with no escapes no longer copies the
-  input. Strings point at the caller buffer until the walk finishes.
-  `fastjson_file_decode()` still copies, so it can drop the file buffer
-  before the walk.
+  remaining local patches are P-002 through P-008.
 
 ### Fixed
 

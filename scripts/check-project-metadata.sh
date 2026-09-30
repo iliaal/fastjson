@@ -86,7 +86,7 @@ if [[ "${patches}" -ne "${series}" ]]; then
     echo "PATCHES.md documents ${patches} yyjson patches, series lists ${series}" >&2
     exit 1
 fi
-grep -Fq 'with local patches P-002 through P-009' README.md
+grep -Fq 'with local patches P-002 through P-008' README.md
 
 # shellcheck disable=SC2312
 mapfile -t unix_sources < <(
