@@ -39,9 +39,9 @@ scalar reads (`read_str`, `read_num`, `read_true`, `read_false`,
 `yyjson_val dummy`. They write to it, but we discard the result.
 
 On success, the parser returns a stub `yyjson_doc` (~64 bytes total)
-whose `alc` and `str_pool` are seeded so `yyjson_doc_free()` cleans up
-correctly. Caller MUST NOT walk the returned doc; it carries no
-values.
+whose `alc` is seeded so `yyjson_doc_free()` frees it. Its `str_pool`
+is NULL because validate reads the caller buffer (P-008). Caller MUST
+NOT walk the returned doc; it carries no values.
 
 **Effect.**
 - Validate memory peak (corpus aggregate, 14.81 MB total input):
@@ -50,13 +50,13 @@ values.
 - Validate throughput (corpus aggregate): 525 MB/s → 1,312 MB/s
   (2.5× faster). Driven by removal of the val_hdr alloc + realloc
   growth path and reduced write traffic.
-- vs ext/json memory: ratio drops from 277.78× to 101.40×. The
-  remaining ratio is the input-buffer copy yyjson always makes when
-  `YYJSON_READ_INSITU` is not set. That's the next ceiling.
+- vs ext/json memory: ratio drops from 277.78× to 101.40×. At the
+  time the rest was the input copy `yyjson_read_opts` made without
+  `YYJSON_READ_INSITU`. P-008 removed that copy.
 - The stub doc's `val_read` is the maximum container nesting counted
-  while parsing (the root container counts as 1; a top-level scalar
-  does not use this stub). `fastjson_validate` reads that field instead
-  of scanning the input a second time. The stub still must not be walked.
+  while parsing (P-007: the root container counts as 1, a top-level
+  scalar leaves it 0). `fastjson_validate` reads that field instead of
+  scanning the input a second time. The stub still must not be walked.
 
 **How to apply.** The patch is two-sided (header + impl) and structural
 enough that a sed reproducer is impractical. Re-applying after a
@@ -339,8 +339,9 @@ LP64 harness reports 8 failed checks.
 
 The validate reader already counts open containers. `val_read` on the
 stub doc is that maximum (the root container counts as 1). A top-level
-scalar does not use the stub. `fastjson_validate` reads the field
-instead of scanning the input again. `push_ctn` itself is unchanged.
+scalar also returns the stub, with `val_read` 0 (P-008 keeps scalars in
+`read_root_validate`). `fastjson_validate` reads the field instead of
+scanning the input again. `push_ctn` itself is unchanged.
 
 ## P-008: validate without copying the input
 
@@ -352,9 +353,31 @@ Numbers and `true`/`false`/`null` near `eof` use a stack tail with the
 usual 4-byte pad. A number that runs to `eof` is copied too, because
 `read_num` looks one byte past the token. The UTF-8 BOM check and the
 truncated-UTF-8 check read only bytes that exist. `NaN`/`Inf` literals
-use the same padded tail. The stub's `str_pool` is NULL, so
+use the same padded tail, including a top-level `Inf`/`NaN` under
+`YYJSON_READ_ALLOW_INF_AND_NAN`. The stub's `str_pool` is NULL, so
 `yyjson_doc_free` does not free the caller's memory. On the release
 build, canada.json validate peak dropped from about 2.25 MB to 64 bytes.
+
+Validate reads only `[dat, dat + len)`: no NUL terminator or padding is
+needed with the flags fastjson uses (strict, `ALLOW_INVALID_UNICODE`,
+`ALLOW_INF_AND_NAN`) and with `ALLOW_COMMENTS`/`ALLOW_TRAILING_COMMAS`/
+`ALLOW_BOM`. To keep that true outside the validate reader,
+`skip_trivia` bounds each load by `eof`, and the leading-whitespace
+skip in `yyjson_read_opts` is bounded for every mode. The JSON5 flags
+(`ALLOW_EXT_WHITESPACE`, `ALLOW_SINGLE_QUOTED_STR`, `ALLOW_UNQUOTED_KEY`,
+`ALLOW_EXT_ESCAPE`) are not supported under validate: their readers
+write into or look past the buffer.
+
+Results match the full reader exactly: success, error code, position,
+message, and container nesting. `read_str_validate` reproduces
+`read_str`'s messages, including the four surrogate-pair messages and
+the UTF-8 message, which `read_str` spells "invalid UTF-8 encoding in
+string" before the first escape in a string and "invalid utf-8 encoding
+in string" after it. The validate failure labels use the reader's
+`MSG_*` strings. The leading-content check still reports an input that
+is only a UTF-8 BOM (under `ALLOW_BOM`) as empty. To re-check after an
+upgrade, run every prefix of a corpus through validate and through the
+full reader with each flag set and diff the results.
 
 ## Build-flag dependencies (not vendor patches)
 
@@ -374,7 +397,7 @@ the compiler default. Without the workaround, `nm -D` lists ~49
 
 **Mechanism.** `config.m4` passes `-Dyyjson_api=` so the preprocessor
 sees the macro as already defined before `yyjson.h` reaches its
-`#ifndef yyjson_api` guard (currently at line 322 in 0.12.0). The
+`#ifndef yyjson_api` guard (line 339 of `yyjson.h` in 0.13.0). The
 visibility-default branch is skipped; symbols inherit
 `-fvisibility=hidden`. fastjson is the only caller of yyjson within
 the .so, so hidden visibility doesn't affect functionality.
