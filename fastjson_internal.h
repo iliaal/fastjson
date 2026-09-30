@@ -43,13 +43,16 @@ bool fastjson_apply_hex_escapes(smart_str *buf, zend_long flags,
                  | FASTJSON_INVALID_UTF8_SUBSTITUTE)) != 0)
 
 /* Strings from 8 KiB take the sized writer when their 6x reserve would
- * grow the buffer; it writes escaped strings in chunks (see
- * FASTJSON_EXACT_ESCAPE_THRESHOLD) and copies clean ASCII at its exact
- * size. Shorter strings, and reserves that already fit, keep yyjson's
- * one-pass writer, which is faster and whose headroom costs at most
- * 48 KiB. From 256 KiB the sized writer is always used: it measured
- * -35%/-31% on x86_64 and +8% on aarch64 versus 6x at that size;
- * re-measure both before moving it. */
+ * grow the buffer. Below 8 MiB it copies clean ASCII at its exact size,
+ * writes a string whose escapes sit in the last eighth as a copied prefix
+ * plus a 6x tail, and writes any other string in 2 KiB chunks, which
+ * reserve the input length plus 12 KiB instead of 6x (a 137 KiB PHP
+ * source string peaked at 828 KiB under the 6x reserve). From 8 MiB it
+ * measures the exact output first. Shorter strings, and reserves that
+ * already fit, keep yyjson's one-pass writer, which is faster and whose
+ * headroom costs at most 48 KiB. From 256 KiB the sized writer is always
+ * used: it measured -35%/-31% on x86_64 and +8% on aarch64 versus 6x at
+ * that size; re-measure both before moving it. */
 #define FASTJSON_EXACT_STRING_THRESHOLD (8 * 1024)
 #define FASTJSON_EXACT_STRING_ALWAYS (256 * 1024)
 
@@ -70,11 +73,6 @@ static zend_always_inline bool fastjson_string_wants_sized_writer(
  * Delay it until the 6x reservation reaches 48 MiB against a 128M memory_limit.
  * Clean ASCII bypasses preflight via the fused scan-and-copy path. */
 #define FASTJSON_EXACT_NONASCII_THRESHOLD (8 * 1024 * 1024)
-/* An escaped string that reaches the sized writer is written in 2 KiB
- * chunks, which reserve the input length plus 12 KiB instead of 48 KiB
- * and up (a 137 KiB PHP source string peaked at 828 KiB under the 6x
- * reserve). */
-#define FASTJSON_EXACT_ESCAPE_THRESHOLD (8 * 1024)
 #define FASTJSON_ENCODE_HEX_MASK (FASTJSON_ENCODE_HEX_TAG \
     | FASTJSON_ENCODE_HEX_AMP | FASTJSON_ENCODE_HEX_APOS \
     | FASTJSON_ENCODE_HEX_QUOT)

@@ -674,20 +674,7 @@ fj_string_size_status fastjson_write_large_json_string(
             ZSTR_LEN(buf->s) = (size_t)(end - ZSTR_VAL(buf->s));
             return FJ_STRING_SIZE_OK;
         }
-        if (len >= FASTJSON_EXACT_ESCAPE_THRESHOLD) {
-            return fastjson_write_json_string_chunked(buf, s, len, flags);
-        }
-        if (UNEXPECTED(len > (ZSTR_MAX_LEN - current - 2) / 6)) {
-            return FJ_STRING_SIZE_TOO_LARGE;
-        }
-        smart_str_alloc(buf, len * 6 + 2, 0);
-        char *cur = ZSTR_VAL(buf->s) + current;
-        char *end = yyjson_write_string_to_buf(cur, s, len, flags);
-        if (UNEXPECTED(end == NULL)) {
-            return FJ_STRING_SIZE_INVALID_UTF8;
-        }
-        ZSTR_LEN(buf->s) = (size_t)(end - ZSTR_VAL(buf->s));
-        return FJ_STRING_SIZE_OK;
+        return fastjson_write_json_string_chunked(buf, s, len, flags);
     }
 
     /* Fuse validation and copying for the dominant printable-ASCII case.

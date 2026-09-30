@@ -26,14 +26,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   result, which lowers its peak by 9-33% on the bench corpus.
 - Encode writes an escaped string of 8 KiB or more in 2 KiB chunks instead
   of reserving six times its length. A 1 MiB string with ordinary escaping
-  peaks 60-80% lower; one made only of control characters, which expands
+  peaks 59-83% lower; one made only of control characters, which expands
   six times, still peaks at the one-pass size.
 
 ### Fixed
 
-- The "trailing comma is not allowed" position from decode, the pointer
-  functions, and `fastjson_merge_patch()` now points at the comma itself
-  rather than a later one (yyjson 0.13.0).
+- The "trailing comma is not allowed" position from decode, validate, the
+  pointer functions, and `fastjson_merge_patch()` now points at the comma
+  itself rather than a later one (yyjson 0.13.0).
 - The validate-only reader's container-stack growth can no longer overflow its allocation size. On a 32-bit build a depth of 2^28 wrapped the `capacity * sizeof(u64)` request to zero bytes, after which the parser wrote at the stale offset. Both conversions are now checked against `SIZE_MAX` and report the memory-allocation error before the allocator is reached (vendor patch P-006). Validation results and `$depth` semantics are unchanged.
 - Restore decoder and pointer error state after partial-output and throw-mode
   replacement failures.
