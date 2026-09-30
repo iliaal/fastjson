@@ -375,13 +375,23 @@ needed with the flags fastjson uses (strict, `ALLOW_INVALID_UNICODE`,
 `ALLOW_INF_AND_NAN`) and with `ALLOW_COMMENTS`/`ALLOW_TRAILING_COMMAS`/
 `ALLOW_BOM`. To keep that true outside the validate reader,
 `skip_trivia` bounds each load by `eof`, and the leading-whitespace
-skip in `yyjson_read_opts` is bounded for every mode. The JSON5 flags
-(`ALLOW_EXT_WHITESPACE`, `ALLOW_SINGLE_QUOTED_STR`, `ALLOW_UNQUOTED_KEY`,
-`ALLOW_EXT_ESCAPE`) are not supported under validate: their readers
-write into or look past the buffer.
+skip in `yyjson_read_opts` is bounded for every mode. The other JSON5
+flags (`ALLOW_EXT_NUMBER`, `ALLOW_EXT_ESCAPE`, `ALLOW_EXT_WHITESPACE`,
+`ALLOW_SINGLE_QUOTED_STR`, `ALLOW_UNQUOTED_KEY`) have readers that write
+into or look past the buffer, so validate with any of them goes through
+`read_validate_copy`: a padded copy read with `INSITU`, freed before
+return. That branch sits in a separate function because with GCC 11
+`-O2` an inline flag test in `yyjson_read_opts` cost the inlined state
+machine up to 0.8% on numeric documents under callgrind. Validate
+results under those flags are not checked against the full reader;
+fastjson never passes them.
 
-Results match the full reader exactly: success, error code, position,
-message, and container nesting. `read_str_validate` reproduces
+With the six flags above, results match the full reader: success, error
+code, position, message, and container nesting. A prefix harness found
+no difference over every prefix of a 12,122-document corpus in 8 flag
+combinations (validate on exact-length and NUL-terminated buffers under
+ASAN/UBSan), and neither did a 300-second libFuzzer run that aborts on
+any difference. `read_str_validate` reproduces
 `read_str`'s messages, including the four surrogate-pair messages and
 the UTF-8 message, which `read_str` spells "invalid UTF-8 encoding in
 string" before the first escape in a string and "invalid utf-8 encoding

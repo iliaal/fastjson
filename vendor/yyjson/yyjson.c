@@ -6937,6 +6937,39 @@ fail_garbage:
  * MARK: - JSON Reader (Public)
  *============================================================================*/
 
+/* The JSON5 readers other than comments, trailing commas and Inf/NaN
+ * write into the buffer or load past eof. Validate with any of them runs
+ * on a padded copy. Kept out of yyjson_read_opts so the inlined validate
+ * state machine compiles as before. */
+#define VALIDATE_COPY_FLAGS (YYJSON_READ_ALLOW_EXT_NUMBER | \
+    YYJSON_READ_ALLOW_EXT_ESCAPE | YYJSON_READ_ALLOW_EXT_WHITESPACE | \
+    YYJSON_READ_ALLOW_SINGLE_QUOTED_STR | YYJSON_READ_ALLOW_UNQUOTED_KEY)
+
+static_noinline yyjson_doc *read_validate_copy(char *dat, usize len,
+                                               yyjson_read_flag flg,
+                                               const yyjson_alc *alc_ptr,
+                                               yyjson_read_err *err) {
+    yyjson_alc alc = alc_ptr ? *alc_ptr : YYJSON_DEFAULT_ALC;
+    yyjson_doc *doc;
+    u8 *buf = NULL;
+    if (likely(len < USIZE_MAX - YYJSON_PADDING_SIZE)) {
+        buf = (u8 *)alc.malloc(alc.ctx, len + YYJSON_PADDING_SIZE);
+    }
+    if (unlikely(!buf)) {
+        err->pos = 0;
+        err->msg = MSG_MALLOC;
+        err->code = YYJSON_READ_ERROR_MEMORY_ALLOCATION;
+        return NULL;
+    }
+    memcpy(buf, dat, len);
+    memset(buf + len, 0, YYJSON_PADDING_SIZE);
+    /* The validate stub keeps no pointer into buf. */
+    doc = yyjson_read_opts((char *)buf, len, flg | YYJSON_READ_INSITU,
+                           alc_ptr, err);
+    alc.free(alc.ctx, buf);
+    return doc;
+}
+
 yyjson_doc *yyjson_read_opts(char *dat, usize len,
                              yyjson_read_flag flg,
                              const yyjson_alc *alc_ptr,
@@ -6960,6 +6993,10 @@ yyjson_doc *yyjson_read_opts(char *dat, usize len,
     if (!err) err = &tmp_err;
     if (unlikely(!dat)) return_err(0, INVALID_PARAMETER, "input data is NULL");
     if (unlikely(!len)) return_err(0, INVALID_PARAMETER, "input length is 0");
+    if (unlikely(has_flg(VALIDATE_ONLY) && !has_flg(INSITU) &&
+                 (flg & VALIDATE_COPY_FLAGS))) {
+        return read_validate_copy(dat, len, flg, alc_ptr, err);
+    }
 
     /* Validate-only does not keep string bytes, so it can read the
      * caller's buffer. Readers that would look past eof copy a tail
@@ -7034,6 +7071,8 @@ yyjson_doc *yyjson_read_opts(char *dat, usize len,
 
 #undef return_err
 }
+
+#undef VALIDATE_COPY_FLAGS
 
 #if !YYJSON_FREESTANDING && !YYJSON_DISABLE_FILE
 

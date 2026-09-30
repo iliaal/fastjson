@@ -10,15 +10,22 @@ the truncated-UTF-8 check read only bytes that exist. skip_trivia and
 the truncated-comment check bound their loads by eof. The stub doc's
 str_pool stays NULL.
 
-Validate results match the full reader: the string scanner and the
-failure labels use read_str's and the reader's messages, a top-level
-Inf/NaN is accepted under ALLOW_INF_AND_NAN, an unclosed trailing
-comment is an error, and an input that is only a BOM is still empty.
-The scanner picks the UTF-8 message spelling on the error path, so the
-scan loop carries no extra state.
+With no flags, ALLOW_INVALID_UNICODE, ALLOW_INF_AND_NAN, ALLOW_COMMENTS,
+ALLOW_TRAILING_COMMAS, and ALLOW_BOM, validate results match the full
+reader: the string scanner and the failure labels use read_str's and
+the reader's messages, a top-level Inf/NaN is accepted under
+ALLOW_INF_AND_NAN, an unclosed trailing comment is an error, and an
+input that is only a BOM is still empty. The scanner picks the UTF-8
+message spelling on the error path, so the scan loop carries no extra
+state.
+
+The other JSON5 flags (EXT_NUMBER, EXT_ESCAPE, EXT_WHITESPACE,
+SINGLE_QUOTED_STR, UNQUOTED_KEY) write into the buffer or load past
+eof, so validate with any of them runs on a padded copy
+(read_validate_copy).
 
 diff --git a/vendor/yyjson/yyjson.c b/vendor/yyjson/yyjson.c
-index e6280b8..463f0c3 100644
+index e6280b8..2a8ee0b 100644
 --- a/vendor/yyjson/yyjson.c
 +++ b/vendor/yyjson/yyjson.c
 @@ -3400,7 +3400,7 @@ static_noinline bool skip_trivia(u8 **ptr, u8 *eof, yyjson_read_flag flg) {
@@ -635,7 +642,47 @@ index e6280b8..463f0c3 100644
  
  #undef push_ctn
  #undef pop_ctn
-@@ -6648,7 +6945,7 @@ yyjson_doc *yyjson_read_opts(char *dat, usize len,
+@@ -6640,6 +6937,39 @@ fail_garbage:
+  * MARK: - JSON Reader (Public)
+  *============================================================================*/
+ 
++/* The JSON5 readers other than comments, trailing commas and Inf/NaN
++ * write into the buffer or load past eof. Validate with any of them runs
++ * on a padded copy. Kept out of yyjson_read_opts so the inlined validate
++ * state machine compiles as before. */
++#define VALIDATE_COPY_FLAGS (YYJSON_READ_ALLOW_EXT_NUMBER | \
++    YYJSON_READ_ALLOW_EXT_ESCAPE | YYJSON_READ_ALLOW_EXT_WHITESPACE | \
++    YYJSON_READ_ALLOW_SINGLE_QUOTED_STR | YYJSON_READ_ALLOW_UNQUOTED_KEY)
++
++static_noinline yyjson_doc *read_validate_copy(char *dat, usize len,
++                                               yyjson_read_flag flg,
++                                               const yyjson_alc *alc_ptr,
++                                               yyjson_read_err *err) {
++    yyjson_alc alc = alc_ptr ? *alc_ptr : YYJSON_DEFAULT_ALC;
++    yyjson_doc *doc;
++    u8 *buf = NULL;
++    if (likely(len < USIZE_MAX - YYJSON_PADDING_SIZE)) {
++        buf = (u8 *)alc.malloc(alc.ctx, len + YYJSON_PADDING_SIZE);
++    }
++    if (unlikely(!buf)) {
++        err->pos = 0;
++        err->msg = MSG_MALLOC;
++        err->code = YYJSON_READ_ERROR_MEMORY_ALLOCATION;
++        return NULL;
++    }
++    memcpy(buf, dat, len);
++    memset(buf + len, 0, YYJSON_PADDING_SIZE);
++    /* The validate stub keeps no pointer into buf. */
++    doc = yyjson_read_opts((char *)buf, len, flg | YYJSON_READ_INSITU,
++                           alc_ptr, err);
++    alc.free(alc.ctx, buf);
++    return doc;
++}
++
+ yyjson_doc *yyjson_read_opts(char *dat, usize len,
+                              yyjson_read_flag flg,
+                              const yyjson_alc *alc_ptr,
+@@ -6648,7 +6978,7 @@ yyjson_doc *yyjson_read_opts(char *dat, usize len,
      err->pos = (usize)(_pos); \
      err->msg = _msg; \
      err->code = YYJSON_READ_ERROR_##_code; \
@@ -644,7 +691,7 @@ index e6280b8..463f0c3 100644
      return NULL; \
  } while (false)
  
-@@ -6656,17 +6953,22 @@ yyjson_doc *yyjson_read_opts(char *dat, usize len,
+@@ -6656,17 +6986,26 @@ yyjson_doc *yyjson_read_opts(char *dat, usize len,
      yyjson_alc alc = alc_ptr ? *alc_ptr : YYJSON_DEFAULT_ALC;
      yyjson_doc *doc;
      u8 *hdr = NULL, *eof, *cur;
@@ -655,6 +702,10 @@ index e6280b8..463f0c3 100644
      if (!err) err = &tmp_err;
      if (unlikely(!dat)) return_err(0, INVALID_PARAMETER, "input data is NULL");
      if (unlikely(!len)) return_err(0, INVALID_PARAMETER, "input length is 0");
++    if (unlikely(has_flg(VALIDATE_ONLY) && !has_flg(INSITU) &&
++                 (flg & VALIDATE_COPY_FLAGS))) {
++        return read_validate_copy(dat, len, flg, alc_ptr, err);
++    }
  
 -    /* add 4-byte zero padding for input data if necessary */
 -    if (has_flg(INSITU)) {
@@ -669,7 +720,7 @@ index e6280b8..463f0c3 100644
      } else {
          if (unlikely(len >= USIZE_MAX - YYJSON_PADDING_SIZE)) {
              return_err(0, MEMORY_ALLOCATION, MSG_MALLOC);
-@@ -6675,20 +6977,21 @@ yyjson_doc *yyjson_read_opts(char *dat, usize len,
+@@ -6675,20 +7014,21 @@ yyjson_doc *yyjson_read_opts(char *dat, usize len,
          if (unlikely(!hdr)) {
              return_err(0, MEMORY_ALLOCATION, MSG_MALLOC);
          }
@@ -695,7 +746,7 @@ index e6280b8..463f0c3 100644
              if (has_allow(TRIVIA) && char_is_trivia(*cur)) {
                  if (!skip_trivia(&cur, eof, flg) && cur == eof) {
                      return_err(cur - hdr, INVALID_COMMENT, MSG_COMMENT);
-@@ -6716,15 +7019,16 @@ yyjson_doc *yyjson_read_opts(char *dat, usize len,
+@@ -6716,21 +7056,24 @@ yyjson_doc *yyjson_read_opts(char *dat, usize len,
  
      /* check result */
      if (likely(doc)) {
@@ -714,3 +765,11 @@ index e6280b8..463f0c3 100644
      }
      return doc;
  
+ #undef return_err
+ }
+ 
++#undef VALIDATE_COPY_FLAGS
++
+ #if !YYJSON_FREESTANDING && !YYJSON_DISABLE_FILE
+ 
+ yyjson_doc *yyjson_read_file(const char *path,
