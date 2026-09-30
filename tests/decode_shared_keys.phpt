@@ -3,6 +3,12 @@ decode shares short repeated object keys
 --EXTENSIONS--
 fastjson
 json
+--SKIPIF--
+<?php
+if (getenv('USE_ZEND_ALLOC') === '0' && !getenv('USE_TRACKED_ALLOC')) {
+    die('skip memory_get_usage() reads 0 without the Zend allocator');
+}
+?>
 --INI--
 memory_limit=-1
 --FILE--
@@ -24,7 +30,32 @@ $cases = [
     '{"é":1}',
     '{"":1}',
 ];
+/* Padding past 4 KiB turns sharing on; the short form runs without it. */
+$pad = str_repeat('0,', 2100);
 foreach ($cases as $json) {
+    same($json, false);
+    same($json, true);
+    same('[' . $pad . $json . ']', false);
+    same('[' . $pad . $json . ']', true);
+}
+
+/* More distinct names than the table holds (misses after it fills),
+ * names past the 64-byte limit, and a mostly unique document that turns
+ * sharing off partway through. */
+$wide = [];
+for ($r = 0; $r < 20; $r++) {
+    $row = [];
+    for ($k = 0; $k < 400; $k++) {
+        $row["field_$k"] = $k;
+    }
+    $row[str_repeat('L', 65) . $r % 3] = $r;
+    $wide[] = $row;
+}
+$mostlyUnique = [];
+for ($k = 0; $k < 5000; $k++) {
+    $mostlyUnique["u$k"] = ['id' => $k];
+}
+foreach ([json_encode($wide), json_encode($mostlyUnique)] as $json) {
     same($json, false);
     same($json, true);
 }
@@ -53,6 +84,24 @@ $uniqJson = '[' . implode(',', $uniq) . ']';
 var_dump(live($uniqJson) - live($rep) > 200000);
 ?>
 --EXPECT--
+bool(true)
+bool(true)
+bool(true)
+bool(true)
+bool(true)
+bool(true)
+bool(true)
+bool(true)
+bool(true)
+bool(true)
+bool(true)
+bool(true)
+bool(true)
+bool(true)
+bool(true)
+bool(true)
+bool(true)
+bool(true)
 bool(true)
 bool(true)
 bool(true)

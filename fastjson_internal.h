@@ -42,19 +42,36 @@ bool fastjson_apply_hex_escapes(smart_str *buf, zend_long flags,
     (((flags) & (FASTJSON_INVALID_UTF8_IGNORE \
                  | FASTJSON_INVALID_UTF8_SUBSTITUTE)) != 0)
 
-/* Use the exact-size writer once a 6x reserve would exceed the Zend
- * small-bin smart_str (~256 bytes including the header). Below that the
- * one-pass reserve stays in the initial allocation. At 256 KiB the exact
- * path was -35%/-31% on x86_64 and +8% on aarch64 versus 6x; do not raise
- * this without re-measuring both. */
+/* Strings from 32 bytes take the sized writer when their 6x reserve
+ * would grow the buffer, so a lone short string keeps the initial
+ * ~256-byte block instead of moving to a 4 KiB page. A reserve that
+ * already fits costs no memory, and the one-pass writer is faster there.
+ * From 256 KiB the sized writer is always used: it measured -35%/-31% on
+ * x86_64 and +8% on aarch64 versus 6x at that size; re-measure both
+ * before moving it. */
 #define FASTJSON_EXACT_STRING_THRESHOLD 32
+#define FASTJSON_EXACT_STRING_ALWAYS (256 * 1024)
+
+static zend_always_inline bool fastjson_string_wants_sized_writer(
+    const smart_str *buf, size_t len)
+{
+    if (len < FASTJSON_EXACT_STRING_THRESHOLD) {
+        return false;
+    }
+    if (len >= FASTJSON_EXACT_STRING_ALWAYS) {
+        return true;
+    }
+    size_t used = buf->s ? ZSTR_LEN(buf->s) : 0;
+    return buf->a < used || buf->a - used < len * 6 + 2;
+}
 /* Non-ASCII preflight measured +75%/+160% on x86_64/aarch64 at 1 MiB.
  * Delay it until the 6x reservation reaches 48 MiB against a 128M memory_limit.
  * Clean ASCII bypasses preflight via the fused scan-and-copy path. */
 #define FASTJSON_EXACT_NONASCII_THRESHOLD (8 * 1024 * 1024)
 /* An escaped string shorter than this keeps the one-pass 6x reserve.
- * At 8 KiB that reserve is 48 KiB; above it the reserve is the peak
- * (a 137 KiB PHP source string measured 828 KiB). */
+ * From 8 KiB it is written in 2 KiB chunks, which reserve the input
+ * length plus 12 KiB instead of 48 KiB and up (a 137 KiB PHP source
+ * string peaked at 828 KiB under the 6x reserve). */
 #define FASTJSON_EXACT_ESCAPE_THRESHOLD (8 * 1024)
 #define FASTJSON_ENCODE_HEX_MASK (FASTJSON_ENCODE_HEX_TAG \
     | FASTJSON_ENCODE_HEX_AMP | FASTJSON_ENCODE_HEX_APOS \

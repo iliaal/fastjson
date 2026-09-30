@@ -7,6 +7,12 @@ fastjson
 if (!function_exists('memory_reset_peak_usage')) {
     die('skip memory_reset_peak_usage requires PHP 8.2');
 }
+$before = memory_get_usage();
+memory_reset_peak_usage();
+$blob = str_repeat('a', 200000);
+if (memory_get_peak_usage() <= $before + 10000) {
+    die('skip allocator does not record peak usage');
+}
 ?>
 --INI--
 memory_limit=-1

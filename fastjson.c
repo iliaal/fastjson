@@ -470,60 +470,66 @@ static size_t fastjson_json_chunk_len(const char *s, size_t len,
     return n;
 }
 
+/* Each chunk is written in place: yyjson's opening quote lands on the
+ * byte before the output end and is restored afterwards, so its body
+ * starts over the previous chunk's closing quote. The buffer only needs
+ * one chunk's 6x worst case of headroom, grown geometrically so heavy
+ * escaping does not realloc once per chunk. */
 static fj_string_size_status fastjson_write_json_string_chunked(
     smart_str *buf, const char *s, size_t len, yyjson_write_flag flags)
 {
     size_t current = buf->s ? ZSTR_LEN(buf->s) : 0;
-    enum { CHUNK = 8192 };
-    const size_t tmp_size = (size_t)CHUNK * 6 + 2;
-    char *tmp;
+    enum { CHUNK = 2048 };
     if (UNEXPECTED(current > ZSTR_MAX_LEN - 2
             || len > ZSTR_MAX_LEN - current - 2)) {
         return FJ_STRING_SIZE_TOO_LARGE;
     }
-    tmp = emalloc(tmp_size);
-    smart_str_alloc(buf, len + 2, 0);
-    char *dst = ZSTR_VAL(buf->s);
+    if (UNEXPECTED(ZSTR_MAX_LEN - current - 2 - len < (size_t)CHUNK * 6)) {
+        return FJ_STRING_SIZE_TOO_LARGE;
+    }
+    smart_str_alloc(buf, len + 2 + (size_t)CHUNK * 6, 0);
     size_t out = current;
-    dst[out++] = '"';
+    ZSTR_VAL(buf->s)[out++] = '"';
     ZSTR_LEN(buf->s) = out;
 
     size_t pos = 0;
     while (pos < len) {
         size_t n = fastjson_json_chunk_len(s, len, pos, CHUNK);
-        char *end;
-        size_t wrote;
         if (UNEXPECTED(n == 0)) {
             ZSTR_LEN(buf->s) = current;
-            efree(tmp);
             return FJ_STRING_SIZE_INVALID_UTF8;
         }
-        end = yyjson_write_string_to_buf(tmp, s + pos, n, flags);
-        if (UNEXPECTED(end == NULL)) {
+        size_t need = n * 6 + 2;
+        if (UNEXPECTED(need > ZSTR_MAX_LEN - out)) {
             ZSTR_LEN(buf->s) = current;
-            efree(tmp);
+            return FJ_STRING_SIZE_TOO_LARGE;
+        }
+        if (buf->a - out < need) {
+            /* Project the rest at the expansion ratio seen so far, plus
+             * an eighth, so heavy escaping reallocates about once. */
+            double ratio = pos ? (double)(out - current) / (double)pos : 1.0;
+            double rest = (double)(len - pos - n) * ratio;
+            double want = (double)need + rest + rest / 8;
+            size_t grow = want >= (double)(ZSTR_MAX_LEN - out)
+                ? ZSTR_MAX_LEN - out : (size_t)want;
+            smart_str_alloc(buf, grow, 0);
+        }
+        char *at = ZSTR_VAL(buf->s) + out - 1;
+        char saved = *at;
+        char *end = yyjson_write_string_to_buf(at, s + pos, n, flags);
+        *at = saved;
+        if (UNEXPECTED(end == NULL || end - at < 2)) {
+            ZSTR_LEN(buf->s) = current;
             return FJ_STRING_SIZE_INVALID_UTF8;
         }
-        wrote = (size_t)(end - tmp);
-        if (UNEXPECTED(wrote < 2 || wrote - 2 > ZSTR_MAX_LEN - out - 1)) {
-            ZSTR_LEN(buf->s) = current;
-            efree(tmp);
-            return wrote < 2 ? FJ_STRING_SIZE_INVALID_UTF8
-                             : FJ_STRING_SIZE_TOO_LARGE;
-        }
-        wrote -= 2;
-        smart_str_alloc(buf, wrote, 0);
-        dst = ZSTR_VAL(buf->s);
-        memcpy(dst + out, tmp + 1, wrote);
-        out += wrote;
+        /* Body without the quotes, now ending on the closing quote. */
+        out += (size_t)(end - at) - 2;
         ZSTR_LEN(buf->s) = out;
         pos += n;
     }
-    smart_str_alloc(buf, 1, 0);
-    dst = ZSTR_VAL(buf->s);
-    dst[out++] = '"';
+    /* The last chunk left its closing quote at `out`. */
+    ZSTR_VAL(buf->s)[out++] = '"';
     ZSTR_LEN(buf->s) = out;
-    efree(tmp);
     return FJ_STRING_SIZE_OK;
 }
 

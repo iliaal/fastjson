@@ -228,13 +228,21 @@ static bool FJ_WALK_NAME(FJ_WALK_VAL *val, bool assoc,
                     zend_hash_index_update(ht, idx, &child);
                 } else {
                     zend_string *zk = fj_share_key(use_key, use_klen);
-                    zend_hash_update(ht, zk, &child);
-                    zend_string_release_ex(zk, 0);
+                    if (zk != NULL) {
+                        zend_hash_update(ht, zk, &child);
+                        zend_string_release_ex(zk, 0);
+                    } else {
+                        zend_hash_str_update(ht, use_key, use_klen, &child);
+                    }
                 }
             } else {
                 zend_string *zk = fj_share_key(use_key, use_klen);
-                zend_hash_update(ht, zk, &child);
-                zend_string_release_ex(zk, 0);
+                if (zk != NULL) {
+                    zend_hash_update(ht, zk, &child);
+                    zend_string_release_ex(zk, 0);
+                } else {
+                    zend_hash_str_update(ht, use_key, use_klen, &child);
+                }
             }
 #if FJ_WALK_SANITIZE
             if (key_owned) efree((char *)use_key);

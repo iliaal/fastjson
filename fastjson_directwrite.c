@@ -178,7 +178,7 @@ static bool dw_emit_string_ex(fastjson_dw_ctx *ctx, const char *s, size_t len,
                               bool is_key)
 {
     size_t start_pos = ctx->buf.s ? ZSTR_LEN(ctx->buf.s) : 0;
-    if (UNEXPECTED(len >= FASTJSON_EXACT_STRING_THRESHOLD)) {
+    if (UNEXPECTED(fastjson_string_wants_sized_writer(&ctx->buf, len))) {
         fj_string_size_status status = fastjson_write_large_json_string(
             &ctx->buf, s, len, ctx->yflags);
         if (status == FJ_STRING_SIZE_OK) {
@@ -207,7 +207,9 @@ invalid_utf8:
             char *sane = fastjson_sanitize_utf8(s, len, ctx->flags,
                                                 FJ_SAN_ENCODE, &sane_len);
             fj_string_size_status sane_status = FJ_STRING_SIZE_OK;
-            if (sane_len >= FASTJSON_EXACT_STRING_THRESHOLD) {
+            bool sane_sized = fastjson_string_wants_sized_writer(
+                &ctx->buf, sane_len);
+            if (sane_sized) {
                 sane_status = fastjson_write_large_json_string(
                     &ctx->buf, sane, sane_len, ctx->yflags);
                 end = sane_status == FJ_STRING_SIZE_OK
@@ -222,7 +224,7 @@ invalid_utf8:
             }
             efree(sane);
             if (EXPECTED(end != NULL)) {
-                if (sane_len < FASTJSON_EXACT_STRING_THRESHOLD) {
+                if (!sane_sized) {
                     ZSTR_LEN(ctx->buf.s) = (size_t)(end
                         - ZSTR_VAL(ctx->buf.s));
                 }
@@ -1119,7 +1121,8 @@ zend_string *fastjson_directwrite_encode(zval *value, zend_long flags,
     ctx.pretty_print = (flags & FASTJSON_ENCODE_PRETTY_PRINT) != 0;
     fastjson_error_state_clear(&ctx.error);
 
-    /* 256 is past Zend's small-bin start length and lands on a 4KB page. */
+    /* Stay in smart_str's initial 256-byte block; asking for 256 bytes
+     * moved the first allocation to a 4 KiB page. */
     smart_str_alloc(&ctx.buf, 32, 0);
 
     bool ok = dw_encode_zval(&ctx, value, depth);

@@ -81,7 +81,7 @@ static inline void fj_splice_newline_indent(fj_splice_ctx *ctx, int level)
 static bool fj_splice_write_string(fj_splice_ctx *ctx, const char *s, size_t len)
 {
     size_t start_pos = ctx->buf.s ? ZSTR_LEN(ctx->buf.s) : 0;
-    if (len >= FASTJSON_EXACT_STRING_THRESHOLD) {
+    if (fastjson_string_wants_sized_writer(&ctx->buf, len)) {
         fj_string_size_status size_status = fastjson_write_large_json_string(
             &ctx->buf, s, len, ctx->yflags);
         if (size_status == FJ_STRING_SIZE_TOO_LARGE) {
@@ -979,7 +979,8 @@ zend_string *fastjson_imut_pointer_set_write(yyjson_val *root,
     ctx.pretty = (flags & FASTJSON_ENCODE_PRETTY_PRINT) != 0;
     ctx.replacement = replacement;
     ctx.status = FJ_SPLICE_OK;
-    /* 256 is past Zend's small-bin start length and lands on a 4KB page. */
+    /* Stay in smart_str's initial 256-byte block; asking for 256 bytes
+     * moved the first allocation to a 4 KiB page. */
     smart_str_alloc(&ctx.buf, 32, 0);
 
     bool ok;

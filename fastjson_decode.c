@@ -186,67 +186,120 @@ static zend_always_inline void fj_mut_raw_to_zval(yyjson_mut_val *val,
 }
 
 /* Fixed open-addressed table so a document of unique keys cannot grow
- * a Zend HashTable for every name. 192 residents leaves probe room. */
+ * a Zend HashTable for every name. At half load a miss usually reaches
+ * an empty slot within two probes. */
+#define FJ_SHARE_KEY_MAX 64
+#define FJ_SHARE_SLOTS 512
+#define FJ_SHARE_KEY_CAP 256
+/* Once the table is full, misses past hits plus this margin mean the
+ * document's keys are mostly unique; stop probing for the rest. */
+#define FJ_SHARE_MISS_MARGIN 1024
+/* Below this input size the table setup costs more than sharing saves. */
+#define FJ_SHARE_MIN_INPUT 4096
+
 typedef struct {
     zend_string *str;
-    uint32_t h;
+    /* Inline so a probe does not load every resident string header. */
+    zend_ulong h;
 } fj_key_slot;
 
 typedef struct {
-    fj_key_slot slots[256];
+    fj_key_slot slots[FJ_SHARE_SLOTS];
+    /* Occupied slot indexes, so pop touches only what was filled. */
+    uint16_t used[FJ_SHARE_KEY_CAP];
     uint32_t count;
+    uint32_t full_hits;
+    uint32_t full_misses;
+    bool off;
 } fj_key_cache;
-
-#define FJ_SHARE_KEY_MAX 64
-#define FJ_SHARE_KEY_CAP 192
 
 static fj_key_cache *fj_key_share(void)
 {
     return (fj_key_cache *)FASTJSON_G(key_share);
 }
 
-static zend_string *fj_share_key(const char *str, size_t len)
+/* zend_hash_update() would hash the key again; storing the hash here
+ * makes the lookup below free for the table insert that follows. */
+static zend_always_inline zend_string *fj_key_new(const char *str,
+                                                  size_t len, zend_ulong h)
 {
-    fj_key_cache *share = fj_key_share();
-    if (share == NULL || len > FJ_SHARE_KEY_MAX) {
-        return zend_string_init(str, len, 0);
+    zend_string *s = zend_string_init(str, len, 0);
+    ZSTR_H(s) = h;
+    return s;
+}
+
+static zend_never_inline zend_string *fj_share_key_slow(
+    fj_key_cache *share, const char *str, size_t len)
+{
+    bool full = share->count >= FJ_SHARE_KEY_CAP;
+    if (full && share->full_misses
+            > share->full_hits + FJ_SHARE_MISS_MARGIN) {
+        share->off = true;
+        return NULL;
     }
-    uint32_t h = zend_inline_hash_func(str, len);
-    uint32_t i = h & 255;
+    zend_ulong h = zend_inline_hash_func(str, len);
+    uint32_t i = (uint32_t)h & (FJ_SHARE_SLOTS - 1);
     for (uint32_t n = 0; n < 8; n++) {
         fj_key_slot *slot = &share->slots[i];
         if (slot->str == NULL) {
-            if (share->count >= FJ_SHARE_KEY_CAP) {
-                return zend_string_init(str, len, 0);
+            if (full) {
+                break;
             }
-            zend_string *fresh = zend_string_init(str, len, 0);
+            zend_string *fresh = fj_key_new(str, len, h);
             slot->str = fresh;
             slot->h = h;
-            share->count++;
+            share->used[share->count++] = (uint16_t)i;
             return zend_string_copy(fresh);
         }
         if (slot->h == h && ZSTR_LEN(slot->str) == len
                 && memcmp(ZSTR_VAL(slot->str), str, len) == 0) {
+            share->full_hits += full;
             return zend_string_copy(slot->str);
         }
-        i = (i + 1) & 255;
+        i = (i + 1) & (FJ_SHARE_SLOTS - 1);
     }
-    return zend_string_init(str, len, 0);
+    share->full_misses += full;
+    return fj_key_new(str, len, h);
 }
 
-static void fj_key_share_push(fj_key_cache *cache, fj_key_cache **prev)
+/* Returns a key reference for zend_hash_update(), or NULL when sharing
+ * is off so the caller inserts by (str, len) exactly as without it. */
+static zend_always_inline zend_string *fj_share_key(const char *str,
+                                                    size_t len)
 {
-    memset(cache, 0, sizeof(*cache));
+    fj_key_cache *share = fj_key_share();
+    if (share == NULL || share->off || len > FJ_SHARE_KEY_MAX) {
+        return NULL;
+    }
+    return fj_share_key_slow(share, str, len);
+}
+
+/* A walk that does not share still installs NULL: a bailout can leave
+ * the pointer at a dead stack frame until the next RINIT. */
+static void fj_key_share_push(fj_key_cache *cache, fj_key_cache **prev,
+                              size_t input_len)
+{
     *prev = fj_key_share();
+    if (input_len < FJ_SHARE_MIN_INPUT) {
+        FASTJSON_G(key_share) = NULL;
+        return;
+    }
+    memset(cache->slots, 0, sizeof(cache->slots));
+    cache->count = 0;
+    cache->full_hits = 0;
+    cache->full_misses = 0;
+    cache->off = false;
     FASTJSON_G(key_share) = cache;
 }
 
 static void fj_key_share_pop(fj_key_cache *cache, fj_key_cache *prev)
 {
-    for (uint32_t i = 0; i < 256; i++) {
-        if (cache->slots[i].str != NULL) {
-            zend_string_release_ex(cache->slots[i].str, 0);
-        }
+    if (fj_key_share() != cache) {
+        FASTJSON_G(key_share) = prev;
+        return;
+    }
+    for (uint32_t i = 0; i < cache->count; i++) {
+        zend_string_release_ex(cache->slots[cache->used[i]].str, 0);
     }
     FASTJSON_G(key_share) = prev;
 }
@@ -351,7 +404,7 @@ static bool fastjson_walk_doc_into(yyjson_doc *doc, yyjson_val *root,
     zend_long walk_depth = fastjson_effective_walk_depth(depth);
     fj_key_cache key_cache;
     fj_key_cache *key_prev;
-    fj_key_share_push(&key_cache, &key_prev);
+    fj_key_share_push(&key_cache, &key_prev, yyjson_doc_get_read_size(doc));
     bool walk_ok = FASTJSON_HAS_UTF8_HANDLING_FLAG(flags)
         ? fastjson_yyval_to_zval_sanitize(root, use_assoc, walk_depth, flags, return_value)
         : fastjson_yyval_to_zval(root, use_assoc, walk_depth, flags, return_value);
@@ -1107,7 +1160,7 @@ PHP_FUNCTION(fastjson_merge_patch)
             yyjson_mut_doc_set_root(mdoc, merged);
             fj_key_cache key_cache;
             fj_key_cache *key_prev;
-            fj_key_share_push(&key_cache, &key_prev);
+            fj_key_share_push(&key_cache, &key_prev, target_len + patch_len);
             walk_ok = FASTJSON_HAS_UTF8_HANDLING_FLAG(flags)
                 ? fastjson_yymut_to_zval_sanitize(
                     merged, use_assoc, (zend_long)walk_depth, flags,
