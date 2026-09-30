@@ -21,14 +21,16 @@ $cases = [
 ];
 
 foreach ($cases as $input) {
-    $snapshot = substr($input, 0);
+    $hash = md5($input);
     $ok = fastjson_validate($input);
     $vmsg = fastjson_last_error_msg();
-    fastjson_decode($snapshot);
-    if (fastjson_last_error_msg() !== $vmsg) {
+    $vpos = fastjson_last_error_pos();
+    $after = md5($input);
+    fastjson_decode($input);
+    if (fastjson_last_error_msg() !== $vmsg || fastjson_last_error_pos() !== $vpos) {
         echo "MISMATCH\n";
     }
-    var_dump($ok, $input === $snapshot, $vmsg);
+    var_dump($ok, $after === $hash, $vmsg);
 }
 ?>
 --EXPECT--
