@@ -55,13 +55,14 @@ jobs:
       fail-fast: false
       matrix:
         # ubuntu-24.04 (x86_64), ubuntu-24.04-arm (arm64),
-        # macos-14 (Apple Silicon arm64). Pinned over `*-latest` so the
+        # macos-15 (Apple Silicon arm64). Pinned over `*-latest` so the
         # toolchain and glibc baseline of release assets change only with
-        # a repo diff.
+        # a repo diff. setup-php stopped installing PHP on macos-14 in
+        # 2026-09, so the macOS binaries now need macOS 15 or later.
         os:
           - ubuntu-24.04
           - ubuntu-24.04-arm
-          - macos-14
+          - macos-15
         php: ['8.4', '8.5']
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
