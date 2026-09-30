@@ -206,6 +206,33 @@ make -j$(nproc)
 # Now CFLAGS = -g -O2 (default for non-debug PHP)
 ```
 
+## Approaches tried and rejected
+
+Measured with callgrind instruction counts (Ir) on a release build, because
+wall-clock time on the WSL dev host varies by 30% or more between runs.
+
+- **Decode without the input copy (vendor patch P-009, reverted in 0.9.0).**
+  String values pointed into the caller's buffer when the document had no
+  escapes. A `zend_string` has one NUL after its data, but yyjson's reader
+  relies on 4 bytes of padding, so the pretty-print reader and the comment
+  skipper read past the end of the buffer. A long input that ended on a page
+  boundary crashed PHP. The same reader made number-heavy decode 40-80%
+  slower, in return for about 10% less peak memory.
+- **Build zvals during the read (`fused-decode` branch, 0bb52b6, deleted).**
+  A SAX-style reader (patches P-010 and P-011) built zvals from callbacks,
+  never allocated yyjson's value array, and reused slots in large
+  containers. Peak memory dropped 48% against 0.9.0 (geometric mean over the
+  bench corpus), and `citm_catalog.json` peaked below ext/json. Decode cost
+  94% more instructions (+8% to +191% per file). The design builds on P-009,
+  so every number and literal needs a bounds-checked reader, and every value
+  goes through a function-pointer callback. With aliasing turned off it still
+  cost 35% more instructions for 31% less memory. On `canada.json`, the
+  bounded number reader alone ran 46.7M instructions, against 54.9M for
+  master's whole decode. The only plausible reuse is an opt-in low-memory
+  decode flag, built on the P-008 reader without aliasing and with inlined
+  readers. Expect about 30% less peak memory than the default decode and
+  15-50% more instructions.
+
 ## Not yet measured
 
 - ASAN builds (already covered by CI; not a perf measurement target).
