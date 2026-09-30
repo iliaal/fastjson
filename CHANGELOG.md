@@ -6,43 +6,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-09-29
+
 ### Changed
 
-- Bundled yyjson is 0.13.0. Lowercase `\uXXXX` now comes from upstream
-  `YYJSON_WRITE_LOWERCASE_HEX` (the old hex-table patch is gone). The
-  remaining local patches are P-002 through P-008.
-- `fastjson_validate()` reads the input in place and records container
-  nesting during the parse, instead of copying the input and scanning it a
-  second time for `$depth` (vendor patches P-007 and P-008). Its peak memory
-  no longer grows with the input (64 bytes on every bench file, down from
-  up to 3.3 MB), and it executes about 30% fewer instructions across the bench
-  corpus, from 3% on number-heavy files to 64% on string-heavy ones.
-- Decode shares one string per repeated object key of up to 64 bytes within
-  a call, for inputs of 4 KiB or more. Record arrays and other key-heavy
-  documents peak about 15% lower and decode 3-4% faster. A document with
-  more than 256 distinct repeated names, or with mostly unique names, pays
-  3-5% more decode time.
-- `fastjson_file_decode()` releases the file contents before building the
-  result, which lowers its peak by 9-33% on the bench corpus.
-- Encode writes an escaped string of 8 KiB or more in 2 KiB chunks instead
-  of reserving six times its length. A 1 MiB string with ordinary escaping
-  peaks 59-83% lower; one made only of control characters, which expands
-  six times, still peaks at the one-pass size.
+- Bundled yyjson is 0.13.0; lowercase `\uXXXX` now uses upstream `YYJSON_WRITE_LOWERCASE_HEX`, retiring patch P-001.
+- `fastjson_validate()` reads the input in place and tracks depth during the parse: peak memory is constant and it runs ~30% fewer instructions.
+- Decode shares repeated object-key strings (up to 64 bytes, inputs of 4 KiB+): key-heavy documents peak ~15% lower and decode 3-4% faster, while mostly unique or 256+ distinct names cost 3-5%.
+- `fastjson_file_decode()` frees the file contents before building the result, lowering its peak 9-33%.
+- Encode writes escaped strings of 8 KiB+ in 2 KiB chunks instead of a 6x reserve; a 1 MiB string with ordinary escaping peaks 59-83% lower.
 
 ### Fixed
 
-- The "trailing comma is not allowed" position from decode, validate, the
-  pointer functions, and `fastjson_merge_patch()` now points at the comma
-  itself rather than a later one (yyjson 0.13.0).
-- The validate-only reader's container-stack growth can no longer overflow its allocation size. On a 32-bit build a depth of 2^28 wrapped the `capacity * sizeof(u64)` request to zero bytes, after which the parser wrote at the stale offset. Both conversions are now checked against `SIZE_MAX` and report the memory-allocation error before the allocator is reached (vendor patch P-006). Validation results and `$depth` semantics are unchanged.
-- Restore decoder and pointer error state after partial-output and throw-mode
-  replacement failures.
-- `fastjson_validate()` reports "expected a string key" and "expected ':'
-  after key" like `fastjson_decode()`, instead of its own shorter wording.
-- `fastjson_validate()` rejects a trailing comma in an array whose elements
-  are all arrays or objects. `[[],]`, `[{},]`, and `[{"a":1},]` returned
-  `true`, while `json_validate()` and `fastjson_decode()` reject them
-  (vendor patch P-002).
+- The "trailing comma is not allowed" error position now points at the comma itself, in decode, validate, pointer, and merge-patch calls.
+- `fastjson_validate()` no longer accepts a trailing comma after container elements, such as `[[],]` or `[{"a":1},]`.
+- On 32-bit builds, the validate-only reader's stack growth no longer overflows its allocation size at depth 2^28 (vendor patch P-006).
+- Restore decoder and pointer error state after partial-output and throw-mode replacement failures.
+- `fastjson_validate()` reports "expected a string key" and "expected ':' after key" like `fastjson_decode()`.
 
 ## [0.8.0] - 2026-09-03
 
@@ -349,7 +329,8 @@ backed by yyjson 0.12.0.
 - U+2028 / U+2029 line separators emitted as ordinary code points
   (yyjson default). ext/json always escapes for JSONP safety.
 
-[Unreleased]: https://github.com/iliaal/fastjson/compare/0.8.0...HEAD
+[Unreleased]: https://github.com/iliaal/fastjson/compare/0.9.0...HEAD
+[0.9.0]: https://github.com/iliaal/fastjson/releases/tag/0.9.0
 [0.8.0]: https://github.com/iliaal/fastjson/releases/tag/0.8.0
 [0.7.0]: https://github.com/iliaal/fastjson/releases/tag/0.7.0
 [0.6.0]: https://github.com/iliaal/fastjson/releases/tag/0.6.0
