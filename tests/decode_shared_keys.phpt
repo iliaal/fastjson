@@ -18,7 +18,7 @@ function same(string $json, bool $assoc): void
 {
     $fast = fastjson_decode($json, $assoc);
     $ext = json_decode($json, $assoc);
-    var_dump($fast == $ext);
+    var_dump(serialize($fast) === serialize($ext));
 }
 
 $cases = [

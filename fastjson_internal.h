@@ -62,7 +62,8 @@ static zend_always_inline bool fastjson_string_wants_sized_writer(
         return true;
     }
     size_t used = buf->s ? ZSTR_LEN(buf->s) : 0;
-    return buf->a < used || buf->a - used < len * 6 + 2;
+    /* smart_str_alloc() grows once used + add reaches a, so equal is short. */
+    return buf->a < used || buf->a - used <= len * 6 + 2;
 }
 /* Non-ASCII preflight measured +75%/+160% on x86_64/aarch64 at 1 MiB.
  * Delay it until the 6x reservation reaches 48 MiB against a 128M memory_limit.
