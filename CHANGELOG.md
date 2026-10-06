@@ -6,6 +6,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- `fastjson_file_encode()` returns `false` with "Failed to write file" when the stream accepts every write but its flush fails, instead of reporting success.
+
 ## [0.9.0] - 2026-09-29
 
 ### Changed
