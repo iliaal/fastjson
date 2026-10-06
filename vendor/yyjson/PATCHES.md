@@ -1,8 +1,8 @@
 # Patches applied to vendored yyjson sources
 
 The bundled yyjson sources at `vendor/yyjson/yyjson.{c,h}` are
-upstream's tag 0.13.0 with seven local modifications (P-002 through
-P-008) documented below. The upstream `vendor/yyjson/LICENSE` and
+upstream's tag 0.13.0 with eight local modifications (P-002 through
+P-009) documented below. The upstream `vendor/yyjson/LICENSE` and
 `vendor/yyjson/CHANGELOG.md` are unchanged.
 
 The patch files under `vendor/yyjson/patches/` are the canonical replayable
@@ -78,14 +78,12 @@ The function's structure tracks `read_root_minify` 1:1: labels
 upstream's, so a side-by-side diff of the two functions is the easiest
 re-port.
 
-Two details must follow upstream on a re-port. A closed nested
-container is an element of its parent, as upstream saves `ctn_len + 1`
-at `arr_begin`/`obj_begin`. `pop_ctn` sets `ctn_len` to 1, since the
-count is only tested against 0. Restoring the saved count left it 0
-after a leading nested container, so `[[],]` validated. With GCC 11
-`-O2`, setting it at pop instead of incrementing before `push_ctn`
-kept numeric documents 1-2% cheaper under callgrind. The
-trailing-comma scan starts before the
+Two details must follow upstream on a re-port. A closing bracket ends
+an empty container only directly after `[` or `{`, and a closed nested
+container is an element of its parent, so `[[],]` has a trailing comma.
+Upstream tracks this with `ctn_len`; since P-009 the validate reader
+uses separate `arr_val_first`/`obj_key_first` states after an opening
+bracket instead (see P-009). The trailing-comma scan starts before the
 closing bracket (`do { cur--; } while (*cur != ',');`, the 0.13.0
 form); starting at the bracket's successor reports the comma after it
 in `[[1,],`.
@@ -175,6 +173,12 @@ validity only. yyjson conflates the two: `YYJSON_READ_ALLOW_INVALID_UNICODE`
 *accept* raw control chars in strings. The result was `fastjson_decode()`
 and `fastjson_validate()` silently accepting `"[\"a\x01b\"]"` under
 `JSON_INVALID_UTF8_IGNORE`.
+
+**Permanent local patch.** Upstream declined this change
+([ibireme/yyjson#307](https://github.com/ibireme/yyjson/pull/307), closed
+2026-10-06): `ALLOW_INVALID_UNICODE` is meant to keep bad bytes and keep
+parsing, and raw control bytes count as bad bytes there. Re-apply on every
+yyjson upgrade.
 
 Fixing this in the reader (rather than post-parse in fastjson) is the
 correct layer: the check fires exactly where a string byte is consumed,
@@ -402,6 +406,99 @@ carries no extra state. The validate failure labels use the reader's
 is only a UTF-8 BOM (under `ALLOW_BOM`) as empty. To re-check after an
 upgrade, run every prefix of a corpus through validate and through the
 full reader with each flag set and diff the results.
+
+## P-009: faster validate scanning
+
+**File:** `vendor/yyjson/yyjson.c` (`read_root_validate` and the
+helpers above it)
+
+**Reason.** After P-008, validate cost 1.27-1.81x the instructions of a
+full parse of the same document, although it builds no tree. Every
+number ran a token-length prescan, then `read_num` on a stack copy;
+strings went through a byte-at-a-time scanner outside the state
+machine; whitespace was skipped one byte at a time.
+
+**Change.** Nothing outside `read_root_validate` and its helpers
+changes; P-008's no-copy design and 64-byte peak are unchanged.
+
+- Numbers. `read_num`, `read_inf` and `read_nan` read byte k + 1 of a
+  token only after byte k matched `[0-9A-Za-z+.-]`. `num_inplace_end` is
+  one past the last byte outside that set, found once per document by a
+  backward scan. A number starting before it is read in place, since
+  that byte stops it inside the buffer. `read_num_fast` accepts the
+  strict grammar when the integer digits plus a positive exponent stay
+  at most 308. `read_num` accepts the same bytes, ends at the same byte
+  and cannot round such a value to infinity, so these skip the float
+  conversion. Anything else (errors, `Inf`/`NaN`, a leading `0x`,
+  possible overflow) goes to `read_num`. Numbers in the trailing run
+  are copied with only the token and the byte after it, not the rest
+  of the input. With `NUMBER_AS_RAW` or `BIGNUM_AS_RAW` every number
+  takes the copy path, because those flags store a NUL through `pre`.
+  Before P-009 the in-place path shared `pre` across numbers, so the
+  second raw number wrote a NUL into the caller buffer. fastjson never
+  passes those flags to validate.
+- Strings. `read_str_validate` is inlined and uses `read_str`'s
+  16-byte ASCII unroll, then an 8-byte word test for quote, backslash,
+  control and non-ASCII bytes, while 16 bytes remain. UTF-8 uses
+  `read_str`'s 4-byte-load loops while 4 bytes remain and the old
+  per-byte check near `eof`. Messages, positions and the two UTF-8
+  spellings are unchanged.
+- Whitespace. Value states test whitespace first, and runs of two
+  spaces are skipped as in `read_root_pretty` while 32 bytes remain.
+- Structure. The container element count is gone: `arr_val_first` and
+  `obj_key_first` follow an opening bracket, so a closing bracket in
+  `arr_val_begin`/`obj_key_begin` always follows a comma. Out-of-line
+  readers get a copy of `cur` (`v_call`), so `cur` is not forced into
+  memory for the whole state machine.
+
+**Effect.** Callgrind instructions for 5 reads, GCC 11 `-O2`:
+
+| File | Parse | Validate before | Validate after | After / parse |
+|---|---:|---:|---:|---:|
+| twitter | 19,293,433 | 30,064,471 | 17,258,226 | 0.89 |
+| twitterescaped | 24,388,580 | 31,217,849 | 19,359,739 | 0.79 |
+| canada | 166,851,402 | 270,603,182 | 82,268,242 | 0.49 |
+| citm_catalog | 46,485,313 | 83,996,338 | 36,163,503 | 0.78 |
+| github_events | 2,025,179 | 2,566,921 | 1,643,311 | 0.81 |
+| gsoc-2018 | 65,824,904 | 85,397,224 | 48,903,724 | 0.74 |
+| mesh | 62,369,067 | 106,195,116 | 34,327,836 | 0.55 |
+| marine_ik | 202,357,072 | 337,512,760 | 116,319,650 | 0.57 |
+| random | 24,958,335 | 37,352,489 | 21,607,114 | 0.87 |
+
+`read_root_validate` stays inlined into `yyjson_read_opts`, as before.
+The parse paths in the same function moved by -0.67% to +1.72%
+(random +1.72%, mesh +1.10%, canada -0.67%) from register allocation
+and block layout alone; their source is unchanged. Marking
+`read_root_validate` noinline leaves parse within 0.13% of the old
+numbers, but validate then costs 4-17% more, and twitter rises to
+0.97x parse.
+
+**Verification.** A differential harness compared validate with the full
+reader on 1,180,735 inputs: every prefix of the yyjson test corpus and
+the small bench files, 279 prefixes and 20 mutants of each large bench
+file, random byte mutants, and generated cases (truncated escapes and
+surrogates, invalid UTF-8 before and after an escape, control bytes,
+numbers and literals at `eof`, bignums, `1e999`, `-Infinity`/`NaN`,
+digit runs over 256 bytes, whitespace runs around the 32-byte skip,
+strings around the 16-byte skip). Each ran under the 8 combinations of
+the six fastjson flags plus `ALLOW_COMMENTS`, `ALLOW_TRAILING_COMMAS`
+and `ALLOW_BOM` alone and three RAW-flag combinations, on exact-length
+buffers under ASAN/UBSan, and again with junk after `len`; the input
+was compared byte for byte afterwards. Success, code, position, message
+and nesting matched in all 16,530,290 checks (9,445,880 in the core
+combinations). On the P-008 tree the same harness found 3,083 caller
+buffer writes under `NUMBER_AS_RAW | ALLOW_INF_AND_NAN`. Four
+600-second libFuzzer jobs (about 4.6 million inputs) that abort on any
+difference found none.
+
+**Re-apply recipe on yyjson upgrade.** Confirm that `read_num`,
+`read_num_raw`, `read_num_hex`, `read_inf` and `read_nan` still read a
+byte only after the previous one matched `[0-9A-Za-z+.-]`, that they
+write only through `pre` and only under the RAW flags, and that
+`read_num` reports infinity only for values of at least 1e308
+(`F64_MAX_DEC_EXP`). Re-check `read_str`'s messages and the stop set of
+`char_is_ascii_skip`. Then rerun the prefix harness described in P-008
+with the RAW flags included.
 
 ## Build-flag dependencies (not vendor patches)
 

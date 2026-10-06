@@ -6286,222 +6286,311 @@ fail_depth:             return_err(cur, DEPTH, MSG_DEPTH);
  * messages and positions match read_str: its padded reads see zero bytes
  * past eof, and it spells the UTF-8 message differently before and after
  * the first escape in a string. The spelling is picked on the error path
- * so the scan loop carries no extra state. */
-static bool yy_hex4(const u8 *s, u32 *out) {
-    u32 u = 0;
-    for (int k = 0; k < 4; k++) {
-        u8 h = s[k];
-        u32 d;
-        if (h >= '0' && h <= '9') d = (u32)(h - '0');
-        else if (h >= 'a' && h <= 'f') d = (u32)(h - 'a' + 10);
-        else if (h >= 'A' && h <= 'F') d = (u32)(h - 'A' + 10);
-        else return false;
-        u = (u << 4) | d;
-    }
-    *out = u;
-    return true;
+ * so the scan loop carries no extra state.
+ *
+ * The 16-byte ASCII skip and the 8-byte word skip run only while src is
+ * below str_lim, so at least 16 bytes remain. The last 15 bytes are
+ * scanned one at a time. The UTF-8 and escape paths load up to 4 and 6
+ * bytes and check eof themselves. */
+static_inline u8 *str_inplace_lim(u8 *hdr, u8 *eof) {
+    return (usize)(eof - hdr) >= 16 ? eof - 15 : hdr;
 }
 
-static bool read_str_validate(u8 **ptr, u8 *eof, yyjson_read_flag flg,
-                              yyjson_val *val, const char **msg) {
-    u8 *src = *ptr;
-    (void)val;
-    if (src >= eof || *src != '"') {
-        *msg = "unexpected character, expected a string";
+/* True if any of the 8 bytes stops the ASCII skip: a quote, backslash,
+ * control byte or non-ASCII byte. A top bit survives the final mask only
+ * if some byte matches, since every other byte lies in [0x20, 0x7F]. */
+static_inline bool str_word_has_stop(const u8 *src) {
+    u64 ones = U64(0x01010101, 0x01010101);
+    u64 w, q, b;
+    memcpy(&w, src, 8);
+    q = w ^ (ones * '"');
+    b = w ^ (ones * '\\');
+    return (((q - ones) | (b - ones) | (w - ones * 0x20) | w) &
+            (ones * 0x80)) != 0;
+}
+
+static_inline bool read_str_validate(u8 **ptr, u8 *str_lim, u8 *eof,
+                                     yyjson_read_flag flg,
+                                     const char **msg) {
+    u8 *src = *ptr + 1;
+    u8 *esc, *pos;
+    u32 uni, tmp;
+    u16 hi, lo;
+
+skip_ascii:
+    if (likely(src < str_lim)) {
+#define expr_jump(i) \
+        if (likely(char_is_ascii_skip(src[i]))) {} \
+        else goto skip_ascii_stop##i;
+#define expr_stop(i) \
+        skip_ascii_stop##i: \
+        src += i; \
+        goto skip_ascii_end;
+        repeat16_incr(expr_jump)
+        src += 16;
+        while (src < str_lim && !str_word_has_stop(src)) src += 8;
+        goto skip_ascii;
+        repeat16_incr(expr_stop)
+#undef expr_jump
+#undef expr_stop
+    }
+    while (src < eof && char_is_ascii_skip(*src)) src++;
+    if (unlikely(src >= eof)) {
+        *ptr = eof;
+        *msg = "unclosed string";
         return false;
     }
-    src++;
-    while (src < eof) {
-        if (src + 16 <= eof) {
-#define expr_vjump(i) \
-            if (likely(char_is_ascii_skip(src[i]))) {} \
-            else goto vskip_stop##i;
-#define expr_vstop(i) \
-            vskip_stop##i: \
-            src += i; \
-            goto vskip_end;
-            repeat16_incr(expr_vjump)
-            src += 16;
-            goto vskip_cont;
-            repeat16_incr(expr_vstop)
-#undef expr_vjump
-#undef expr_vstop
-        }
-vskip_end:
-        if (src >= eof) break;
-vskip_cont:
-        if (src >= eof) break;
-        if (*src == '"') {
-            *ptr = src + 1;
-            return true;
-        }
-        if (*src == '\\') {
-            u8 *esc = src;
-            src++;
-            if (src >= eof) {
-                *ptr = esc;
-                *msg = "invalid escaped sequence in string";
-                return false;
-            }
-            switch (*src) {
-            case '"': case '\\': case '/':
-            case 'b': case 'f': case 'n': case 'r': case 't':
-                src++;
-                break;
-            case 'u': {
-                u32 u, u2;
-                src++;
-                if (src + 4 > eof || !yy_hex4(src, &u)) {
-                    *ptr = esc;
-                    *msg = "invalid escaped sequence in string";
-                    return false;
-                }
-                src += 4;
-                if ((u & 0xF800) == 0xD800) {
-                    *ptr = esc;
-                    if ((u & 0xFC00) != 0xD800) {
-                        *msg = "invalid high surrogate in string";
-                        return false;
-                    }
-                    if (src + 2 > eof || src[0] != '\\' || src[1] != 'u') {
-                        *msg = "no low surrogate in string";
-                        return false;
-                    }
-                    if (src + 6 > eof || !yy_hex4(src + 2, &u2)) {
-                        *msg = "invalid escape in string";
-                        return false;
-                    }
-                    if ((u2 & 0xFC00) != 0xDC00) {
-                        *msg = "invalid low surrogate in string";
-                        return false;
-                    }
-                    src += 6;
-                }
-                break;
-            }
-            default:
-                *ptr = esc;
-                *msg = "invalid escaped sequence in string";
-                return false;
-            }
-            continue;
-        }
-        if (*src < 0x20) {
-            *ptr = src;
-            *msg = "unexpected control character in string";
-            return false;
-        }
-        if (*src < 0x80) {
-            src++;
-            continue;
-        }
-        {
-            u8 c = *src;
-            usize need = c < 0xE0 ? 2 : (c < 0xF0 ? 3 : 4);
-            bool ok = false;
-            if (c >= 0xC2 && c <= 0xF4 && src + need <= eof) {
-                ok = true;
-                if (c < 0xE0) {
-                    ok = (src[1] & 0xC0) == 0x80;
-                } else if (c < 0xF0) {
-                    ok = (src[1] & 0xC0) == 0x80 && (src[2] & 0xC0) == 0x80
-                        && !(c == 0xE0 && src[1] < 0xA0)
-                        && !(c == 0xED && src[1] >= 0xA0);
-                } else {
-                    ok = need == 4 && c <= 0xF4
-                        && (src[1] & 0xC0) == 0x80
-                        && (src[2] & 0xC0) == 0x80
-                        && (src[3] & 0xC0) == 0x80
-                        && !(c == 0xF0 && src[1] < 0x90)
-                        && !(c == 0xF4 && src[1] >= 0x90);
-                }
-            }
-            if (ok) {
-                src += need;
-                continue;
-            }
-            if (has_allow(INVALID_UNICODE)) {
-                src++;
-                continue;
-            }
-            /* Any '\\' before src in this string belongs to an escape. */
-            *msg = memchr(*ptr, '\\', (usize)(src - *ptr)) ? MSG_ERR_UTF8
-                : "invalid UTF-8 encoding in string";
-            *ptr = src;
-            return false;
-        }
+
+skip_ascii_end:
+    gcc_store_barrier(*src);
+    if (likely(*src == '"')) {
+        *ptr = src + 1;
+        return true;
     }
-    *ptr = src < eof ? src : eof;
-    *msg = "unclosed string";
+    if (*src & 0x80) goto skip_utf8;
+    if (*src == '\\') goto skip_escape;
+    *ptr = src;
+    *msg = "unexpected control character in string";
+    return false;
+
+skip_utf8:
+    if (likely((usize)(eof - src) >= 4)) {
+        pos = src;
+        uni = byte_load_4(src);
+        while (is_utf8_seq3(uni)) {
+            src += 3;
+            if ((usize)(eof - src) < 4) goto skip_ascii;
+            uni = byte_load_4(src);
+        }
+        if (is_utf8_seq1(uni)) goto skip_ascii;
+        while (is_utf8_seq2(uni)) {
+            src += 2;
+            if ((usize)(eof - src) < 4) goto skip_ascii;
+            uni = byte_load_4(src);
+        }
+        while (is_utf8_seq4(uni)) {
+            src += 4;
+            if ((usize)(eof - src) < 4) goto skip_ascii;
+            uni = byte_load_4(src);
+        }
+        if (likely(pos != src)) goto skip_ascii;
+        goto utf8_invalid;
+    } else {
+        u8 c = *src;
+        usize need = c < 0xE0 ? 2 : (c < 0xF0 ? 3 : 4);
+        bool ok = false;
+        if (c >= 0xC2 && c <= 0xF4 && need <= (usize)(eof - src)) {
+            if (c < 0xE0) {
+                ok = (src[1] & 0xC0) == 0x80;
+            } else if (c < 0xF0) {
+                ok = (src[1] & 0xC0) == 0x80 && (src[2] & 0xC0) == 0x80
+                    && !(c == 0xE0 && src[1] < 0xA0)
+                    && !(c == 0xED && src[1] >= 0xA0);
+            }
+        }
+        if (!ok) goto utf8_invalid;
+        src += need;
+    }
+    goto skip_ascii;
+
+utf8_invalid:
+    if (has_allow(INVALID_UNICODE)) {
+        src++;
+        goto skip_ascii;
+    }
+    /* Any '\\' before src in this string belongs to an escape. */
+    *msg = memchr(*ptr, '\\', (usize)(src - *ptr)) ? MSG_ERR_UTF8
+        : "invalid UTF-8 encoding in string";
+    *ptr = src;
+    return false;
+
+skip_escape:
+    esc = src;
+    if (unlikely((usize)(eof - src) < 2)) goto esc_invalid;
+    switch (src[1]) {
+        case '"': case '\\': case '/':
+        case 'b': case 'f': case 'n': case 'r': case 't':
+            src += 2;
+            goto skip_ascii;
+        case 'u':
+            if ((usize)(eof - src) < 6 || !hex_load_4(src + 2, &hi)) {
+                goto esc_invalid;
+            }
+            src += 6;
+            if (likely((hi & 0xF800) != 0xD800)) goto skip_ascii;
+            *ptr = esc;
+            if ((hi & 0xFC00) != 0xD800) {
+                *msg = "invalid high surrogate in string";
+                return false;
+            }
+            if ((usize)(eof - src) < 2 || !byte_match_2(src, "\\u")) {
+                *msg = "no low surrogate in string";
+                return false;
+            }
+            if ((usize)(eof - src) < 6 || !hex_load_4(src + 2, &lo)) {
+                *msg = "invalid escape in string";
+                return false;
+            }
+            if ((lo & 0xFC00) != 0xDC00) {
+                *msg = "invalid low surrogate in string";
+                return false;
+            }
+            src += 6;
+            goto skip_ascii;
+        default:
+            goto esc_invalid;
+    }
+
+esc_invalid:
+    *ptr = esc;
+    *msg = "invalid escaped sequence in string";
     return false;
 }
 
-/* Bytes read_num / read_inf may consume. A byte outside this set stops
- * the token, so the one-byte lookahead stays inside the caller buffer. */
-static bool yy_num_token_has_stop(const u8 *cur, const u8 *eof) {
-    for (const u8 *p = cur; p < eof; p++) {
-        u8 c = *p;
-        if (c >= '0' && c <= '9') continue;
-        switch (c) {
-            case '+': case '-': case '.':
-            case 'e': case 'E': case 'x': case 'X':
-            case 'a': case 'A': case 'b': case 'B': case 'c': case 'C':
-            case 'd': case 'D': case 'f': case 'F':
-            case 'i': case 'I': case 'n': case 'N': case 'y': case 'Y':
-                continue;
-            default:
-                return true;
-        }
+/* cur is at a whitespace byte. Indentation is skipped two spaces at a
+ * time, as read_root_pretty does, while 32 bytes remain. */
+static_inline u8 *skip_space_validate(u8 *cur, u8 *eof) {
+    cur++;
+    if (cur < eof && char_is_space(*cur)) {
+        while ((usize)(eof - cur) >= 32) repeat16({
+            if (byte_match_2(cur, "  ")) cur += 2;
+            else break;
+        })
+        while (cur < eof && char_is_space(*cur)) cur++;
     }
-    return false;
+    return cur;
 }
 
-static bool read_num_bounded(u8 **cur, u8 *eof, u8 **pre,
-                             yyjson_read_flag flg, yyjson_val *val,
-                             const char **msg, yyjson_alc *alc) {
+/* read_num, read_inf and read_nan read byte k + 1 of a token only after
+ * byte k matched [0-9A-Za-z+.-]. A number that starts before num_end, one
+ * past the last byte outside that set, therefore stops inside the buffer
+ * and is read in place. NUMBER_AS_RAW and BIGNUM_AS_RAW store a NUL
+ * through *pre, which would land in the caller buffer, so with either
+ * flag every number takes the copy path. */
+static_inline bool char_is_num_tok(u8 c) {
+    return !!((char_table1[c] & CHAR_TYPE_NUM) |
+              (char_table2[c] & CHAR_TYPE_ID_ASCII));
+}
+
+static_inline u8 *num_inplace_end(u8 *hdr, u8 *eof, yyjson_read_flag flg) {
+    u8 *end = eof;
+    if (has_flg(NUMBER_AS_RAW) || has_flg(BIGNUM_AS_RAW)) return hdr;
+    while (end > hdr && char_is_num_tok(end[-1])) end--;
+    return end;
+}
+
+/* Reads the number from a zero-padded copy of its token and the byte
+ * after it, which is all read_num can look at. A token that runs to eof
+ * sees the same zero padding the full reader does. */
+static_noinline bool read_num_bounded(u8 **cur, u8 *eof,
+                                      yyjson_read_flag flg, yyjson_val *val,
+                                      const char **msg, yyjson_alc *alc) {
     usize n = (usize)(eof - *cur);
-    /* 32 covers read_num's unrolled digit window and read_inf's 9-byte
-     * literal. A token that runs to eof still looks one byte past it. */
-    if (n >= 32 && yy_num_token_has_stop(*cur, eof)) {
-        return read_num(cur, pre, flg, val, msg);
-    }
+    usize len = 0;
     u8 stack[256 + YYJSON_PADDING_SIZE];
     u8 *tmp = stack;
     bool heap = false;
-    if (n > 256) {
-        if (n > USIZE_MAX - YYJSON_PADDING_SIZE) {
+    while (len < n && char_is_num_tok((*cur)[len])) len++;
+    if (len < n) len++;
+    if (len > 256) {
+        if (len > USIZE_MAX - YYJSON_PADDING_SIZE) {
             *msg = MSG_MALLOC;
             return false;
         }
-        tmp = (u8 *)alc->malloc(alc->ctx, n + YYJSON_PADDING_SIZE);
+        tmp = (u8 *)alc->malloc(alc->ctx, len + YYJSON_PADDING_SIZE);
         if (!tmp) {
             *msg = MSG_MALLOC;
             return false;
         }
         heap = true;
     }
-    memcpy(tmp, *cur, n);
-    memset(tmp + n, 0, YYJSON_PADDING_SIZE);
+    memcpy(tmp, *cur, len);
+    memset(tmp + len, 0, YYJSON_PADDING_SIZE);
     u8 *t = tmp;
     u8 sink = 0;
     u8 *sinkp = &sink;
     bool ok = read_num(&t, &sinkp, flg, val, msg);
     usize used = (usize)(t - tmp);
-    if (used > n) used = n;
+    if (used > len) used = len;
     *cur += used;
     if (heap) alc->free(alc->ctx, tmp);
     return ok;
 }
 
+/* Accepts a number in the strict grammar whose magnitude stays below
+ * 1e308. read_num accepts the same bytes, stops at the same byte and does
+ * not round it to infinity, so it is skipped. Everything else, errors
+ * included, goes to read_num. Like read_num, this reads a byte only after
+ * the previous one matched [0-9A-Za-z+.-]. */
+static_inline bool read_num_fast(u8 **ptr) {
+    u8 *cur = *ptr;
+    usize mag = 0;
+    cur += (*cur == '-');
+    if (*cur == '0') {
+        cur++;
+        if (char_is_digit(*cur) || char_to_lower(*cur) == 'x') return false;
+    } else {
+        u8 *dig = cur;
+        if (!char_is_digit(*cur)) return false;
+        while (char_is_digit(*++cur));
+        mag = (usize)(cur - dig);
+    }
+    if (*cur == '.') {
+        if (!char_is_digit(*++cur)) return false;
+        while (char_is_digit(*++cur));
+    }
+    if (char_is_exp(*cur)) {
+        u32 exp = 0;
+        bool neg = (*++cur == '-');
+        cur += char_is_sign(*cur);
+        if (!char_is_digit(*cur)) return false;
+        do {
+            if (exp < 100000) exp = exp * 10 + (u32)(*cur - '0');
+        } while (char_is_digit(*++cur));
+        if (!neg) mag += exp;
+    }
+    if (mag > F64_MAX_DEC_EXP) return false;
+    *ptr = cur;
+    return true;
+}
+
+static_noinline bool read_num_inplace(u8 **cur, u8 **pre,
+                                      yyjson_read_flag flg, yyjson_val *val,
+                                      const char **msg) {
+    return read_num(cur, pre, flg, val, msg);
+}
+
+/* pre is only dereferenced under the RAW flags, which never read in
+ * place. The out-of-line readers get cur through a local so cur itself
+ * stays out of memory in the state machine. */
+static_inline bool read_num_validate(u8 **cur, u8 *num_end, u8 *eof,
+                                     u8 **pre, yyjson_read_flag flg,
+                                     yyjson_val *val, const char **msg,
+                                     yyjson_alc *alc) {
+    u8 *tmp = *cur;
+    bool ok;
+    if (likely(tmp < num_end)) {
+        if (likely(read_num_fast(&tmp))) {
+            *cur = tmp;
+            return true;
+        }
+        ok = read_num_inplace(&tmp, pre, flg, val, msg);
+    } else {
+        ok = read_num_bounded(&tmp, eof, flg, val, msg, alc);
+    }
+    *cur = tmp;
+    return ok;
+}
+
 /* read_inf looks at up to 9 bytes (sign + "infinity"). */
-static bool read_inf_or_nan_bounded(u8 **cur, u8 *eof, u8 **pre,
+static bool read_inf_or_nan_bounded(u8 **cur, u8 *eof,
                                     yyjson_read_flag flg, yyjson_val *val) {
     usize n = (usize)(eof - *cur);
-    if (n >= 9) return read_inf_or_nan(cur, pre, flg, val);
-    u8 tmp[16];
-    u8 *t = tmp;
     u8 sink = 0;
     u8 *sinkp = &sink;
+    if (n >= 9) return read_inf_or_nan(cur, &sinkp, flg, val);
+    u8 tmp[16];
+    u8 *t = tmp;
     memcpy(tmp, *cur, n);
     memset(tmp + n, 0, sizeof(tmp) - n);
     if (!read_inf_or_nan(&t, &sinkp, flg, val)) return false;
@@ -6511,14 +6600,14 @@ static bool read_inf_or_nan_bounded(u8 **cur, u8 *eof, u8 **pre,
     return true;
 }
 
-static bool read_nan_bounded(u8 **cur, u8 *eof, u8 **pre,
+static bool read_nan_bounded(u8 **cur, u8 *eof,
                              yyjson_read_flag flg, yyjson_val *val) {
     usize n = (usize)(eof - *cur);
-    if (n >= 4) return read_nan(cur, pre, flg, val);
-    u8 tmp[8];
-    u8 *t = tmp;
     u8 sink = 0;
     u8 *sinkp = &sink;
+    if (n >= 4) return read_nan(cur, &sinkp, flg, val);
+    u8 tmp[8];
+    u8 *t = tmp;
     memcpy(tmp, *cur, n);
     memset(tmp + n, 0, sizeof(tmp) - n);
     if (!read_nan(&t, &sinkp, flg, val)) return false;
@@ -6528,17 +6617,17 @@ static bool read_nan_bounded(u8 **cur, u8 *eof, u8 **pre,
     return true;
 }
 
-static bool read_true_bounded(u8 **cur, u8 *eof, yyjson_val *val) {
+static_inline bool read_true_bounded(u8 **cur, u8 *eof, yyjson_val *val) {
     if ((usize)(eof - *cur) < 4) return false;
     return read_true(cur, val);
 }
 
-static bool read_false_bounded(u8 **cur, u8 *eof, yyjson_val *val) {
+static_inline bool read_false_bounded(u8 **cur, u8 *eof, yyjson_val *val) {
     if ((usize)(eof - *cur) < 5) return false;
     return read_false(cur, val);
 }
 
-static bool read_null_bounded(u8 **cur, u8 *eof, yyjson_val *val) {
+static_inline bool read_null_bounded(u8 **cur, u8 *eof, yyjson_val *val) {
     if ((usize)(eof - *cur) < 4) return false;
     return read_null(cur, val);
 }
@@ -6606,15 +6695,12 @@ static yyjson_doc *read_root_validate(u8 *hdr, u8 *cur, u8 *eof,
         stack_buf = new_buf; \
         stack_cap = new_cap; \
     } \
-    stack_buf[depth++] = ((u64)ctn_len << 1) | (is_obj & 1); \
-    ctn_len = 0; \
+    stack_buf[depth++] = is_obj & 1; \
     is_obj = (_is_obj); \
 } while (false)
 
 #define pop_ctn() do { \
-    u64 _saved = stack_buf[--depth]; \
-    ctn_len = 1; /* the closed container is an element of its parent */ \
-    is_obj = (u8)(_saved & 1); \
+    is_obj = (u8)(stack_buf[--depth] & 1); \
 } while (false)
 
     enum { INLINE_DEPTH = 32 };
@@ -6624,7 +6710,6 @@ static yyjson_doc *read_root_validate(u8 *hdr, u8 *cur, u8 *eof,
     usize depth = 0;
     usize max_ctn = 0;
     u8 is_obj = 0;
-    usize ctn_len = 0;
     yyjson_val dummy;
     yyjson_val *val = &dummy;
     yyjson_doc *doc;
@@ -6633,28 +6718,36 @@ static yyjson_doc *read_root_validate(u8 *hdr, u8 *cur, u8 *eof,
     u8 raw_end[1];
     u8 *raw_ptr = raw_end;
     u8 **pre = &raw_ptr;
+    u8 *num_end = num_inplace_end(hdr, eof, flg);
+    u8 *str_lim = str_inplace_lim(hdr, eof);
+    u8 *vcur;
+    bool vok;
+
+/* Out-of-line readers get a copy of cur. Passing &cur itself would keep
+ * cur in memory for the whole state machine. */
+#define v_call(_call) (vcur = cur, vok = (_call), cur = vcur, vok)
 
     /* Top-level: dispatch on '{' / '[' / scalar. */
     if (*cur == '{') {
         cur++;
         is_obj = 1;
         max_ctn = 1;
-        goto obj_key_begin;
+        goto obj_key_first;
     } else if (*cur == '[') {
         cur++;
         is_obj = 0;
         max_ctn = 1;
-        goto arr_val_begin;
+        goto arr_val_first;
     } else {
         /* Top-level scalar. Do not call read_root_single: it writes a
          * NUL into the buffer, and validate may be reading the caller. */
         if (unlikely(cur >= eof)) goto fail_character_val;
         if (*cur == '"') {
-            if (likely(read_str_validate(&cur, eof, flg, val, &msg))) goto doc_end;
+            if (likely(v_call(read_str_validate(&vcur, str_lim, eof, flg, &msg)))) goto doc_end;
             goto fail_string;
         }
         if (char_is_num(*cur)) {
-            if (likely(read_num_bounded(&cur, eof, pre, flg, val, &msg, &alc))) goto doc_end;
+            if (likely(read_num_validate(&cur, num_end, eof, pre, flg, val, &msg, &alc))) goto doc_end;
             if (msg != NULL && strcmp(msg, MSG_MALLOC) == 0) goto fail_alloc;
             goto fail_number;
         }
@@ -6669,73 +6762,80 @@ static yyjson_doc *read_root_validate(u8 *hdr, u8 *cur, u8 *eof,
         if (*cur == 'n') {
             if (likely(read_null_bounded(&cur, eof, val))) goto doc_end;
             if (has_allow(INF_AND_NAN)) {
-                if (read_nan_bounded(&cur, eof, pre, flg, val)) goto doc_end;
+                if (v_call(read_nan_bounded(&vcur, eof, flg, val))) goto doc_end;
             }
             goto fail_literal_null;
         }
         if (has_allow(INF_AND_NAN)) {
-            if (read_inf_or_nan_bounded(&cur, eof, pre, flg, val)) goto doc_end;
+            if (v_call(read_inf_or_nan_bounded(&vcur, eof, flg, val))) goto doc_end;
         }
         goto fail_character_val;
     }
 
+/* The *_first states follow '[' or '{', so a closing bracket there ends
+ * an empty container. In *_begin it follows a comma. */
+arr_val_first:
+    if (unlikely(cur >= eof)) goto fail_character_val;
+    if (*cur == ']') { cur++; goto arr_end; }
+    if (char_is_space(*cur)) {
+        cur = skip_space_validate(cur, eof);
+        goto arr_val_first;
+    }
+    if (has_allow(TRIVIA) && char_is_trivia(*cur)) {
+        if (v_call(skip_trivia(&vcur, eof, flg))) goto arr_val_first;
+        if (cur == eof) goto fail_comment;
+    }
+    goto arr_val_begin;
+
 arr_val_begin:
     if (unlikely(cur >= eof)) goto fail_character_val;
-    if (*cur == '{') { cur++; push_ctn(1); if (depth + 1 > max_ctn) max_ctn = depth + 1; goto obj_key_begin; }
-    if (*cur == '[') { cur++; push_ctn(0); if (depth + 1 > max_ctn) max_ctn = depth + 1; goto arr_val_begin; }
+    if (char_is_space(*cur)) {
+        cur = skip_space_validate(cur, eof);
+        goto arr_val_begin;
+    }
+    if (*cur == '{') { cur++; push_ctn(1); if (depth + 1 > max_ctn) max_ctn = depth + 1; goto obj_key_first; }
+    if (*cur == '[') { cur++; push_ctn(0); if (depth + 1 > max_ctn) max_ctn = depth + 1; goto arr_val_first; }
     if (char_is_num(*cur)) {
-        ctn_len++;
-        if (likely(read_num_bounded(&cur, eof, pre, flg, val, &msg, &alc))) goto arr_val_end;
+        if (likely(read_num_validate(&cur, num_end, eof, pre, flg, val, &msg, &alc))) goto arr_val_end;
         if (msg != NULL && strcmp(msg, MSG_MALLOC) == 0) goto fail_alloc;
         goto fail_number;
     }
     if (*cur == '"') {
-        ctn_len++;
-        if (likely(read_str_validate(&cur, eof, flg, val, &msg))) goto arr_val_end;
+        if (likely(v_call(read_str_validate(&vcur, str_lim, eof, flg, &msg)))) goto arr_val_end;
         goto fail_string;
     }
     if (*cur == 't') {
-        ctn_len++;
         if (likely(read_true_bounded(&cur, eof, val))) goto arr_val_end;
         goto fail_literal_true;
     }
     if (*cur == 'f') {
-        ctn_len++;
         if (likely(read_false_bounded(&cur, eof, val))) goto arr_val_end;
         goto fail_literal_false;
     }
     if (*cur == 'n') {
-        ctn_len++;
         if (likely(read_null_bounded(&cur, eof, val))) goto arr_val_end;
         if (has_allow(INF_AND_NAN)) {
-            if (read_nan_bounded(&cur, eof, pre, flg, val)) goto arr_val_end;
+            if (v_call(read_nan_bounded(&vcur, eof, flg, val))) goto arr_val_end;
         }
         goto fail_literal_null;
     }
     if (*cur == ']') {
         cur++;
-        if (likely(ctn_len == 0)) goto arr_end;
         if (has_allow(TRAILING_COMMAS)) goto arr_end;
         do { cur--; } while (*cur != ',');
         goto fail_trailing_comma;
     }
-    if (char_is_space(*cur)) {
-        while (++cur < eof && char_is_space(*cur));
-        goto arr_val_begin;
-    }
     if (has_allow(INF_AND_NAN) &&
         (*cur == 'i' || *cur == 'I' || *cur == 'N')) {
-        ctn_len++;
-        if (read_inf_or_nan_bounded(&cur, eof, pre, flg, val)) goto arr_val_end;
+        if (v_call(read_inf_or_nan_bounded(&vcur, eof, flg, val))) goto arr_val_end;
         goto fail_character_val;
     }
     if (has_allow(SINGLE_QUOTED_STR) && *cur == '\'') {
-        ctn_len++;
-        if (likely(read_str_sq(&cur, eof, flg, val, &msg))) goto arr_val_end;
+        if (likely(v_call(read_str_sq(&vcur, eof, flg, val, &msg)))) goto arr_val_end;
         goto fail_string;
     }
     if (has_allow(TRIVIA) && char_is_trivia(*cur)) {
-        if (skip_trivia(&cur, eof, flg)) goto arr_val_begin;
+        if (v_call(skip_trivia(&vcur, eof, flg))) goto arr_val_begin;
         if (cur == eof) goto fail_comment;
     }
     goto fail_character_val;
@@ -6745,11 +6845,11 @@ arr_val_end:
     if (*cur == ',') { cur++; goto arr_val_begin; }
     if (*cur == ']') { cur++; goto arr_end; }
     if (char_is_space(*cur)) {
-        while (++cur < eof && char_is_space(*cur));
+        cur = skip_space_validate(cur, eof);
         goto arr_val_end;
     }
     if (has_allow(TRIVIA) && char_is_trivia(*cur)) {
-        if (skip_trivia(&cur, eof, flg)) goto arr_val_end;
+        if (v_call(skip_trivia(&vcur, eof, flg))) goto arr_val_end;
         if (cur == eof) goto fail_comment;
     }
     goto fail_character_arr_end;
@@ -6760,36 +6860,45 @@ arr_end:
     if (is_obj) goto obj_val_end;
     else goto arr_val_end;
 
+obj_key_first:
+    if (unlikely(cur >= eof)) goto fail_character_obj_key;
+    if (*cur == '}') { cur++; goto obj_end; }
+    if (char_is_space(*cur)) {
+        cur = skip_space_validate(cur, eof);
+        goto obj_key_first;
+    }
+    if (has_allow(TRIVIA) && char_is_trivia(*cur)) {
+        if (v_call(skip_trivia(&vcur, eof, flg))) goto obj_key_first;
+        if (cur == eof) goto fail_comment;
+    }
+    goto obj_key_begin;
+
 obj_key_begin:
     if (unlikely(cur >= eof)) goto fail_character_obj_key;
     if (likely(*cur == '"')) {
-        ctn_len++;
-        if (likely(read_str_validate(&cur, eof, flg, val, &msg))) goto obj_key_end;
+        if (likely(v_call(read_str_validate(&vcur, str_lim, eof, flg, &msg)))) goto obj_key_end;
         goto fail_string;
     }
     if (likely(*cur == '}')) {
         cur++;
-        if (likely(ctn_len == 0)) goto obj_end;
         if (has_allow(TRAILING_COMMAS)) goto obj_end;
         do { cur--; } while (*cur != ',');
         goto fail_trailing_comma;
     }
     if (char_is_space(*cur)) {
-        while (++cur < eof && char_is_space(*cur));
+        cur = skip_space_validate(cur, eof);
         goto obj_key_begin;
     }
     if (has_allow(SINGLE_QUOTED_STR) && *cur == '\'') {
-        ctn_len++;
-        if (likely(read_str_sq(&cur, eof, flg, val, &msg))) goto obj_key_end;
+        if (likely(v_call(read_str_sq(&vcur, eof, flg, val, &msg)))) goto obj_key_end;
         goto fail_string;
     }
     if (has_allow(UNQUOTED_KEY) && char_is_id_start(*cur)) {
-        ctn_len++;
-        if (read_str_id(&cur, eof, flg, pre, val, &msg)) goto obj_key_end;
+        if (v_call(read_str_id(&vcur, eof, flg, pre, val, &msg))) goto obj_key_end;
         goto fail_string;
     }
     if (has_allow(TRIVIA) && char_is_trivia(*cur)) {
-        if (skip_trivia(&cur, eof, flg)) goto obj_key_begin;
+        if (v_call(skip_trivia(&vcur, eof, flg))) goto obj_key_begin;
         if (cur == eof) goto fail_comment;
     }
     goto fail_character_obj_key;
@@ -6798,28 +6907,32 @@ obj_key_end:
     if (unlikely(cur >= eof)) goto fail_character_obj_sep;
     if (*cur == ':') { cur++; goto obj_val_begin; }
     if (char_is_space(*cur)) {
-        while (++cur < eof && char_is_space(*cur));
+        cur = skip_space_validate(cur, eof);
         goto obj_key_end;
     }
     if (has_allow(TRIVIA) && char_is_trivia(*cur)) {
-        if (skip_trivia(&cur, eof, flg)) goto obj_key_end;
+        if (v_call(skip_trivia(&vcur, eof, flg))) goto obj_key_end;
         if (cur == eof) goto fail_comment;
     }
     goto fail_character_obj_sep;
 
 obj_val_begin:
     if (unlikely(cur >= eof)) goto fail_character_val;
+    if (char_is_space(*cur)) {
+        cur = skip_space_validate(cur, eof);
+        goto obj_val_begin;
+    }
     if (*cur == '"') {
-        if (likely(read_str_validate(&cur, eof, flg, val, &msg))) goto obj_val_end;
+        if (likely(v_call(read_str_validate(&vcur, str_lim, eof, flg, &msg)))) goto obj_val_end;
         goto fail_string;
     }
     if (char_is_num(*cur)) {
-        if (likely(read_num_bounded(&cur, eof, pre, flg, val, &msg, &alc))) goto obj_val_end;
+        if (likely(read_num_validate(&cur, num_end, eof, pre, flg, val, &msg, &alc))) goto obj_val_end;
         if (msg != NULL && strcmp(msg, MSG_MALLOC) == 0) goto fail_alloc;
         goto fail_number;
     }
-    if (*cur == '{') { cur++; push_ctn(1); if (depth + 1 > max_ctn) max_ctn = depth + 1; goto obj_key_begin; }
-    if (*cur == '[') { cur++; push_ctn(0); if (depth + 1 > max_ctn) max_ctn = depth + 1; goto arr_val_begin; }
+    if (*cur == '{') { cur++; push_ctn(1); if (depth + 1 > max_ctn) max_ctn = depth + 1; goto obj_key_first; }
+    if (*cur == '[') { cur++; push_ctn(0); if (depth + 1 > max_ctn) max_ctn = depth + 1; goto arr_val_first; }
     if (*cur == 't') {
         if (likely(read_true_bounded(&cur, eof, val))) goto obj_val_end;
         goto fail_literal_true;
@@ -6831,25 +6944,21 @@ obj_val_begin:
     if (*cur == 'n') {
         if (likely(read_null_bounded(&cur, eof, val))) goto obj_val_end;
         if (has_allow(INF_AND_NAN)) {
-            if (read_nan_bounded(&cur, eof, pre, flg, val)) goto obj_val_end;
+            if (v_call(read_nan_bounded(&vcur, eof, flg, val))) goto obj_val_end;
         }
         goto fail_literal_null;
     }
-    if (char_is_space(*cur)) {
-        while (++cur < eof && char_is_space(*cur));
-        goto obj_val_begin;
-    }
     if (has_allow(INF_AND_NAN) &&
         (*cur == 'i' || *cur == 'I' || *cur == 'N')) {
-        if (read_inf_or_nan_bounded(&cur, eof, pre, flg, val)) goto obj_val_end;
+        if (v_call(read_inf_or_nan_bounded(&vcur, eof, flg, val))) goto obj_val_end;
         goto fail_character_val;
     }
     if (has_allow(SINGLE_QUOTED_STR) && *cur == '\'') {
-        if (likely(read_str_sq(&cur, eof, flg, val, &msg))) goto obj_val_end;
+        if (likely(v_call(read_str_sq(&vcur, eof, flg, val, &msg)))) goto obj_val_end;
         goto fail_string;
     }
     if (has_allow(TRIVIA) && char_is_trivia(*cur)) {
-        if (skip_trivia(&cur, eof, flg)) goto obj_val_begin;
+        if (v_call(skip_trivia(&vcur, eof, flg))) goto obj_val_begin;
         if (cur == eof) goto fail_comment;
     }
     goto fail_character_val;
@@ -6859,11 +6968,11 @@ obj_val_end:
     if (likely(*cur == ',')) { cur++; goto obj_key_begin; }
     if (likely(*cur == '}')) { cur++; goto obj_end; }
     if (char_is_space(*cur)) {
-        while (++cur < eof && char_is_space(*cur));
+        cur = skip_space_validate(cur, eof);
         goto obj_val_end;
     }
     if (has_allow(TRIVIA) && char_is_trivia(*cur)) {
-        if (skip_trivia(&cur, eof, flg)) goto obj_val_end;
+        if (v_call(skip_trivia(&vcur, eof, flg))) goto obj_val_end;
         if (cur == eof) goto fail_comment;
     }
     goto fail_character_obj_end;
@@ -6878,7 +6987,7 @@ doc_end:
     if (unlikely(cur < eof) && !has_flg(STOP_WHEN_DONE)) {
         while (cur < eof && char_is_space(*cur)) cur++;
         if (cur < eof && has_allow(TRIVIA) && char_is_trivia(*cur)) {
-            if (!skip_trivia(&cur, eof, flg) && cur == eof) {
+            if (!v_call(skip_trivia(&vcur, eof, flg)) && cur == eof) {
                 goto fail_comment;
             }
         }
@@ -6928,6 +7037,7 @@ fail_comment:
 fail_garbage:
     return_err_v(cur, UNEXPECTED_CONTENT, MSG_GARBAGE);
 
+#undef v_call
 #undef push_ctn
 #undef pop_ctn
 #undef return_err_v

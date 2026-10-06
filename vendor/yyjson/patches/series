@@ -5,3 +5,4 @@
 0006-bound-validate-stack-growth.patch
 0007-record-validate-nesting.patch
 0008-validate-without-input-copy.patch
+0009-faster-validate-scan.patch
