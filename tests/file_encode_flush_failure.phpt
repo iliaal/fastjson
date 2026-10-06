@@ -54,7 +54,7 @@ foreach ([0, JSON_THROW_ON_ERROR] as $flags) {
 
 stream_wrapper_unregister('fjflushfail');
 
-// An omitted optional callback is not a failed flush.
+// Preserve native close behavior when the optional callback is omitted.
 class NoFlushStream {
     public $context;
     public function stream_open(string $path, string $mode, int $options, ?string &$openedPath): bool {
@@ -73,8 +73,12 @@ final class MagicFlushStream extends NoFlushStream {
 
 stream_wrapper_register('fjnoflush', NoFlushStream::class);
 stream_wrapper_register('fjmagicflush', MagicFlushStream::class);
+// PHP 8.6 propagates close-time flush errors; earlier versions discard them.
+$stream = fopen('fjnoflush://sink', 'wb');
+fwrite($stream, '[1]');
+$closed = fclose($stream);
 foreach ([0, JSON_THROW_ON_ERROR] as $flags) {
-    var_dump(fastjson_file_encode('fjnoflush://sink', [1], $flags));
+    var_dump(fastjson_file_encode('fjnoflush://sink', [1], $flags) === $closed);
     var_dump(fastjson_file_encode('fjmagicflush://sink', [1], $flags));
     var_dump(fastjson_last_error() === JSON_ERROR_SYNTAX);
 }
