@@ -155,7 +155,7 @@ PHP_FUNCTION(fastjson_file_encode)
         done += (size_t)n;
     }
     bool wrote_all = (done == total);
-    /* Closing a stream flushes it, but the streams layer discards that
+    /* Closing a stream flushes it, but older PHP versions discard that
      * flush result. Check it explicitly before close so buffered write
      * failures cannot be reported as successful file encodes. */
     bool can_flush = true;
