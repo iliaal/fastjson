@@ -86,7 +86,18 @@ if [[ "${patches}" -ne "${series}" ]]; then
     echo "PATCHES.md documents ${patches} yyjson patches, series lists ${series}" >&2
     exit 1
 fi
-grep -Fq 'with local patches P-002 through P-008' README.md
+# Derive the README range from the replayable series so adding a patch
+# cannot leave both the documentation and this check pinned to an old range.
+# shellcheck disable=SC2312
+mapfile -t patch_ids < <(
+    sed -nE 's/^0([0-9]{3})-[a-z0-9-]+\.patch$/P-\1/p' \
+        vendor/yyjson/patches/series
+)
+patch_range="${patch_ids[0]} through ${patch_ids[${#patch_ids[@]}-1]}"
+if ! grep -Fq "with local patches ${patch_range}." README.md; then
+    echo "README.md must document local patches ${patch_range}" >&2
+    exit 1
+fi
 
 # shellcheck disable=SC2312
 mapfile -t unix_sources < <(
