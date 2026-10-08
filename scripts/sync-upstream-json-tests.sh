@@ -87,9 +87,7 @@ for src in "${sources[@]}"; do
     # 1. Replace function names. Order matters: longer matches first
     #    (json_last_error_msg before json_last_error) so we don't half-
     #    rewrite the longer name.
-    # 2. Inject --EXTENSIONS-- fastjson after --TEST-- if missing.
-    # 3. Prepend a generator comment in the --DESCRIPTION-- area (we
-    #    use a leading PHPT comment that PHPT ignores).
+    # 2. Ensure fastjson is required, preserving other extensions.
     sed -E \
         -e 's/\bjson_last_error_msg\b/fastjson_last_error_msg/g' \
         -e 's/\bjson_last_error\b/fastjson_last_error/g' \
@@ -118,6 +116,24 @@ for src in "${sources[@]}"; do
                 next
             }
             { print }
+        ' "$dest.tmp" > "$dest.tmp2"
+        mv "$dest.tmp2" "$dest.tmp"
+    else
+        # Upstream tests may already require other extensions. Keep those
+        # requirements and add fastjson inside the same section if absent.
+        awk '
+            /^--[A-Z_]+--/ && in_extensions {
+                if (!has_fastjson) print "fastjson"
+                in_extensions = 0
+            }
+            /^--EXTENSIONS--/ { in_extensions = 1; has_fastjson = 0 }
+            in_extensions && /^[[:space:]]*fastjson[[:space:]]*$/ {
+                has_fastjson = 1
+            }
+            { print }
+            END {
+                if (in_extensions && !has_fastjson) print "fastjson"
+            }
         ' "$dest.tmp" > "$dest.tmp2"
         mv "$dest.tmp2" "$dest.tmp"
     fi
