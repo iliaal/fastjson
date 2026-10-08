@@ -29,6 +29,16 @@ if [ ! -d "$SRC_DIR" ]; then
     exit 1
 fi
 
+# Expand once before touching the generated suite. Without nullglob an empty
+# source directory leaves a literal '*.phpt', after the old tests are deleted.
+shopt -s nullglob
+sources=("$SRC_DIR"/*.phpt)
+shopt -u nullglob
+if [ "${#sources[@]}" -eq 0 ]; then
+    echo "error: $SRC_DIR contains no .phpt tests; existing suite left unchanged" >&2
+    exit 1
+fi
+
 # Resolve the PHP version we're syncing from for the header line.
 PHP_VERSION=$(grep -oP 'PHP_(MAJOR|MINOR|RELEASE)_VERSION\s+\K\d+' \
                   "$PHP_SRC/main/php_version.h" 2>/dev/null \
@@ -41,7 +51,7 @@ mkdir -p "$DEST_DIR"
 # Every entry is regenerated; none carry manual edits.
 find "$DEST_DIR" -maxdepth 1 -name '*.phpt' -delete
 
-printf '%s\n' "$SRC_DIR"/*.phpt | while IFS= read -r src; do
+printf '%s\n' "${sources[@]}" | while IFS= read -r src; do
     basename "$src"
 done | sort > "$DEST_DIR/.manifest"
 printf '%s\n' "$PHP_SOURCE_COMMIT" > "$DEST_DIR/.source-revision"
@@ -62,7 +72,7 @@ if [ -f "$DEST_DIR/.skiplist" ]; then
     done < "$DEST_DIR/.skiplist"
 fi
 
-for src in "$SRC_DIR"/*.phpt; do
+for src in "${sources[@]}"; do
     base="$(basename "$src")"
     count_total=$((count_total + 1))
 
