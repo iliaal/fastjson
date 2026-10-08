@@ -291,7 +291,44 @@ jobs:
     env:
       # detect_leaks=1 matches LSan's Linux default; pinning it keeps a
       # future ASAN_OPTIONS edit from flipping it. Suppress known-good
-      # leaks narrowl…459 tokens truncated…1 --branch="PHP-${PHP_VERSION}" https://github.com/php/php-src.git /tmp/php-src
+      # leaks narrowly in .github/lsan-suppressions.txt instead of
+      # setting detect_leaks=0. See ~/ai/wiki/debugging/asan-php-extension.md.
+      ASAN_OPTIONS: exitcode=139:verify_asan_link_order=0:detect_odr_violation=0:detect_leaks=1
+      LSAN_OPTIONS: suppressions=${{ github.workspace }}/.github/lsan-suppressions.txt:print_suppressions=0
+      UBSAN_OPTIONS: print_stacktrace=1
+      USE_ZEND_ALLOC: 0
+      USE_TRACKED_ALLOC: 1
+      PHP_VERSION: ${{ matrix.php }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y llvm clang re2c bison autoconf
+
+      - name: Configure runtime for ASAN
+        # Two GitHub-runner-specific gotchas that turn the configure
+        # step into "cannot run C compiled programs":
+        #
+        # 1. -shared-libasan links the asan runtime as a separate .so so
+        #    that __cxa_throw stays resolvable across dlopen(); without
+        #    LD_LIBRARY_PATH pointing at clang's resource dir, every
+        #    asan-instrumented binary fails at startup with
+        #    "error while loading shared libraries: libclang_rt.asan-*.so".
+        #
+        # 2. Recent Ubuntu kernels default to 32-bit mmap entropy, which
+        #    collides with ASAN's shadow-memory layout. Knocking
+        #    vm.mmap_rnd_bits down to 28 puts it back in range.
+        run: |
+          ASAN_LIB_DIR=$(clang -print-resource-dir)/lib/linux
+          echo "LD_LIBRARY_PATH=$ASAN_LIB_DIR" >>"$GITHUB_ENV"
+          sudo sysctl -w vm.mmap_rnd_bits=28
+
+      - name: Build PHP with ASAN (-shared-libasan keeps __cxa_throw resolvable across dlopen)
+        run: |
+          git clone --depth=1 --branch="PHP-${PHP_VERSION}" https://github.com/php/php-src.git /tmp/php-src
           cd /tmp/php-src
           ./buildconf --force
           CC=clang CXX=clang++ \
