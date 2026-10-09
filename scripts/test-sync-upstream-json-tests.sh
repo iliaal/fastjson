@@ -111,4 +111,17 @@ cmp "$work_dir/expected-extensions" "$work_dir/extensions"
 sed 's/json_encode/fastjson_encode/g' "$source_dir/ext/json/tests/already.phpt" \
     > "$work_dir/expected-already"
 cmp "$work_dir/expected-already" "$dest/already.phpt"
+# The hand-maintained skiplist accepts whitespace and indented comments,
+# matching the metadata checker. Every spelling must preserve the same skips.
+for entry in '  skip.phpt # indented entry' $'\tskip.phpt\t# tab-separated reason' 'skip.phpt'; do
+    printf '%s\n' '' '   ' $'\t' '  # indented comment' $'\t# tabbed comment' \
+        > "$dest/.skiplist"
+    # The final entry deliberately has no newline, as in a hand-edited file.
+    printf '%s' "$entry" >> "$dest/.skiplist"
+    cp "$dest/.skiplist" "$work_dir/expected-skiplist"
+    bash "$project/scripts/sync-upstream-json-tests.sh" "$source_dir" > "$work_dir/output"
+    [[ ! -e "$dest/skip.phpt" && -f "$dest/basic.phpt" ]]
+    cmp "$work_dir/expected-skiplist" "$dest/.skiplist"
+    grep -Fq '| Skipped            | 1 (per .skiplist) |' "$dest/README.md"
+done
 printf 'upstream sync regressions passed\n'
