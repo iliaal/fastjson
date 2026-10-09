@@ -48,26 +48,36 @@ SMALL_FILES=(
 
 mkdir -p "$DEST/small"
 
-for name in "${FILES[@]}"; do
-    target="$DEST/$name"
+# Publish a cache entry only after a complete, nonempty transfer. A failed
+# curl can leave partial bytes behind; downloading directly to target would
+# make the next run silently reuse those bytes via the -s cache check.
+partial=""
+trap 'if [[ -n "$partial" ]]; then rm -f -- "$partial"; fi' EXIT
+
+fetch_file() {
+    local name="$1"
+    local target="$DEST/$name"
     if [ -s "$target" ]; then
-        echo "  cached    $name ($(stat -c%s "$target") bytes)"
-        continue
+        echo "  cached    $name ($(wc -c < "$target") bytes)"
+        return
     fi
     echo "  fetching  $name"
-    curl -fsSL "$BASE/$name" -o "$target"
-    echo "            $(stat -c%s "$target") bytes"
-done
-
-for name in "${SMALL_FILES[@]}"; do
-    target="$DEST/small/$name"
-    if [ -s "$target" ]; then
-        echo "  cached    small/$name ($(stat -c%s "$target") bytes)"
-        continue
+    partial=$(mktemp "$target.tmp.XXXXXX")
+    curl -fsSL "$BASE/$name" -o "$partial"
+    if [ ! -s "$partial" ]; then
+        echo "error: empty download for $name" >&2
+        exit 1
     fi
-    echo "  fetching  small/$name"
-    curl -fsSL "$BASE/small/$name" -o "$target"
-    echo "            $(stat -c%s "$target") bytes"
+    mv -- "$partial" "$target"
+    partial=""
+    echo "            $(wc -c < "$target") bytes"
+}
+
+for name in "${FILES[@]}"; do
+    fetch_file "$name"
+done
+for name in "${SMALL_FILES[@]}"; do
+    fetch_file "small/$name"
 done
 
 echo

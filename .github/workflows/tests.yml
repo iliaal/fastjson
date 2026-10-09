@@ -28,6 +28,7 @@ jobs:
           coverage: none
       - run: composer validate --strict
       - run: scripts/test-sync-upstream-json-tests.sh
+      - run: scripts/test-fetch-bench-data.sh
       - run: scripts/check-project-metadata.sh
       - run: scripts/verify-yyjson-patches.sh
 
