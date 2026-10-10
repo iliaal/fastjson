@@ -62,12 +62,11 @@ count_skipped_by_skiplist=0
 # Read skiplist (lines: <basename>.phpt # reason).
 declare -A SKIPLIST=()
 if [ -f "$DEST_DIR/.skiplist" ]; then
-    while IFS= read -r line; do
-        [ -z "$line" ] && continue
-        case "$line" in \#*) continue ;; esac
-        name="${line%%#*}"
-        name="${name## }"
-        name="${name%% *}"
+    while IFS= read -r line || [ -n "$line" ]; do
+        # Strip comments, then let read trim leading/trailing spaces and tabs.
+        # Blank or indented comment lines must not become empty array keys.
+        IFS=$' \t' read -r name _ <<< "${line%%#*}"
+        [ -z "$name" ] && continue
         SKIPLIST["$name"]=1
     done < "$DEST_DIR/.skiplist"
 fi
