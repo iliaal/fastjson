@@ -6,6 +6,11 @@
 - 100 iterations per case (slowest 10% dropped)
 - CPU: 13th Gen Intel(R) Core(TM) i9-13950HX
 
+This is a historical measurement of the versions listed above. In particular,
+the validate memory figures predate P-008's no-copy reader and do not represent
+the current build. See the [benchmark guide](README.md#recorded-baseline) for
+current implementation notes and instructions to reproduce the measurements.
+
 ## Throughput, large corpus
 
 ### Decode (objects)

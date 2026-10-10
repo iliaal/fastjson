@@ -100,11 +100,14 @@ Subset:
 | twitterescaped.json  | 549 KB | same, with `\u` escapes for non-ASCII |
 | update-center.json   | 533 KB | Jenkins update center catalog |
 
-## Latest baseline
+## Recorded baseline
 
-See [`baseline.md`](./baseline.md). Aggregate numbers across the full
-14.8 MB / 15-file large corpus (CPU: i9-13950HX, **release build of
-both PHP and fastjson**: `--disable-debug`, `-O2`, `Debug Build => no`).
+[`baseline.md`](./baseline.md) records fastjson **0.6.0 with yyjson 0.12.0**
+on PHP 8.4.22-dev. The tables below summarize that historical run, not a
+measurement of the current checkout. They cover the full 14.8 MB / 15-file
+large corpus (CPU: i9-13950HX, **release build of both PHP and fastjson**:
+`--disable-debug`, `-O2`, `Debug Build => no`). Re-run the harness to measure
+a newer build; do not compare different versions as if they were one run.
 
 > ⚠️ A debug build of either extension inflates the apparent fastjson
 > speedup by 5-7x, because ext/json's hand-rolled scanner gains more
@@ -129,22 +132,28 @@ both PHP and fastjson**: `--disable-debug`, `-O2`, `Debug Build => no`).
 | Encode                | 11.92 MB | 11.24 MB | **1.06x** |
 | Validate              | 14.91 MB | 150.6 KB | **101.40x** |
 
-The validate row reflects vendor patch P-002 (see
-[`vendor/yyjson/PATCHES.md`](../vendor/yyjson/PATCHES.md)), which
-adds a no-tree validation mode to yyjson. Before the patch the numbers
-were 40.85 MB / 277x. Removing the val_hdr buffer cut memory ~2.7×, and
-dropping its alloc and realloc growth made validate 2.5× faster.
+The historical validate row predates the no-copy reader. P-002 removed the
+value tree, but at that point yyjson still copied the whole input into a
+padded working buffer. That is why this run reports 14.91 MB / 101.40x;
+those figures do not describe current `fastjson_validate()` memory use.
 
-fastjson trades memory for decode speed. Decode holds yyjson's parsed
-document beside the emerging zval tree, which accounts for the ~1.7x peak.
-Encode does not build a yyjson tree: it writes zvals directly to `smart_str`
-and stays near ext/json's memory use. Validate uses P-002's no-tree parser,
-but yyjson still copies the input into a padded working buffer; ext/json's
-validator streams with nearly constant state, so the ratio remains large.
+Current validation reads the caller's input without copying the whole
+buffer (P-008), and P-009 preserves that design while improving scanning.
+The documented P-008 measurement reduced `canada.json` validation peak from
+about 2.25 MB to 64 bytes on its release build. This is a separate per-file
+measurement, not a replacement aggregate for the table above. See
+[`vendor/yyjson/PATCHES.md`](../vendor/yyjson/PATCHES.md#p-008-validate-without-copying-the-input)
+for the implementation, measurement and flag restrictions.
 
-The aggregate validate peak (14.91 MB across the 15 MB corpus) fits
-typical PHP memory budgets. If you validate giant inputs under a tight
-`memory_limit`, budget for it.
+Validation still uses a small result stub and nesting state; sufficiently
+deep inputs grow the nesting stack on the heap, and long numeric tokens at
+the input tail can need temporary storage. The no-copy path is not a claim
+of zero allocation or constant memory for every possible input.
+
+Decode still holds yyjson's parsed document beside the emerging zval tree,
+so it trades memory for speed. Encode writes directly to `smart_str`
+without a yyjson value tree. Measure these operations on the target build
+rather than treating the historical ratios as current guarantees.
 
 Re-run after non-trivial encoder/decoder changes to catch
 regressions; commit the new `baseline.md` alongside the change.
@@ -169,9 +178,10 @@ regressions; commit the new `baseline.md` alongside the change.
   per-value mut-tree allocation.
 
 - **Validate** is the cleanest speed comparison: only the parser runs, with
-  no zval construction. P-002 skips the yyjson value tree, giving ~994 MB/s on
-  the aggregate here. Its padded input copy still makes memory scale with
-  input size, unlike ext/json's streaming validator.
+  no zval construction. P-002 skips the yyjson value tree; the historical
+  run above reports ~994 MB/s. Current builds also avoid the whole-input
+  copy via P-008 and use P-009's faster scanner. Benchmark the current build
+  for its throughput and memory rather than extrapolating from that run.
 
 - **Per-call latency (small corpus)** matters when calling encode /
   decode at high QPS on small payloads. fastjson's overhead floor is
