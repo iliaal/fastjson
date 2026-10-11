@@ -8,6 +8,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `fastjson_merge_patch()` selects the last duplicate member at each merged object boundary before checking result depth, including small objects whose discarded values exceed `$depth`.
+
 - `fastjson_file_encode()` returns `false` with "Failed to write file" when the stream accepts every write but its flush fails, instead of reporting success.
 
 ## [0.9.0] - 2026-09-29
