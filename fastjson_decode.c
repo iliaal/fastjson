@@ -873,17 +873,29 @@ static yyjson_mut_val *fj_merge_copy_checked(yyjson_mut_doc *doc,
     return yyjson_val_mut_copy(doc, value);
 }
 
-static zend_always_inline bool fj_merge_key_seen(
-    yyjson_val **seen, size_t *seen_count, yyjson_val *key)
+/* Only called for the linear path's objects of at most 16 members.
+ * Detect duplicates before copying any values: an overwritten member may
+ * exceed the result depth even though its last occurrence does not. */
+static bool fj_merge_has_duplicate_keys(yyjson_val *object)
 {
-    for (size_t i = 0; i < *seen_count; i++) {
-        if (yyjson_get_len(seen[i]) == yyjson_get_len(key)
-                && memcmp(yyjson_get_str(seen[i]), yyjson_get_str(key),
-                          yyjson_get_len(key)) == 0) {
-            return true;
-        }
+    if (!yyjson_is_obj(object)) {
+        return false;
     }
-    seen[(*seen_count)++] = key;
+    yyjson_val *seen[16];
+    size_t seen_count = 0;
+    yyjson_val *key;
+    yyjson_obj_iter iter;
+    yyjson_obj_iter_init(object, &iter);
+    while ((key = yyjson_obj_iter_next(&iter))) {
+        for (size_t i = 0; i < seen_count; i++) {
+            if (yyjson_get_len(seen[i]) == yyjson_get_len(key)
+                    && memcmp(yyjson_get_str(seen[i]), yyjson_get_str(key),
+                              yyjson_get_len(key)) == 0) {
+                return true;
+            }
+        }
+        seen[seen_count++] = key;
+    }
     return false;
 }
 
@@ -893,22 +905,22 @@ static yyjson_mut_val *fastjson_merge_patch_linear(yyjson_mut_doc *doc,
                                                    size_t remaining_depth,
                                                    bool *depth_failed)
 {
+    if (fj_merge_has_duplicate_keys(orig)
+            || fj_merge_has_duplicate_keys(patch)) {
+        return fastjson_merge_patch_indexed(doc, orig, patch,
+            remaining_depth, depth_failed);
+    }
+
     yyjson_mut_val *builder = yyjson_mut_obj(doc);
     if (builder == NULL) {
         return NULL;
     }
 
     if (yyjson_is_obj(orig)) {
-        yyjson_val *seen[16];
-        size_t seen_count = 0;
         yyjson_val *key;
         yyjson_obj_iter iter;
         yyjson_obj_iter_init(orig, &iter);
         while ((key = yyjson_obj_iter_next(&iter))) {
-            if (fj_merge_key_seen(seen, &seen_count, key)) {
-                return fastjson_merge_patch_indexed(doc, orig, patch,
-                    remaining_depth, depth_failed);
-            }
             yyjson_val *orig_value = yyjson_obj_iter_get_val(key);
             yyjson_val *patch_value = yyjson_obj_getn(
                 patch, yyjson_get_str(key), yyjson_get_len(key));
@@ -929,16 +941,10 @@ static yyjson_mut_val *fastjson_merge_patch_linear(yyjson_mut_doc *doc,
         }
     }
 
-    yyjson_val *seen[16];
-    size_t seen_count = 0;
     yyjson_val *key;
     yyjson_obj_iter iter;
     yyjson_obj_iter_init(patch, &iter);
     while ((key = yyjson_obj_iter_next(&iter))) {
-        if (fj_merge_key_seen(seen, &seen_count, key)) {
-            return fastjson_merge_patch_indexed(doc, orig, patch,
-                remaining_depth, depth_failed);
-        }
         yyjson_val *patch_value = yyjson_obj_iter_get_val(key);
         if (yyjson_is_null(patch_value)) {
             continue;
