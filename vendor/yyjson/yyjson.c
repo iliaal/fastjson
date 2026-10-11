@@ -6638,8 +6638,8 @@ static_inline bool read_null_bounded(u8 **cur, u8 *eof, yyjson_val *val) {
  * Forks the read_root_minify state machine but uses an auxiliary stack
  * for container-type tracking instead of slot-based parent-offset
  * tracking, eliminating the O(N values) val_hdr buffer. Since P-008
- * it reads the caller buffer without a copy, so the only memory is a
- * ~256 B inline depth stack that grows on demand and the stub doc.
+ * it reads the caller buffer without a full copy. A ~256 B inline depth
+ * stack grows on demand; a stub doc and bounded token copies also allocate.
  *
  * The shared `dummy` yyjson_val is the sink for read_str / read_num /
  * read_true / read_false / read_null / read_inf_or_nan. Their writes

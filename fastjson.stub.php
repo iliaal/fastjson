@@ -317,10 +317,16 @@ function fastjson_merge_patch(string $target, string $patch, ?bool $associative 
  * The $depth parameter caps nesting exactly as in fastjson_decode():
  * inputs nesting $depth or more containers deep fail with
  * FASTJSON_ERROR_DEPTH (a scalar needs depth >= 1, "[]" needs
- * depth >= 2, "[[[1]]]" needs depth >= 4). The check is one
- * allocation-free scan over the raw input that skips string contents
- * and stops once the cap is reached. $depth <= 0 or > INT_MAX raises
- * ValueError.
+ * depth >= 2, "[[[1]]]" needs depth >= 4). The parser tracks nesting
+ * without building a value tree; the cap is checked only after a
+ * successful parse. It does not stop parsing early or bound memory:
+ * deep inputs grow a nesting stack, and long numeric tokens at the
+ * input tail may need temporary storage. Parse errors take precedence
+ * over a nesting-depth error.
+ *
+ * Argument checks run in this order: unsupported flags raise ValueError;
+ * empty input returns false with FASTJSON_ERROR_SYNTAX; otherwise
+ * $depth <= 0 or > INT_MAX raises ValueError.
  *
  * The only $flags value accepted is JSON_INVALID_UTF8_IGNORE. Any
  * other bits raise a ValueError, matching ext/json's contract.

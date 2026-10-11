@@ -63,7 +63,7 @@ Function signatures match `ext/json`, so you can migrate a call site by replacin
 
 **Decode flags:** `JSON_OBJECT_AS_ARRAY`, `JSON_BIGINT_AS_STRING`, `JSON_INVALID_UTF8_IGNORE`, `JSON_INVALID_UTF8_SUBSTITUTE`, `JSON_THROW_ON_ERROR`, and the fastjson-only `FASTJSON_DECODE_RELAXED` (tolerates the JSONC subset `ext/json` rejects: `//` and `/* */` comments, trailing commas, and a leading UTF-8 BOM).
 
-**Validate flags:** `JSON_INVALID_UTF8_IGNORE` (other bits raise `ValueError` per ext/json's contract). `$depth` is enforced on the success path like `ext/json`: documents nesting `$depth` or more containers deep validate false with a depth error.
+**Validate flags:** `JSON_INVALID_UTF8_IGNORE` (other bits raise `ValueError` per ext/json's contract). `$depth` is checked after parsing succeeds: documents nesting `$depth` or more containers deep validate false with a depth error. It is not an early parsing or memory limit; malformed input reports its parse error even if it also exceeds `$depth`.
 
 **File helpers:** `fastjson_file_decode()` / `fastjson_file_encode()` read and write a JSON file in one call through the PHP streams layer (`open_basedir` and stream wrappers apply). `fastjson_file_encode()` opens the destination in write mode and does not replace it atomically; if a partial write would be unsafe, write to a temp file and rename it yourself. File I/O failures reuse `FASTJSON_ERROR_SYNTAX` to stay inside the `JSON_ERROR_*` code range. To tell a filesystem fault from a parse or encode failure, check `fastjson_last_error_msg()` for the `Failed to ... file` messages.
 
@@ -88,7 +88,7 @@ A visual comparison against `ext/json` on PHP 8.4 is at [iliaal.github.io/fastjs
 
 ### Memory tradeoff
 
-Decode trades memory for speed: yyjson's two-stage parser holds the parsed document alongside the zval tree, so decode peaks at 1.2x to 3.1x ext/json's heap (1.65x across the bench corpus; number-heavy documents sit at the top). Repeated short object keys share one string per walk, which took `twitter.json` from 1.66x to 1.39x. Encode writes directly into a smart_str with yyjson primitives, so its peak is within 9% of ext/json on the bench corpus. A single escaped string of 8 KiB to a few tens of KiB can peak up to twice ext/json's size, because the chunked writer keeps up to 12 KiB of headroom. Validate reads the caller's buffer and keeps no value tree, so its peak is a few dozen bytes, like ext/json's streaming validator.
+Decode trades memory for speed: yyjson's two-stage parser holds the parsed document alongside the zval tree, so decode peaks at 1.2x to 3.1x ext/json's heap (1.65x across the bench corpus; number-heavy documents sit at the top). Repeated short object keys share one string per walk, which took `twitter.json` from 1.66x to 1.39x. Encode writes directly into a smart_str with yyjson primitives, so its peak is within 9% of ext/json on the bench corpus. A single escaped string of 8 KiB to a few tens of KiB can peak up to twice ext/json's size, because the chunked writer keeps up to 12 KiB of headroom. Validate reads the caller's buffer and keeps no value tree. Typical shallow inputs need only a small result stub, but deep inputs grow a nesting stack on the heap, and long numeric tokens at the input tail can need temporary storage. A small `$depth` does not bound these allocations because it is checked after parsing.
 
 ## ✨ What's in the box
 
@@ -100,7 +100,7 @@ Decode trades memory for speed: yyjson's two-stage parser holds the parsed docum
 
 ## Roadmap
 
-- [x] `fastjson_validate` success-path depth enforcement (allocation-free nesting scan; the validate-only fast path is kept)
+- [x] `fastjson_validate` success-path depth enforcement (nesting is tracked by the validate-only parser)
 - [ ] Streaming / incremental decode and encode
 
 ## 🔗 Native PHP extensions
