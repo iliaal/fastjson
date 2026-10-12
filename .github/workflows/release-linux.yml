@@ -97,7 +97,8 @@ jobs:
           # linker notices). pipefail keeps tee from swallowing a failing
           # `make`. nproc covers Linux, sysctl covers macOS.
           make -j"$(nproc 2>/dev/null || sysctl -n hw.ncpu)" 2>&1 | tee build.log
-          if grep 'warning:' build.log | grep -v '^ld: warning:' | grep -q .; then
+          # Drain the pipeline so SIGPIPE cannot hide warnings under pipefail.
+          if grep 'warning:' build.log | grep -v '^ld: warning:' | grep . >/dev/null; then
             echo "::error::Build produced warning(s)"
             grep 'warning:' build.log | grep -v '^ld: warning:' || true
             exit 1

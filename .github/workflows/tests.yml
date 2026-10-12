@@ -29,6 +29,7 @@ jobs:
       - run: composer validate --strict
       - run: scripts/test-sync-upstream-json-tests.sh
       - run: scripts/test-fetch-bench-data.sh
+      - run: scripts/test-build-warning-gates.sh
       - run: scripts/check-project-metadata.sh
       - run: scripts/verify-yyjson-patches.sh
 
@@ -92,7 +93,9 @@ jobs:
           # 'ld: warning:' lines are macOS linker deprecation notices
           # (-single_module, -undefined suppress), not compiler output;
           # only compiler warnings fail the build.
-          if grep 'warning:' build.log | grep -v '^ld: warning:' | grep -q .; then
+          # Drain the pipeline: grep -q can SIGPIPE its producers under pipefail
+          # and turn a warning-filled build into a false pass.
+          if grep 'warning:' build.log | grep -v '^ld: warning:' | grep . >/dev/null; then
             echo "::error::Build produced warning(s)"
             grep 'warning:' build.log | grep -v '^ld: warning:' || true
             exit 1
@@ -172,7 +175,9 @@ jobs:
           phpize
           ./configure --enable-fastjson --with-php-config=/tmp/php-86/bin/php-config
           make -j"$(nproc)" 2>&1 | tee build.log
-          if grep 'warning:' build.log | grep -v '^ld: warning:' | grep -q .; then
+          # Drain the pipeline: grep -q can SIGPIPE its producers under pipefail
+          # and turn a warning-filled build into a false pass.
+          if grep 'warning:' build.log | grep -v '^ld: warning:' | grep . >/dev/null; then
             echo "::error::Build produced warning(s)"
             grep 'warning:' build.log | grep -v '^ld: warning:' || true
             exit 1
@@ -237,7 +242,9 @@ jobs:
           make -j$(sysctl -n hw.ncpu) 2>&1 | tee build.log
           # Same compiler-only bar as Linux: 'ld: warning:' lines are
           # macOS linker deprecation notices, not compiler output.
-          if grep 'warning:' build.log | grep -v '^ld: warning:' | grep -q .; then
+          # Drain the pipeline: grep -q can SIGPIPE its producers under pipefail
+          # and turn a warning-filled build into a false pass.
+          if grep 'warning:' build.log | grep -v '^ld: warning:' | grep . >/dev/null; then
             echo "::error::Build produced warning(s)"
             grep 'warning:' build.log | grep -v '^ld: warning:' || true
             exit 1
