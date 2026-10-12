@@ -9,8 +9,8 @@
 #   default php-src path: ~/php-src
 #
 # Source-of-truth annotations:
-# - Each generated file carries an `# Generated from <upstream>` header
-#   so reviewers can trace divergences back to the PHP version.
+# - README.md records the source PHP version and commit so reviewers can
+#   trace generated tests back to the upstream snapshot.
 # - tests/upstream-json/.skiplist documents tests intentionally skipped
 #   (with one-line reasons). The skiplist is maintained by hand; this
 #   script never modifies it.
@@ -48,13 +48,15 @@ PHP_SOURCE_COMMIT=$(git -C "$PHP_SRC" rev-parse HEAD 2>/dev/null || true)
 PHP_SOURCE_COMMIT="${PHP_SOURCE_COMMIT:-unknown}"
 
 mkdir -p "$DEST_DIR"
-# Every entry is regenerated; none carry manual edits.
-find "$DEST_DIR" -maxdepth 1 -name '*.phpt' -delete
+# Prepare the complete generated suite before changing existing output. A
+# failed read or rewrite must leave the checked-in tests and metadata intact.
+STAGE_DIR=$(mktemp -d "$DEST_DIR/../.upstream-json.XXXXXX")
+trap 'rm -rf -- "$STAGE_DIR"' EXIT
 
 printf '%s\n' "${sources[@]}" | while IFS= read -r src; do
     basename "$src"
-done | sort > "$DEST_DIR/.manifest"
-printf '%s\n' "$PHP_SOURCE_COMMIT" > "$DEST_DIR/.source-revision"
+done | sort > "$STAGE_DIR/.manifest"
+printf '%s\n' "$PHP_SOURCE_COMMIT" > "$STAGE_DIR/.source-revision"
 
 count_total=0
 count_skipped_by_skiplist=0
@@ -80,7 +82,7 @@ for src in "${sources[@]}"; do
         continue
     fi
 
-    dest="$DEST_DIR/$base"
+    dest="$STAGE_DIR/$base"
 
     # Pipeline:
     # 1. Replace function names. Order matters: longer matches first
@@ -144,7 +146,7 @@ done
 
 # Refresh the README so reviewers can trace which PHP version this
 # directory was synced from.
-cat > "$DEST_DIR/README.md" <<EOF
+cat > "$STAGE_DIR/README.md" <<EOF
 # upstream-json compat harness
 
 These tests are mechanically rewritten copies of
@@ -167,7 +169,17 @@ Tests intentionally not rewritten are listed in \`.skiplist\` with a
 one-line reason; categories are documented at the head of that file.
 EOF
 
-count_synced=$(find "$DEST_DIR" -maxdepth 1 -name '*.phpt' | wc -l)
+count_synced=$(find "$STAGE_DIR" -maxdepth 1 -name '*.phpt' | wc -l)
+
+# Generation succeeded. Replace generated files only; preserve the maintained
+# skiplist, STATE.md, and any other non-generated files. Publication itself is
+# not atomic: filesystem errors here can still leave partially updated output.
+find "$DEST_DIR" -maxdepth 1 -name '*.phpt' -delete
+shopt -s nullglob
+generated=("$STAGE_DIR/"*.phpt)
+shopt -u nullglob
+mv -- "${generated[@]}" "$STAGE_DIR/.manifest" \
+    "$STAGE_DIR/.source-revision" "$STAGE_DIR/README.md" "$DEST_DIR/"
 
 cat <<EOF
 upstream-json sync complete:
