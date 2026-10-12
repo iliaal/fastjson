@@ -733,7 +733,7 @@ PHP_FUNCTION(fastjson_pointer_get)
     size_t resolve_depth = (size_t)fastjson_effective_walk_depth(depth);
     fj_splice_status pointer_status = fastjson_pointer_resolve_limited(
         yyjson_doc_get_root(doc), pointer, pointer_len, resolve_depth,
-        &target);
+        flags, &target);
     if (pointer_status == FJ_SPLICE_AMBIGUOUS
             || pointer_status == FJ_SPLICE_DEPTH_FAIL) {
         yyjson_doc_free(doc);
@@ -1252,7 +1252,7 @@ PHP_FUNCTION(fastjson_pointer_exists)
      * return with last_error() == NONE means absent. */
     yyjson_val *target;
     fj_splice_status pointer_status = fastjson_pointer_resolve_limited(
-        yyjson_doc_get_root(doc), pointer, pointer_len, 0, &target);
+        yyjson_doc_get_root(doc), pointer, pointer_len, 0, flags, &target);
     if (pointer_status == FJ_SPLICE_AMBIGUOUS
             || pointer_status == FJ_SPLICE_DEPTH_FAIL) {
         yyjson_doc_free(doc);

@@ -117,6 +117,10 @@ function fastjson_version(): string {}
  *                                   false); global error state is
  *                                   preserved per ext/json's contract
  *
+ * JSON_PARTIAL_OUTPUT_ON_ERROR takes precedence over JSON_THROW_ON_ERROR.
+ * With both flags, encoding errors set fastjson_last_error() without
+ * throwing JsonException; successful encoding clears the error state.
+ *
  * Very large or very small doubles may render in a different but
  * numerically equivalent notation: 1.0e17 encodes as "100000000000000000.0"
  * where json_encode() emits "1.0e+17", and 1.0e-5 as "0.00001" vs
@@ -146,8 +150,9 @@ function fastjson_encode(mixed $value, int $flags = 0, int $depth = 512): string
  * I/O failures use FASTJSON_ERROR_SYNTAX to stay inside the JSON_ERROR_*
  * code range; use fastjson_last_error_msg() ("Failed to open file for writing" or
  * "Failed to write file") to distinguish them from encode failures.
- * JSON_THROW_ON_ERROR throws on an encode error; an I/O failure still
- * returns false.
+ * JSON_THROW_ON_ERROR throws on an encode error unless
+ * JSON_PARTIAL_OUTPUT_ON_ERROR is also set. An I/O failure still returns
+ * false.
  */
 function fastjson_file_encode(string $filename, mixed $value, int $flags = 0, int $depth = 512): bool {}
 
@@ -183,8 +188,10 @@ function fastjson_file_encode(string $filename, mixed $value, int $flags = 0, in
  *                                   rejects; fastjson-only, no JSON_*
  *                                   equivalent
  *
- * The $depth parameter caps recursion. $depth <= 0 or > INT_MAX
- * raises a ValueError; the cap is enforced during the parse.
+ * The $depth parameter caps recursion while building the PHP result,
+ * after yyjson has parsed the full input. It does not limit parser
+ * memory or CPU time. Malformed input reports its parse error even if
+ * it also exceeds $depth. $depth <= 0 or > INT_MAX raises a ValueError.
  */
 function fastjson_decode(string $json, ?bool $associative = null, int $depth = 512, int $flags = 0): mixed {}
 
