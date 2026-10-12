@@ -8,8 +8,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Clarify `fastjson_validate()` documentation: the depth cap is checked after parsing, not an early-exit or memory bound, and deep inputs or long trailing numbers can allocate temporary storage.
 - `fastjson_merge_patch()` selects the last duplicate member at each merged object boundary before checking result depth, including small objects whose discarded values exceed `$depth`.
-
 - `fastjson_file_encode()` returns `false` with "Failed to write file" when the stream accepts every write but its flush fails, instead of reporting success.
 
 ## [0.9.0] - 2026-09-29
@@ -17,7 +17,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 
 - Bundled yyjson is 0.13.0; lowercase `\uXXXX` now uses upstream `YYJSON_WRITE_LOWERCASE_HEX`, retiring patch P-001.
-- `fastjson_validate()` reads the input in place and tracks depth during the parse: peak memory is constant and it runs ~30% fewer instructions.
+- `fastjson_validate()` reads the input in place and tracks depth during the parse: it avoids the input-sized copy and value tree and runs ~30% fewer instructions (nesting and long trailing numbers can still need temporary storage).
 - Decode shares repeated object-key strings (up to 64 bytes, inputs of 4 KiB+): key-heavy documents peak ~15% lower and decode 3-4% faster, while mostly unique or 256+ distinct names cost 3-5%.
 - `fastjson_file_decode()` frees the file contents before building the result, lowering its peak 9-33%.
 - Encode writes escaped strings of 8 KiB+ in 2 KiB chunks instead of a 6x reserve; a 1 MiB string with ordinary escaping peaks 59-83% lower.
