@@ -18,6 +18,8 @@ php -d extension=$(pwd)/modules/fastjson.so bench/run.php
 php -d extension=... bench/run.php bench/data 200
 ```
 
+The iteration count defaults to 50 and must be at least 1.
+
 The output is markdown. Redirect it to a file, or commit it as
 `bench/baseline.md` after a clean run.
 
@@ -61,7 +63,8 @@ scan/copy trade-off, check ARM too; its crossover points differ from x86_64.
 
 ## Methodology
 
-- 100 iterations of `(encode | decode | validate)` on each file, timed with
+- The requested number of iterations (50 by default) of
+  `(encode | decode | validate)` on each file, timed with
   `hrtime(true)`. The slowest 10% are dropped (warmup and scheduler noise)
   and the median is reported.
 - Throughput is divided by the source JSON byte size, the same convention
