@@ -6,11 +6,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-13
+
 ### Changed
 
 - Bundled yyjson is now upstream master `a84070f` (after 0.13.0), with two incremental-reader fixes, ibireme/yyjson#315 and 332be7a, the second of them security-relevant; fastjson does not call that reader and no longer compiles it.
 - yyjson's file I/O and JSON Pointer, Patch, and Merge Patch functions, which fastjson does not call, are no longer compiled into the module.
 - `fastjson_encode()` and `fastjson_file_encode()` give `JSON_PARTIAL_OUTPUT_ON_ERROR` precedence over `JSON_THROW_ON_ERROR`, like ext/json: with both flags they no longer throw `JsonException`, and they publish the encoding error or clear it on success.
+- Prebuilt macOS arm64 binaries are now built on macOS 15 and need macOS 15 or later, because setup-php no longer installs PHP on the macOS 14 runners. On older macOS, build from source with phpize.
 - `fastjson_validate()` now takes 0.47-0.90x the time of a full parse instead of 1.1-1.9x (Neoverse-N1), from in-place number reads and faster string and whitespace scanning in vendor patch P-009.
 
 ### Fixed
@@ -355,7 +358,8 @@ backed by yyjson 0.12.0.
   `JSON_UNESCAPED_LINE_TERMINATORS` is also set. Without
   `JSON_UNESCAPED_UNICODE`, both extensions escape them.
 
-[Unreleased]: https://github.com/iliaal/fastjson/compare/0.9.0...HEAD
+[Unreleased]: https://github.com/iliaal/fastjson/compare/0.10.0...HEAD
+[0.10.0]: https://github.com/iliaal/fastjson/releases/tag/0.10.0
 [0.9.0]: https://github.com/iliaal/fastjson/releases/tag/0.9.0
 [0.8.0]: https://github.com/iliaal/fastjson/releases/tag/0.8.0
 [0.7.0]: https://github.com/iliaal/fastjson/releases/tag/0.7.0
