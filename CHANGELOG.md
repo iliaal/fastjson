@@ -8,20 +8,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- Bundled yyjson is now upstream master `a84070f` (after 0.13.0). It includes security fixes and an end-byte restore fix (ibireme/yyjson#315) in the incremental reader, which fastjson does not call.
-- yyjson's incremental reader, file I/O, and JSON Pointer, Patch, and Merge Patch functions, none of which fastjson calls, are no longer compiled into the module.
+- Bundled yyjson is now upstream master `a84070f` (after 0.13.0), with two incremental-reader fixes, ibireme/yyjson#315 and 332be7a, the second of them security-relevant; fastjson does not call that reader and no longer compiles it.
+- yyjson's file I/O and JSON Pointer, Patch, and Merge Patch functions, which fastjson does not call, are no longer compiled into the module.
+- `fastjson_encode()` and `fastjson_file_encode()` give `JSON_PARTIAL_OUTPUT_ON_ERROR` precedence over `JSON_THROW_ON_ERROR`, like ext/json: with both flags they no longer throw `JsonException`, and they publish the encoding error or clear it on success.
+- `fastjson_validate()` now takes 0.47-0.90x the time of a full parse instead of 1.1-1.9x (Neoverse-N1), from in-place number reads and faster string and whitespace scanning in vendor patch P-009.
 
 ### Fixed
 
 - Decimal numbers with 770 or more integer digits and a fraction could decode one double too high; they now round correctly (ibireme/yyjson#314).
-- Fixed object lifetime during encoding when property hooks or nested `JsonSerializable` callbacks detach the object being traversed.
-- Prevented userspace write or flush callbacks from freeing the stream while `fastjson_file_encode()` is still using it.
-- `fastjson_encode()` and `fastjson_file_encode()` now give `JSON_PARTIAL_OUTPUT_ON_ERROR` precedence over `JSON_THROW_ON_ERROR`, publishing the encoding error or clearing it on success, like ext/json.
 - `fastjson_pointer_get()` and `fastjson_pointer_exists()` now match document member names using decode's UTF-8 sanitization flags and reject target names that become duplicates after sanitization. `JSON_INVALID_UTF8_SUBSTITUTE` takes precedence when both UTF-8 flags are set.
 - Documented existing decode depth behavior: `fastjson_decode()` and `fastjson_file_decode()` apply `$depth` after parsing, so the limit does not bound parser memory or CPU time. This is a documentation correction; parsing behavior is unchanged.
 - Clarify `fastjson_validate()` documentation: the depth cap is checked after parsing, not an early-exit or memory bound, and deep inputs or long trailing numbers can allocate temporary storage.
 - `fastjson_merge_patch()` selects the last duplicate member at each merged object boundary before checking result depth, including small objects whose discarded values exceed `$depth`.
 - `fastjson_file_encode()` returns `false` with "Failed to write file" when the stream accepts every write but its flush fails, instead of reporting success.
+
+### Security
+
+- Fixed a use-after-free in `fastjson_encode()` and `fastjson_file_encode()` when a property hook or nested `JsonSerializable` callback detaches the object being encoded.
+- Fixed a use-after-free when a userspace stream's write or flush callback closes the stream during `fastjson_file_encode()`.
+- Fixed a use-after-free when a userspace stream's read or eof callback closes the stream during `fastjson_file_decode()`.
 
 ## [0.9.0] - 2026-09-29
 
