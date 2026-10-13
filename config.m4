@@ -22,6 +22,11 @@ if test "$PHP_FASTJSON" != "no"; then
   FASTJSON_CFLAGS="-fvisibility=hidden -Dyyjson_api= \
     -Wall -Wextra -Wno-unused-parameter -Wno-unused-function"
 
+  dnl fastjson never calls yyjson's incremental reader, FILE*/path I/O, or
+  dnl JSON Pointer/Patch/Merge Patch; keep that unused code out of the module.
+  FASTJSON_CFLAGS="$FASTJSON_CFLAGS -DYYJSON_DISABLE_INCR_READER=1 \
+    -DYYJSON_DISABLE_FILE=1 -DYYJSON_DISABLE_UTILS=1"
+
   dnl -Wshadow is intentionally NOT enabled; PHP's own headers declare
   dnl struct members named `zval` which shadow the zval typedef.
   if test "$PHP_FASTJSON_DEV" = "yes"; then

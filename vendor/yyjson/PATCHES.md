@@ -38,7 +38,8 @@ Upstream changes in this range that fastjson's paths reach:
   and merge-patch readers share this path. Covered by
   `tests/decode_long_number_rounding.phpt`.
 
-Upstream changes fastjson compiles but does not call:
+Upstream changes in code fastjson does not call. The incremental reader and
+JSON Patch are compiled out (see "Compiled-out yyjson features" below):
 
 - Incremental reader (#315 and 332be7a). `yyjson_incr_read()` now restores
   the byte it temporarily overwrites at the end of the available input on
@@ -545,6 +546,18 @@ write only through `pre` and only under the RAW flags, and that
 with the RAW flags included.
 
 ## Build-flag dependencies (not vendor patches)
+
+### Compiled-out yyjson features
+
+`config.m4` and `config.w32` define `YYJSON_DISABLE_INCR_READER`,
+`YYJSON_DISABLE_FILE`, and `YYJSON_DISABLE_UTILS`. fastjson never calls
+`yyjson_incr_*`, the `FILE*`/path readers and writers, or yyjson's JSON
+Pointer, JSON Patch, and JSON Merge Patch functions: it reads files
+through PHP streams and implements pointer and merge-patch handling
+itself. No local patch touches those regions. On upgrade, grep fastjson's
+own sources for `yyjson_` calls and confirm none falls inside a
+`YYJSON_DISABLE_INCR_READER`, `YYJSON_DISABLE_FILE`, or
+`YYJSON_DISABLE_UTILS` block; a call that does fails the build.
 
 These aren't edits to vendored sources, but they depend on a specific
 invariant in the upstream code. Re-check on every yyjson upgrade.
