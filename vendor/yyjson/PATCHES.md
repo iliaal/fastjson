@@ -2,7 +2,7 @@
 
 The bundled yyjson sources at `vendor/yyjson/yyjson.{c,h}` are an
 upstream master snapshot, commit
-`d31a003b8faaae9fe25067f287cd40275163fe78`, with eight local modifications
+`a84070fa6dc58f9b379ed75b8c8fab2c1da1b604`, with eight local modifications
 (P-002 through P-009) documented below. The snapshot is newer than tag
 0.13.0 but is not a release: `YYJSON_VERSION_STRING` still reads `0.13.0`.
 `vendor/yyjson/VERSION` and `.upstream/yyjson.yml` record the commit. The
@@ -16,11 +16,11 @@ archive digest, applies the series in order, and compares the result
 byte-for-byte with the vendored sources. Run it after any patch or vendor
 update. The prose below records rationale and upgrade caveats.
 
-## Upstream sync: master `d31a003` (after 0.13.0)
+## Upstream sync: master `a84070f` (after 0.13.0)
 
 All eight patches applied to the new snapshot with line offsets only, no
 fuzz and no conflicts. None of the upstream changes since 0.13.0 touch a
-patched region: applying the upstream 0.13.0..d31a003 diff to the
+patched region: applying the upstream 0.13.0..a84070f diff to the
 previously vendored sources gives the same bytes as applying the series to
 the pristine snapshot. The patch files were refreshed for the new line
 numbers; their content is unchanged. No local patch was retired: upstream's
@@ -208,7 +208,7 @@ to fit worst-case `\uXXXX` expansion plus surrounding quotes.
 **File:** `vendor/yyjson/yyjson.c` (the string reader `read_string`)
 **Region:** the `else` branch that handles a non-escape, non-quote byte,
 carrying the `"unexpected control character in string"` message (around
-line 5066 in the patched d31a003 snapshot).
+line 5066 in the patched a84070f snapshot).
 
 **Reason.** ext/json rejects raw control characters (byte `< 0x20`)
 inside JSON strings as `JSON_ERROR_CTRL_CHAR`, *regardless* of its
@@ -575,7 +575,7 @@ the compiler default. Without the workaround, `nm -D` lists ~49
 
 **Mechanism.** `config.m4` passes `-Dyyjson_api=` so the preprocessor
 sees the macro as already defined before `yyjson.h` reaches its
-`#ifndef yyjson_api` guard (line 339 of `yyjson.h` in the d31a003
+`#ifndef yyjson_api` guard (line 339 of `yyjson.h` in the a84070f
 snapshot, unchanged from 0.13.0). The
 visibility-default branch is skipped; symbols inherit
 `-fvisibility=hidden`. fastjson is the only caller of yyjson within

@@ -8,7 +8,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- Bundled yyjson is now upstream master `d31a003` (after 0.13.0). It includes security fixes and an end-byte restore fix (ibireme/yyjson#315) in the incremental reader, which fastjson does not call.
+- Bundled yyjson is now upstream master `a84070f` (after 0.13.0). It includes security fixes and an end-byte restore fix (ibireme/yyjson#315) in the incremental reader, which fastjson does not call.
 - yyjson's incremental reader, file I/O, and JSON Pointer, Patch, and Merge Patch functions, none of which fastjson calls, are no longer compiled into the module.
 
 ### Fixed
