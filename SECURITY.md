@@ -11,7 +11,8 @@ which run in-process under the same trust model as ext/json.
 
 | Version | Supported          |
 |---------|--------------------|
-| 0.9.x   | :white_check_mark: |
+| 0.10.x  | :white_check_mark: |
+| 0.9.x   | :x:                |
 | 0.8.x   | :x:                |
 | 0.7.x   | :x:                |
 | 0.6.x   | :x:                |
