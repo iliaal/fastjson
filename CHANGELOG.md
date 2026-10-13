@@ -6,7 +6,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Bundled yyjson is now upstream master `d31a003` (after 0.13.0). It includes security fixes and an end-byte restore fix (ibireme/yyjson#315) in the incremental reader, which fastjson does not call.
+
 ### Fixed
+
+- Decimal numbers with 770 or more integer digits and a fraction could decode one double too high; they now round correctly (ibireme/yyjson#314).
 
 - Fixed object lifetime during encoding when property hooks or nested `JsonSerializable` callbacks detach the object being traversed.
 - Prevented userspace write or flush callbacks from freeing the stream while `fastjson_file_encode()` is still using it.

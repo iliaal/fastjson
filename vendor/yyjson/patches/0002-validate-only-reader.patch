@@ -66,10 +66,10 @@ with the new validate numbers.
  2 files changed, 356 insertions(+), 1 deletion(-)
 
 diff --git a/vendor/yyjson/yyjson.c b/vendor/yyjson/yyjson.c
-index bdd9365..300e075 100644
+index bc14fac..6ca8e1e 100644
 --- a/vendor/yyjson/yyjson.c
 +++ b/vendor/yyjson/yyjson.c
-@@ -6161,6 +6161,347 @@ fail_garbage:           return_err(cur, UNEXPECTED_CONTENT, MSG_GARBAGE);
+@@ -6305,6 +6305,347 @@ fail_depth:             return_err(cur, DEPTH, MSG_DEPTH);
  
  
  
@@ -417,7 +417,7 @@ index bdd9365..300e075 100644
  /*==============================================================================
   * MARK: - JSON Reader (Public)
   *============================================================================*/
-@@ -6226,7 +6567,10 @@ yyjson_doc *yyjson_read_opts(char *dat, usize len,
+@@ -6370,7 +6711,10 @@ yyjson_doc *yyjson_read_opts(char *dat, usize len,
      }
  
      /* read json document */
@@ -430,10 +430,10 @@ index bdd9365..300e075 100644
              doc = read_root_pretty(hdr, cur, eof, alc, flg, err);
          } else {
 diff --git a/vendor/yyjson/yyjson.h b/vendor/yyjson/yyjson.h
-index 5eb6d46..99fb6ad 100644
+index 626db04..316e10f 100644
 --- a/vendor/yyjson/yyjson.h
 +++ b/vendor/yyjson/yyjson.h
-@@ -825,6 +825,17 @@ static const yyjson_read_flag YYJSON_READ_JSON5 =
+@@ -908,6 +908,17 @@ static const yyjson_read_flag YYJSON_READ_JSON5 =
      (1 << 12) | /* YYJSON_READ_ALLOW_SINGLE_QUOTED_STR */
      (1 << 13);  /* YYJSON_READ_ALLOW_UNQUOTED_KEY */
  

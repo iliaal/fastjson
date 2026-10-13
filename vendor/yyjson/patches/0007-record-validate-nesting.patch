@@ -8,7 +8,7 @@ unchanged; the stack-growth harness compiles it alone.
 diff --git a/vendor/yyjson/yyjson.c b/vendor/yyjson/yyjson.c
 --- a/vendor/yyjson/yyjson.c
 +++ b/vendor/yyjson/yyjson.c
-@@ -6270,6 +6270,7 @@ static yyjson_doc *read_root_validate(u8 *hdr, u8 *cur, u8 *eof,
+@@ -6414,6 +6414,7 @@ static yyjson_doc *read_root_validate(u8 *hdr, u8 *cur, u8 *eof,
      u64 *stack_buf = stack_inline;
      usize stack_cap = INLINE_DEPTH;
      usize depth = 0;
@@ -16,7 +16,7 @@ diff --git a/vendor/yyjson/yyjson.c b/vendor/yyjson/yyjson.c
      u8 is_obj = 0;
      usize ctn_len = 0;
      yyjson_val dummy;
-@@ -6285,10 +6286,12 @@ static yyjson_doc *read_root_validate(u8 *hdr, u8 *cur, u8 *eof,
+@@ -6429,10 +6430,12 @@ static yyjson_doc *read_root_validate(u8 *hdr, u8 *cur, u8 *eof,
      if (*cur == '{') {
          cur++;
          is_obj = 1;
@@ -29,7 +29,7 @@ diff --git a/vendor/yyjson/yyjson.c b/vendor/yyjson/yyjson.c
          goto arr_val_begin;
      } else {
          /* Top-level scalar — defer to read_root_single. It allocates a
-@@ -6298,8 +6301,8 @@ static yyjson_doc *read_root_validate(u8 *hdr, u8 *cur, u8 *eof,
+@@ -6442,8 +6445,8 @@ static yyjson_doc *read_root_validate(u8 *hdr, u8 *cur, u8 *eof,
      }
  
  arr_val_begin:
@@ -40,7 +40,7 @@ diff --git a/vendor/yyjson/yyjson.c b/vendor/yyjson/yyjson.c
      if (char_is_num(*cur)) {
          ctn_len++;
          if (likely(read_num(&cur, pre, flg, val, &msg))) goto arr_val_end;
-@@ -6429,8 +6432,8 @@ obj_val_begin:
+@@ -6573,8 +6576,8 @@ obj_val_begin:
          if (likely(read_num(&cur, pre, flg, val, &msg))) goto obj_val_end;
          goto fail_number;
      }
@@ -51,7 +51,7 @@ diff --git a/vendor/yyjson/yyjson.c b/vendor/yyjson/yyjson.c
      if (*cur == 't') {
          if (likely(read_true(&cur, val))) goto obj_val_end;
          goto fail_literal_true;
-@@ -6505,6 +6508,10 @@ doc_end:
+@@ -6649,6 +6652,10 @@ doc_end:
      memset(doc, 0, sizeof(yyjson_doc));
      doc->alc = alc;
      doc->str_pool = has_flg(INSITU) ? NULL : (char *)hdr;

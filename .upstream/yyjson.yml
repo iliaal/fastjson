@@ -1,5 +1,7 @@
-# detected from vendor/yyjson/VERSION
-resolver: github
+# vendor/yyjson is a master snapshot, not a release tag; VERSION holds the SHA.
+resolver: github-head
 repo: ibireme/yyjson
-pinned: 0.13.0
+branch: master
+pinned: d31a003b8faaae9fe25067f287cd40275163fe78
 vendored_at: vendor/yyjson
+note: "Master snapshot after 0.13.0 (header still reports 0.13.0)"
