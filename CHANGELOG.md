@@ -8,6 +8,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Correct decode depth documentation: `fastjson_decode()` and `fastjson_file_decode()` parse the complete document before checking nesting during conversion, so a small `$depth` is not a parser memory limit and parse errors take precedence (behavior unchanged).
 - Clarify `fastjson_validate()` documentation: the depth cap is checked after parsing, not an early-exit or memory bound, and deep inputs or long trailing numbers can allocate temporary storage.
 - `fastjson_merge_patch()` selects the last duplicate member at each merged object boundary before checking result depth, including small objects whose discarded values exceed `$depth`.
 - `fastjson_file_encode()` returns `false` with "Failed to write file" when the stream accepts every write but its flush fails, instead of reporting success.

@@ -183,8 +183,13 @@ function fastjson_file_encode(string $filename, mixed $value, int $flags = 0, in
  *                                   rejects; fastjson-only, no JSON_*
  *                                   equivalent
  *
- * The $depth parameter caps recursion. $depth <= 0 or > INT_MAX
- * raises a ValueError; the cap is enforced during the parse.
+ * $depth <= 0 or > INT_MAX raises a ValueError before parsing.
+ * For a valid depth argument, the complete JSON document is parsed before
+ * $depth limits the conversion to PHP values. Nesting $depth or more
+ * containers deep fails with FASTJSON_ERROR_DEPTH (a scalar needs
+ * depth >= 1, "[]" needs depth >= 2, "[[1]]" needs depth >= 3).
+ * Parse errors take precedence over a nesting-depth error. A small $depth
+ * neither stops parsing early nor bounds the parser's memory allocations.
  */
 function fastjson_decode(string $json, ?bool $associative = null, int $depth = 512, int $flags = 0): mixed {}
 
