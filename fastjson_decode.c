@@ -558,38 +558,53 @@ PHP_FUNCTION(fastjson_file_decode)
                                 "Failed to open file for reading");
         RETURN_NULL();
     }
-    zend_string *contents;
+    zend_string *contents = NULL;
     bool read_failed = false;
-    if (php_stream_is(stream, PHP_STREAM_IS_STDIO)) {
-        php_stream_set_option(stream, PHP_STREAM_OPTION_READ_BUFFER,
-                              PHP_STREAM_BUFFER_NONE, NULL);
-        contents = php_stream_copy_to_mem(stream, PHP_STREAM_COPY_ALL, 0);
-        read_failed = !php_stream_eof(stream);
-        if (contents == NULL) {
-            contents = ZSTR_EMPTY_ALLOC();
-        }
-    } else {
-        smart_str read_buf = {0};
-        char chunk[8192];
-        while (true) {
-            ssize_t got = php_stream_read(stream, chunk, sizeof(chunk));
-            if (got > 0) {
-                smart_str_appendl(&read_buf, chunk, (size_t)got);
-                continue;
+    /* Resource references and NO_FCLOSE do not block pclose(). Defer stream
+     * destruction during read callbacks until the owned close below. */
+    stream->in_free = 1;
+    uint32_t no_fclose = stream->flags & PHP_STREAM_FLAG_NO_FCLOSE;
+    stream->flags |= PHP_STREAM_FLAG_NO_FCLOSE;
+    volatile bool bailed = false;
+    zend_try {
+        if (php_stream_is(stream, PHP_STREAM_IS_STDIO)) {
+            php_stream_set_option(stream, PHP_STREAM_OPTION_READ_BUFFER,
+                                  PHP_STREAM_BUFFER_NONE, NULL);
+            contents = php_stream_copy_to_mem(stream, PHP_STREAM_COPY_ALL, 0);
+            read_failed = !php_stream_eof(stream);
+            if (contents == NULL) {
+                contents = ZSTR_EMPTY_ALLOC();
             }
-            if (got < 0 || !php_stream_eof(stream)) {
-                read_failed = true;
-            }
-            break;
-        }
-        if (read_buf.s == NULL) {
-            contents = ZSTR_EMPTY_ALLOC();
         } else {
-            smart_str_0(&read_buf);
-            contents = read_buf.s;
+            smart_str read_buf = {0};
+            char chunk[8192];
+            while (true) {
+                ssize_t got = php_stream_read(stream, chunk, sizeof(chunk));
+                if (got > 0) {
+                    smart_str_appendl(&read_buf, chunk, (size_t)got);
+                    continue;
+                }
+                if (got < 0 || !php_stream_eof(stream)) {
+                    read_failed = true;
+                }
+                break;
+            }
+            if (read_buf.s == NULL) {
+                contents = ZSTR_EMPTY_ALLOC();
+            } else {
+                smart_str_0(&read_buf);
+                contents = read_buf.s;
+            }
         }
-    }
+    } zend_catch {
+        bailed = true;
+    } zend_end_try();
+    stream->flags = (stream->flags & ~PHP_STREAM_FLAG_NO_FCLOSE) | no_fclose;
+    stream->in_free = 0;
     php_stream_close(stream);
+    if (bailed) {
+        zend_bailout();
+    }
     /* A userspace wrapper may throw from stream_close() after a successful
      * read. Stop before parsing so the wrapper exception remains primary. */
     if (EG(exception)) {
