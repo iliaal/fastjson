@@ -6,11 +6,27 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Bundled yyjson is now upstream master `a84070f` (after 0.13.0), with two incremental-reader fixes, ibireme/yyjson#315 and 332be7a, the second of them security-relevant; fastjson does not call that reader and no longer compiles it.
+- yyjson's file I/O and JSON Pointer, Patch, and Merge Patch functions, which fastjson does not call, are no longer compiled into the module.
+- `fastjson_encode()` and `fastjson_file_encode()` give `JSON_PARTIAL_OUTPUT_ON_ERROR` precedence over `JSON_THROW_ON_ERROR`, like ext/json: with both flags they no longer throw `JsonException`, and they publish the encoding error or clear it on success.
+- `fastjson_validate()` now takes 0.47-0.90x the time of a full parse instead of 1.1-1.9x (Neoverse-N1), from in-place number reads and faster string and whitespace scanning in vendor patch P-009.
+
 ### Fixed
 
+- Decimal numbers with 770 or more integer digits and a fraction could decode one double too high; they now round correctly (ibireme/yyjson#314).
+- `fastjson_pointer_get()` and `fastjson_pointer_exists()` now match document member names using decode's UTF-8 sanitization flags and reject target names that become duplicates after sanitization. `JSON_INVALID_UTF8_SUBSTITUTE` takes precedence when both UTF-8 flags are set.
+- Documented existing decode depth behavior: `fastjson_decode()` and `fastjson_file_decode()` apply `$depth` after parsing, so the limit does not bound parser memory or CPU time. This is a documentation correction; parsing behavior is unchanged.
 - Clarify `fastjson_validate()` documentation: the depth cap is checked after parsing, not an early-exit or memory bound, and deep inputs or long trailing numbers can allocate temporary storage.
 - `fastjson_merge_patch()` selects the last duplicate member at each merged object boundary before checking result depth, including small objects whose discarded values exceed `$depth`.
 - `fastjson_file_encode()` returns `false` with "Failed to write file" when the stream accepts every write but its flush fails, instead of reporting success.
+
+### Security
+
+- Fixed a use-after-free in `fastjson_encode()` and `fastjson_file_encode()` when a property hook or nested `JsonSerializable` callback detaches the object being encoded.
+- Fixed a use-after-free when a userspace stream's write or flush callback closes the stream during `fastjson_file_encode()`.
+- Fixed a use-after-free when a userspace stream's read or eof callback closes the stream during `fastjson_file_decode()`.
 
 ## [0.9.0] - 2026-09-29
 
@@ -61,7 +77,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- `fastjson_encode()`, `fastjson_file_encode()`, and replacement encoding in `fastjson_pointer_set()` now publish the outer operation's final error state after nested callbacks or destructors call fastjson recursively, matching `ext/json` for success, partial-output, failure, and exception paths.
+- `fastjson_encode()`, `fastjson_file_encode()`, and replacement encoding in `fastjson_pointer_set()` now publish the outer operation's final error state after nested callbacks or destructors call fastjson recursively. Calls combining `JSON_PARTIAL_OUTPUT_ON_ERROR` and `JSON_THROW_ON_ERROR` still preserved the previous error state in this release, unlike ext/json.
 - `fastjson_file_encode()` now stops immediately when a userspace stream wrapper throws from `stream_close()`, keeping that exception primary and preserving the applicable error-state contract.
 - `fastjson_decode()` and `fastjson_validate()` no longer reject a string that carries both a backslash escape and invalid UTF-8 under `JSON_INVALID_UTF8_IGNORE`/`SUBSTITUTE`. `"\/\xFFe"` was reported as `unexpected control character in string`; it now decodes to `/e` like `json_decode()`. Raw control characters are still rejected (vendor patch P-004).
 - After a non-finite number without `JSON_PARTIAL_OUTPUT_ON_ERROR`, the walk that looks for a later error now stops where `ext/json` stops. `fastjson_encode([[INF, "\xB1\x31"], INF])` reported `JSON_ERROR_INF_OR_NAN` where `json_encode()` reports `JSON_ERROR_UTF8`, and `JsonSerializable::jsonSerialize()` could run on values `ext/json` never reaches.
@@ -329,11 +345,15 @@ backed by yyjson 0.12.0.
 
 ### Known divergences from ext/json
 
-- Large/scientific doubles emit yyjson's `100000000000000000.0` where
-  ext/json emits `1.0e+17`. Not targeted; documented in
-  `tests/upstream-json/.skiplist`.
-- U+2028 / U+2029 line separators emitted as ordinary code points
-  (yyjson default). ext/json always escapes for JSONP safety.
+- Double notation can differ while preserving the same value: fastjson
+  emits `100000000000000000.0`, `1e22`, `0.00001`, `1e-7`, and `5e-324`
+  where ext/json emits `1.0e+17`, `1.0e+22`, `1.0e-5`, `1.0e-7`, and
+  `5.0e-324` at the default `serialize_precision=-1`. Not targeted;
+  documented in `tests/upstream-json/.skiplist`.
+- With `JSON_UNESCAPED_UNICODE`, fastjson emits U+2028 / U+2029 line
+  separators as raw UTF-8. ext/json escapes them unless
+  `JSON_UNESCAPED_LINE_TERMINATORS` is also set. Without
+  `JSON_UNESCAPED_UNICODE`, both extensions escape them.
 
 [Unreleased]: https://github.com/iliaal/fastjson/compare/0.9.0...HEAD
 [0.9.0]: https://github.com/iliaal/fastjson/releases/tag/0.9.0

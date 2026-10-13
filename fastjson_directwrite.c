@@ -598,7 +598,12 @@ static bool dw_emit_object(fastjson_dw_ctx *ctx, zval *zv,
             "Maximum stack depth exceeded", false);
     }
 
-    return dw_emit_object_props(ctx, zv, remaining_depth);
+    /* Property hooks and nested serializers can detach the walked object. */
+    zval obj_copy;
+    ZVAL_COPY(&obj_copy, zv);
+    bool ok = dw_emit_object_props(ctx, &obj_copy, remaining_depth);
+    zval_ptr_dtor(&obj_copy);
+    return ok;
 }
 
 /* Encode an object's JSON property view as a `{...}` body, skipping the

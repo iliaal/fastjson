@@ -1,7 +1,7 @@
 diff --git a/vendor/yyjson/yyjson.c b/vendor/yyjson/yyjson.c
 --- a/vendor/yyjson/yyjson.c
 +++ b/vendor/yyjson/yyjson.c
-@@ -4721,6 +4721,9 @@ static_inline bool read_uni_esc(u8 **src_ptr, u8 **dst_ptr, const char **msg) {
+@@ -4818,6 +4818,9 @@ static_inline bool read_uni_esc(u8 **src_ptr, u8 **dst_ptr, const char **msg) {
   @param con Continuation for incremental parsing.
   @return Whether success.
   */
@@ -11,7 +11,7 @@ diff --git a/vendor/yyjson/yyjson.c b/vendor/yyjson/yyjson.c
  static_inline bool read_str_opt(u8 quo, u8 **ptr, u8 *eof, yyjson_read_flag flg,
                                  yyjson_val *val, const char **msg, u8 *con[2]) {
      /*
-@@ -4806,7 +4809,10 @@ skip_ascii_end:
+@@ -4902,7 +4905,10 @@ skip_ascii_end:
      gcc_store_barrier(*src);
      if (likely(*src == quo)) {
          val->tag = ((u64)(src - hdr) << YYJSON_TAG_BIT) | YYJSON_TYPE_STR |
@@ -23,7 +23,7 @@ diff --git a/vendor/yyjson/yyjson.c b/vendor/yyjson/yyjson.c
          val->uni.str = (const char *)hdr;
          *src = '\0';
          *end = src + 1;
-@@ -4855,7 +4861,10 @@ skip_utf8:
+@@ -4951,7 +4957,10 @@ skip_utf8:
          }
  #endif
          if (unlikely(pos == src)) {
@@ -35,7 +35,7 @@ diff --git a/vendor/yyjson/yyjson.c b/vendor/yyjson/yyjson.c
              else return_err(src, "invalid UTF-8 encoding in string");
          }
          goto skip_ascii;
-@@ -4929,6 +4938,9 @@ copy_escape:
+@@ -5025,6 +5034,9 @@ copy_escape:
          }
      } else if (likely(*src == quo)) {
          val->tag = ((u64)(dst - hdr) << YYJSON_TAG_BIT) | YYJSON_TYPE_STR;
@@ -45,7 +45,7 @@ diff --git a/vendor/yyjson/yyjson.c b/vendor/yyjson/yyjson.c
          val->uni.str = (const char *)hdr;
          *dst = '\0';
          *end = src + 1;
-@@ -5035,6 +5047,7 @@ copy_utf8:
+@@ -5141,6 +5153,7 @@ copy_utf8:
              if (!has_allow(INVALID_UNICODE)) {
                  return_err(src, MSG_ERR_UTF8);
              }
@@ -53,7 +53,7 @@ diff --git a/vendor/yyjson/yyjson.c b/vendor/yyjson/yyjson.c
              goto copy_ascii_stop_1;
          }
          goto copy_ascii;
-@@ -5043,6 +5056,7 @@ copy_utf8:
+@@ -5149,6 +5162,7 @@ copy_utf8:
  
  #undef return_err
  }
@@ -64,7 +64,7 @@ diff --git a/vendor/yyjson/yyjson.c b/vendor/yyjson/yyjson.c
 diff --git a/vendor/yyjson/yyjson.h b/vendor/yyjson/yyjson.h
 --- a/vendor/yyjson/yyjson.h
 +++ b/vendor/yyjson/yyjson.h
-@@ -561,6 +561,11 @@ typedef uint8_t yyjson_subtype;
+@@ -644,6 +644,11 @@ typedef uint8_t yyjson_subtype;
  #define YYJSON_SUBTYPE_BIT      ((uint8_t)2)
  /** The mask used to extract the reserved bits of a JSON value. */
  #define YYJSON_RESERVED_MASK    ((uint8_t)0xE0)     /* 111_____ */

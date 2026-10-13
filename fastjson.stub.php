@@ -117,6 +117,10 @@ function fastjson_version(): string {}
  *                                   false); global error state is
  *                                   preserved per ext/json's contract
  *
+ * JSON_PARTIAL_OUTPUT_ON_ERROR takes precedence over JSON_THROW_ON_ERROR.
+ * With both flags, encoding errors set fastjson_last_error() without
+ * throwing JsonException; successful encoding clears the error state.
+ *
  * Very large or very small doubles may render in a different but
  * numerically equivalent notation: 1.0e17 encodes as "100000000000000000.0"
  * where json_encode() emits "1.0e+17", and 1.0e-5 as "0.00001" vs
@@ -146,8 +150,9 @@ function fastjson_encode(mixed $value, int $flags = 0, int $depth = 512): string
  * I/O failures use FASTJSON_ERROR_SYNTAX to stay inside the JSON_ERROR_*
  * code range; use fastjson_last_error_msg() ("Failed to open file for writing" or
  * "Failed to write file") to distinguish them from encode failures.
- * JSON_THROW_ON_ERROR throws on an encode error; an I/O failure still
- * returns false.
+ * JSON_THROW_ON_ERROR throws on an encode error unless
+ * JSON_PARTIAL_OUTPUT_ON_ERROR is also set. An I/O failure still returns
+ * false.
  */
 function fastjson_file_encode(string $filename, mixed $value, int $flags = 0, int $depth = 512): bool {}
 
@@ -183,8 +188,10 @@ function fastjson_file_encode(string $filename, mixed $value, int $flags = 0, in
  *                                   rejects; fastjson-only, no JSON_*
  *                                   equivalent
  *
- * The $depth parameter caps recursion. $depth <= 0 or > INT_MAX
- * raises a ValueError; the cap is enforced during the parse.
+ * The $depth parameter caps recursion while building the PHP result,
+ * after yyjson has parsed the full input. It does not limit parser
+ * memory or CPU time. Malformed input reports its parse error even if
+ * it also exceeds $depth. $depth <= 0 or > INT_MAX raises a ValueError.
  */
 function fastjson_decode(string $json, ?bool $associative = null, int $depth = 512, int $flags = 0): mixed {}
 
@@ -233,6 +240,12 @@ function fastjson_file_decode(string $filename, ?bool $associative = null, int $
  * errors use the same error path. Otherwise $associative, $depth, and $flags
  * (including FASTJSON_DECODE_RELAXED) carry the same semantics as
  * fastjson_decode() and apply to the decoded subtree.
+ *
+ * With JSON_INVALID_UTF8_IGNORE or JSON_INVALID_UTF8_SUBSTITUTE, member
+ * names are matched after the UTF-8 sanitization fastjson_decode() applies
+ * (SUBSTITUTE wins when both are set), so the pointer selects the key the
+ * decoded result would show. Members whose names become equal after
+ * sanitization count as duplicates, so selecting that name is ambiguous.
  */
 function fastjson_pointer_get(string $json, string $pointer, ?bool $associative = null, int $depth = 512, int $flags = 0): mixed {}
 
@@ -250,6 +263,9 @@ function fastjson_pointer_get(string $json, string $pointer, ?bool $associative 
  * sets FASTJSON_ERROR_DEPTH. JSON parse errors also set an error. Either error
  * throws under JSON_THROW_ON_ERROR. $flags carries the parse-affecting bits of
  * fastjson_decode() (e.g. FASTJSON_DECODE_RELAXED, JSON_THROW_ON_ERROR).
+ * JSON_INVALID_UTF8_IGNORE and JSON_INVALID_UTF8_SUBSTITUTE match member
+ * names after sanitization and treat names that become equal as duplicates,
+ * as fastjson_pointer_get() does.
  */
 function fastjson_pointer_exists(string $json, string $pointer, int $flags = 0): bool {}
 

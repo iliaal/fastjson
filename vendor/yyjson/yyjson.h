@@ -1294,6 +1294,11 @@ static const yyjson_write_flag YYJSON_WRITE_ALLOW_INVALID_UNICODE   = 1 << 5;
     This flag will override `YYJSON_WRITE_PRETTY` flag. */
 static const yyjson_write_flag YYJSON_WRITE_PRETTY_TWO_SPACES       = 1 << 6;
 
+/** Write JSON pretty with tab indentation.
+    This flag will override `YYJSON_WRITE_PRETTY` and
+    `YYJSON_WRITE_PRETTY_TWO_SPACES` flags. */
+static const yyjson_write_flag YYJSON_WRITE_PRETTY_TABS             = 1 << 9;
+
 /** Adds a newline character `\n` at the end of the JSON.
     This can be helpful for text editors or NDJSON. */
 static const yyjson_write_flag YYJSON_WRITE_NEWLINE_AT_END          = 1 << 7;
@@ -2793,6 +2798,24 @@ yyjson_api_inline bool yyjson_mut_set_str(yyjson_mut_val *val, const char *str);
     @warning This function should not be used on an existing object or array. */
 yyjson_api_inline bool yyjson_mut_set_strn(yyjson_mut_val *val,
                                            const char *str, size_t len);
+
+/** Set the value to a copied string (null-terminated).
+    The string is copied into `doc` and held by it.
+    Returns false if input is NULL or allocation fails.
+    The value is unchanged on failure.
+    @warning This function should not be used on an existing object or array. */
+yyjson_api_inline bool yyjson_mut_set_strcpy(yyjson_mut_val *val,
+                                             const char *str,
+                                             yyjson_mut_doc *doc);
+
+/** Set the value to a copied string (with length).
+    The string is copied into `doc` and held by it.
+    Returns false if input is NULL, `len` is too large, or allocation fails.
+    The value is unchanged on failure.
+    @warning This function should not be used on an existing object or array. */
+yyjson_api_inline bool yyjson_mut_set_strncpy(yyjson_mut_val *val,
+                                              const char *str, size_t len,
+                                              yyjson_mut_doc *doc);
 
 /** Marks this string as not needing to be escaped during JSON writing.
     This can be used to avoid the overhead of escaping if the string contains
@@ -4946,6 +4969,10 @@ typedef struct yyjson_patch_err {
  The memory of the returned value is allocated by the `doc`.
  The `err` is used to receive error information, pass NULL if not needed.
  Returns NULL if the patch could not be applied.
+
+ @warning `copy` deep-copies with recursion and may cause a stack overflow
+    if the object level is too deep. A patch can build a deeper tree than
+    the input.
  */
 yyjson_api yyjson_mut_val *yyjson_patch(yyjson_mut_doc *doc,
                                         const yyjson_val *orig,
@@ -4957,6 +4984,10 @@ yyjson_api yyjson_mut_val *yyjson_patch(yyjson_mut_doc *doc,
  The memory of the returned value is allocated by the `doc`.
  The `err` is used to receive error information, pass NULL if not needed.
  Returns NULL if the patch could not be applied.
+
+ @warning `copy` deep-copies with recursion and may cause a stack overflow
+    if the object level is too deep. A patch can build a deeper tree than
+    the input.
  */
 yyjson_api yyjson_mut_val *yyjson_mut_patch(yyjson_mut_doc *doc,
                                             const yyjson_mut_val *orig,
@@ -4977,6 +5008,8 @@ yyjson_api yyjson_mut_val *yyjson_mut_patch(yyjson_mut_doc *doc,
 
  @warning This function is recursive and may cause a stack overflow if the
     object level is too deep.
+ @warning Duplicate keys are kept. A repeated key is merged again and copies
+    that member again. Key lookup is linear, so two large objects are slow.
  */
 yyjson_api yyjson_mut_val *yyjson_merge_patch(yyjson_mut_doc *doc,
                                               const yyjson_val *orig,
@@ -4989,6 +5022,8 @@ yyjson_api yyjson_mut_val *yyjson_merge_patch(yyjson_mut_doc *doc,
 
  @warning This function is recursive and may cause a stack overflow if the
     object level is too deep.
+ @warning Duplicate keys are kept. A repeated key is merged again and copies
+    that member again. Key lookup is linear, so two large objects are slow.
  */
 yyjson_api yyjson_mut_val *yyjson_mut_merge_patch(yyjson_mut_doc *doc,
                                                   const yyjson_mut_val *orig,
@@ -6193,6 +6228,24 @@ yyjson_api_inline bool yyjson_mut_set_strn(yyjson_mut_val *val,
     if (yyjson_unlikely(!val || !str)) return false;
     unsafe_yyjson_set_strn(val, str, len);
     return true;
+}
+
+yyjson_api_inline bool yyjson_mut_set_strncpy(yyjson_mut_val *val,
+                                              const char *str, size_t len,
+                                              yyjson_mut_doc *doc) {
+    char *new_str;
+    if (yyjson_unlikely(!val || !str || !doc)) return false;
+    new_str = unsafe_yyjson_mut_strncpy(doc, str, len);
+    if (yyjson_unlikely(!new_str)) return false;
+    unsafe_yyjson_set_strn(val, new_str, len);
+    return true;
+}
+
+yyjson_api_inline bool yyjson_mut_set_strcpy(yyjson_mut_val *val,
+                                             const char *str,
+                                             yyjson_mut_doc *doc) {
+    if (yyjson_unlikely(!str)) return false;
+    return yyjson_mut_set_strncpy(val, str, strlen(str), doc);
 }
 
 yyjson_api_inline bool yyjson_mut_set_str_noesc(yyjson_mut_val *val,

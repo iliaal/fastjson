@@ -511,6 +511,65 @@ PHP_FUNCTION(fastjson_decode)
                          return_value);
 }
 
+static zend_string *fastjson_read_stream(php_stream *stream, bool *read_failed)
+{
+    zend_string *contents;
+    if (php_stream_is(stream, PHP_STREAM_IS_STDIO)) {
+        php_stream_set_option(stream, PHP_STREAM_OPTION_READ_BUFFER,
+                              PHP_STREAM_BUFFER_NONE, NULL);
+        contents = php_stream_copy_to_mem(stream, PHP_STREAM_COPY_ALL, 0);
+        *read_failed = !php_stream_eof(stream);
+        if (contents == NULL) {
+            contents = ZSTR_EMPTY_ALLOC();
+        }
+    } else {
+        smart_str read_buf = {0};
+        char chunk[8192];
+        while (true) {
+            ssize_t got = php_stream_read(stream, chunk, sizeof(chunk));
+            if (got > 0) {
+                smart_str_appendl(&read_buf, chunk, (size_t)got);
+                continue;
+            }
+            if (got < 0 || !php_stream_eof(stream)) {
+                *read_failed = true;
+            }
+            break;
+        }
+        if (read_buf.s == NULL) {
+            contents = ZSTR_EMPTY_ALLOC();
+        } else {
+            smart_str_0(&read_buf);
+            contents = read_buf.s;
+        }
+    }
+    return contents;
+}
+
+/* Reads and closes stream. Resource references and NO_FCLOSE do not block
+ * pclose(), so stream destruction is deferred during read callbacks until
+ * the owned close here; a callback bailout closes the stream and re-raises. */
+static zend_string *fastjson_read_and_close_stream(php_stream *stream, bool *read_failed)
+{
+    struct { zend_string *contents; } r = { NULL };
+    stream->in_free = 1;
+    uint32_t no_fclose = stream->flags & PHP_STREAM_FLAG_NO_FCLOSE;
+    stream->flags |= PHP_STREAM_FLAG_NO_FCLOSE;
+    volatile bool bailed = false;
+    zend_try {
+        r.contents = fastjson_read_stream(stream, read_failed);
+    } zend_catch {
+        bailed = true;
+    } zend_end_try();
+    stream->flags = (stream->flags & ~PHP_STREAM_FLAG_NO_FCLOSE) | no_fclose;
+    stream->in_free = 0;
+    php_stream_close(stream);
+    if (bailed) {
+        zend_bailout();
+    }
+    return r.contents;
+}
+
 PHP_FUNCTION(fastjson_file_decode)
 {
     char *path;
@@ -558,38 +617,8 @@ PHP_FUNCTION(fastjson_file_decode)
                                 "Failed to open file for reading");
         RETURN_NULL();
     }
-    zend_string *contents;
     bool read_failed = false;
-    if (php_stream_is(stream, PHP_STREAM_IS_STDIO)) {
-        php_stream_set_option(stream, PHP_STREAM_OPTION_READ_BUFFER,
-                              PHP_STREAM_BUFFER_NONE, NULL);
-        contents = php_stream_copy_to_mem(stream, PHP_STREAM_COPY_ALL, 0);
-        read_failed = !php_stream_eof(stream);
-        if (contents == NULL) {
-            contents = ZSTR_EMPTY_ALLOC();
-        }
-    } else {
-        smart_str read_buf = {0};
-        char chunk[8192];
-        while (true) {
-            ssize_t got = php_stream_read(stream, chunk, sizeof(chunk));
-            if (got > 0) {
-                smart_str_appendl(&read_buf, chunk, (size_t)got);
-                continue;
-            }
-            if (got < 0 || !php_stream_eof(stream)) {
-                read_failed = true;
-            }
-            break;
-        }
-        if (read_buf.s == NULL) {
-            contents = ZSTR_EMPTY_ALLOC();
-        } else {
-            smart_str_0(&read_buf);
-            contents = read_buf.s;
-        }
-    }
-    php_stream_close(stream);
+    zend_string *contents = fastjson_read_and_close_stream(stream, &read_failed);
     /* A userspace wrapper may throw from stream_close() after a successful
      * read. Stop before parsing so the wrapper exception remains primary. */
     if (EG(exception)) {
@@ -733,7 +762,7 @@ PHP_FUNCTION(fastjson_pointer_get)
     size_t resolve_depth = (size_t)fastjson_effective_walk_depth(depth);
     fj_splice_status pointer_status = fastjson_pointer_resolve_limited(
         yyjson_doc_get_root(doc), pointer, pointer_len, resolve_depth,
-        &target);
+        flags, &target);
     if (pointer_status == FJ_SPLICE_AMBIGUOUS
             || pointer_status == FJ_SPLICE_DEPTH_FAIL) {
         yyjson_doc_free(doc);
@@ -1252,7 +1281,7 @@ PHP_FUNCTION(fastjson_pointer_exists)
      * return with last_error() == NONE means absent. */
     yyjson_val *target;
     fj_splice_status pointer_status = fastjson_pointer_resolve_limited(
-        yyjson_doc_get_root(doc), pointer, pointer_len, 0, &target);
+        yyjson_doc_get_root(doc), pointer, pointer_len, 0, flags, &target);
     if (pointer_status == FJ_SPLICE_AMBIGUOUS
             || pointer_status == FJ_SPLICE_DEPTH_FAIL) {
         yyjson_doc_free(doc);

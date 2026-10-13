@@ -12,6 +12,10 @@ if (PHP_FASTJSON != "no") {
     // Leave YYJSON_EXPORTS undefined to keep yyjson symbols inside the DLL.
     ADD_FLAG("CFLAGS_FASTJSON",
         "/I" + configure_module_dirname + "\\" + yyjson_src_dir);
+    // fastjson never calls yyjson's incremental reader, FILE*/path I/O, or
+    // JSON Pointer/Patch/Merge Patch; keep that unused code out of the module.
+    ADD_FLAG("CFLAGS_FASTJSON", "/DYYJSON_DISABLE_INCR_READER=1 " +
+        "/DYYJSON_DISABLE_FILE=1 /DYYJSON_DISABLE_UTILS=1");
 
     var wrapper_sources = "fastjson.c fastjson_alloc.c fastjson_decode.c " +
         "fastjson_encode.c fastjson_directwrite.c fastjson_pointer_splice.c";

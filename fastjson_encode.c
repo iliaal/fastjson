@@ -71,7 +71,8 @@ PHP_FUNCTION(fastjson_encode)
 
     /* Match ext/json: validate depth at the first container, without ValueError. */
 
-    bool throw_mode = (flags & FASTJSON_ENCODE_THROW_ON_ERROR) != 0;
+    bool throw_mode = (flags & FASTJSON_ENCODE_THROW_ON_ERROR) != 0
+        && !(flags & FASTJSON_ENCODE_PARTIAL_OUTPUT_ON_ERROR);
     fastjson_error_state saved_err;
     fastjson_throw_mode_init(throw_mode, &saved_err);
 
@@ -104,7 +105,8 @@ PHP_FUNCTION(fastjson_file_encode)
         Z_PARAM_LONG(depth)
     ZEND_PARSE_PARAMETERS_END();
 
-    bool throw_mode = (flags & FASTJSON_ENCODE_THROW_ON_ERROR) != 0;
+    bool throw_mode = (flags & FASTJSON_ENCODE_THROW_ON_ERROR) != 0
+        && !(flags & FASTJSON_ENCODE_PARTIAL_OUTPUT_ON_ERROR);
     fastjson_error_state saved_err;
     fastjson_throw_mode_init(throw_mode, &saved_err);
 
@@ -138,46 +140,57 @@ PHP_FUNCTION(fastjson_file_encode)
                                 "Failed to open file for writing");
         RETURN_FALSE;
     }
-    /* php_stream_write may short-write (userspace wrappers report any
-     * count), so loop to completion; a <= 0 return means no progress. */
-    size_t total = ZSTR_LEN(zs);
-    size_t done = 0;
-    while (done < total) {
-        ssize_t n = php_stream_write(stream, ZSTR_VAL(zs) + done,
-                                     total - done);
-        if (n <= 0) {
-            break;
-        }
-        if ((size_t)n >= total - done) {
-            done = total;
-            break;
-        }
-        done += (size_t)n;
-    }
-    bool wrote_all = (done == total);
-    /* Closing a stream flushes it, but older PHP versions discard that
-     * flush result. Check it explicitly before close so buffered write
-     * failures cannot be reported as successful file encodes. */
-    bool can_flush = true;
-    if (php_stream_is(stream, PHP_STREAM_IS_USERSPACE)
-            && Z_TYPE(stream->wrapperdata) == IS_OBJECT) {
-        zend_class_entry *ce = Z_OBJCE(stream->wrapperdata);
-        /* stream_flush is optional. PHP reports its absence as a flush
-         * failure too; magic __call implementations still need checking. */
-        can_flush = ce->__call != NULL || zend_hash_str_exists(
-            &ce->function_table, "stream_flush", sizeof("stream_flush") - 1);
-    }
+    /* Resource references and NO_FCLOSE do not block pclose(). Defer stream
+     * destruction during callbacks until the owned close below. */
+    stream->in_free = 1;
+    uint32_t no_fclose = stream->flags & PHP_STREAM_FLAG_NO_FCLOSE;
+    stream->flags |= PHP_STREAM_FLAG_NO_FCLOSE;
+    bool wrote_all = false;
     int flush_res = 0;
-    if (wrote_all && can_flush && !EG(exception)) {
-        /* A callback can discover this resource via get_resources(). Keep
-         * it alive until our close, even if the callback tries fclose(). */
-        int no_fclose = stream->flags & PHP_STREAM_FLAG_NO_FCLOSE;
-        stream->flags |= PHP_STREAM_FLAG_NO_FCLOSE;
-        flush_res = php_stream_flush(stream);
-        stream->flags = (stream->flags & ~PHP_STREAM_FLAG_NO_FCLOSE) | no_fclose;
-    }
+    volatile bool bailed = false;
+    zend_try {
+        /* php_stream_write may short-write (userspace wrappers report any
+         * count), so loop to completion; a <= 0 return means no progress. */
+        size_t total = ZSTR_LEN(zs);
+        size_t done = 0;
+        while (done < total) {
+            ssize_t n = php_stream_write(stream, ZSTR_VAL(zs) + done,
+                                         total - done);
+            if (n <= 0) {
+                break;
+            }
+            if ((size_t)n >= total - done) {
+                done = total;
+                break;
+            }
+            done += (size_t)n;
+        }
+        wrote_all = (done == total);
+        /* Closing a stream flushes it, but older PHP versions discard that
+         * flush result. Check it explicitly before close so buffered write
+         * failures cannot be reported as successful file encodes. */
+        bool can_flush = true;
+        if (php_stream_is(stream, PHP_STREAM_IS_USERSPACE)
+                && Z_TYPE(stream->wrapperdata) == IS_OBJECT) {
+            zend_class_entry *ce = Z_OBJCE(stream->wrapperdata);
+            /* stream_flush is optional. PHP reports its absence as a flush
+             * failure too; magic __call implementations still need checking. */
+            can_flush = ce->__call != NULL || zend_hash_str_exists(
+                &ce->function_table, "stream_flush", sizeof("stream_flush") - 1);
+        }
+        if (wrote_all && can_flush && !EG(exception)) {
+            flush_res = php_stream_flush(stream);
+        }
+    } zend_catch {
+        bailed = true;
+    } zend_end_try();
+    stream->flags = (stream->flags & ~PHP_STREAM_FLAG_NO_FCLOSE) | no_fclose;
+    stream->in_free = 0;
     int close_res = php_stream_close(stream);
     zend_string_release(zs);
+    if (bailed) {
+        zend_bailout();
+    }
     if (EG(exception)) {
         fastjson_restore_error_state(throw_mode ? &saved_err : &encode_err);
         RETURN_THROWS();

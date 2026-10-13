@@ -297,8 +297,19 @@ static bool fj_seg_is_index(const fj_ptr_seg *seg, size_t *out_idx)
     return true;
 }
 
-static bool fj_seg_key_eq(yyjson_val *key, const fj_ptr_seg *seg)
+static bool fj_seg_key_eq(yyjson_val *key, const fj_ptr_seg *seg,
+                          zend_long flags)
 {
+    if (FASTJSON_HAS_UTF8_HANDLING_FLAG(flags)
+            && (yyjson_get_tag(key) & YYJSON_RESERVED_INVALID_UNICODE)) {
+        size_t sane_len;
+        char *sane = fastjson_sanitize_utf8(yyjson_get_str(key),
+            yyjson_get_len(key), flags, FJ_SAN_DECODE, &sane_len);
+        bool equal = sane_len == seg->len
+            && memcmp(sane, seg->str, seg->len) == 0;
+        efree(sane);
+        return equal;
+    }
     return yyjson_get_len(key) == seg->len
         && memcmp(yyjson_get_str(key), seg->str, seg->len) == 0;
 }
@@ -478,7 +489,7 @@ static bool fj_splice_write_object(fj_splice_ctx *ctx, const yyjson_val *obj,
     yyjson_obj_iter_init(FJ_IMUT_VAL(obj), &iter);
     while ((key = yyjson_obj_iter_next(&iter))) {
         yyjson_val *child = yyjson_obj_iter_get_val(key);
-        bool is_target = fj_seg_key_eq(key, target);
+        bool is_target = fj_seg_key_eq(key, target, 0);
 
         if (is_target) {
             if (matched) {
@@ -728,6 +739,7 @@ static bool fj_pointer_parse(const char *pointer, size_t pointer_len,
 
 static bool fj_pointer_walk(yyjson_val *root,
                             const fastjson_pointer_plan *plan,
+                            zend_long flags,
                             bool allow_missing_object_suffix,
                             yyjson_val **target,
                             fj_splice_status *status)
@@ -744,7 +756,7 @@ static bool fj_pointer_walk(yyjson_val *root,
             yyjson_obj_iter iter;
             yyjson_obj_iter_init(current, &iter);
             while ((key = yyjson_obj_iter_next(&iter))) {
-                if (!fj_seg_key_eq(key, seg)) {
+                if (!fj_seg_key_eq(key, seg, flags)) {
                     continue;
                 }
                 child = yyjson_obj_iter_get_val(key);
@@ -819,7 +831,7 @@ bool fastjson_pointer_plan_init(yyjson_val *root, const char *pointer,
     }
 
     yyjson_val *target;
-    if (!fj_pointer_walk(root, plan, true, &target, status)) {
+    if (!fj_pointer_walk(root, plan, 0, true, &target, status)) {
         fastjson_pointer_plan_destroy(plan);
         return false;
     }
@@ -841,6 +853,7 @@ static fj_splice_status fj_pointer_resolve_impl(yyjson_val *root,
                                                 const char *pointer,
                                                 size_t pointer_len,
                                                 size_t depth_limit,
+                                                zend_long flags,
                                                 bool check_depth,
                                                 yyjson_val **target)
 {
@@ -857,7 +870,7 @@ static fj_splice_status fj_pointer_resolve_impl(yyjson_val *root,
         fastjson_pointer_plan_destroy(&plan);
         return status;
     }
-    if (!fj_pointer_walk(root, &plan, false, target, &status)) {
+    if (!fj_pointer_walk(root, &plan, flags, false, target, &status)) {
         *target = NULL;
     }
     fastjson_pointer_plan_destroy(&plan);
@@ -869,7 +882,7 @@ fj_splice_status fastjson_pointer_resolve(yyjson_val *root,
                                           size_t pointer_len,
                                           yyjson_val **target)
 {
-    return fj_pointer_resolve_impl(root, pointer, pointer_len, 0, false,
+    return fj_pointer_resolve_impl(root, pointer, pointer_len, 0, 0, false,
                                    target);
 }
 
@@ -877,10 +890,11 @@ fj_splice_status fastjson_pointer_resolve_limited(yyjson_val *root,
                                                   const char *pointer,
                                                   size_t pointer_len,
                                                   size_t depth_limit,
+                                                  zend_long flags,
                                                   yyjson_val **target)
 {
     return fj_pointer_resolve_impl(root, pointer, pointer_len, depth_limit,
-                                   true, target);
+                                   flags, true, target);
 }
 
 /* Build a scalar yyjson_val directly when its representation is independent

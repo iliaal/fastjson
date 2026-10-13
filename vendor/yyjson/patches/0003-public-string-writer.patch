@@ -6,10 +6,10 @@ the wrapper selects it with get_hex_table_with_flag(), which is how
 YYJSON_WRITE_LOWERCASE_HEX reaches \uXXXX escapes.
 
 diff --git a/vendor/yyjson/yyjson.c b/vendor/yyjson/yyjson.c
-index 32a823b..8e3512a 100644
+index 6ca8e1e..66cf900 100644
 --- a/vendor/yyjson/yyjson.c
 +++ b/vendor/yyjson/yyjson.c
-@@ -10894,6 +10894,23 @@ bool yyjson_mut_write_fp(FILE *fp,
+@@ -10972,6 +10972,23 @@ bool yyjson_mut_write_fp(FILE *fp,
  
  #endif /* !YYJSON_FREESTANDING && !YYJSON_DISABLE_FILE */
  
@@ -34,10 +34,10 @@ index 32a823b..8e3512a 100644
  #undef has_allow
  #endif /* YYJSON_DISABLE_WRITER */
 diff --git a/vendor/yyjson/yyjson.h b/vendor/yyjson/yyjson.h
-index 6389812..1ad8eb8 100644
+index 316e10f..b885197 100644
 --- a/vendor/yyjson/yyjson.h
 +++ b/vendor/yyjson/yyjson.h
-@@ -1921,6 +1921,28 @@ yyjson_api_inline char *yyjson_mut_write_number(const yyjson_mut_val *val,
+@@ -1926,6 +1926,28 @@ yyjson_api_inline char *yyjson_mut_write_number(const yyjson_mut_val *val,
      return yyjson_write_number((const yyjson_val *)val, buf);
  }
  

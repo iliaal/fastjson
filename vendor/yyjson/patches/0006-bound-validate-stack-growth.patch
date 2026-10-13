@@ -12,7 +12,7 @@ fits, so validation results and depth semantics are identical.
 diff --git a/vendor/yyjson/yyjson.c b/vendor/yyjson/yyjson.c
 --- a/vendor/yyjson/yyjson.c
 +++ b/vendor/yyjson/yyjson.c
-@@ -6227,17 +6227,28 @@ static yyjson_doc *read_root_validate(u8 *hdr, u8 *cur, u8 *eof,
+@@ -6371,17 +6371,28 @@ static yyjson_doc *read_root_validate(u8 *hdr, u8 *cur, u8 *eof,
      return NULL; \
  } while (false)
  

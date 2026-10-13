@@ -1,15 +1,60 @@
 # Patches applied to vendored yyjson sources
 
-The bundled yyjson sources at `vendor/yyjson/yyjson.{c,h}` are
-upstream's tag 0.13.0 with eight local modifications (P-002 through
-P-009) documented below. The upstream `vendor/yyjson/LICENSE` and
-`vendor/yyjson/CHANGELOG.md` are unchanged.
+The bundled yyjson sources at `vendor/yyjson/yyjson.{c,h}` are an
+upstream master snapshot, commit
+`a84070fa6dc58f9b379ed75b8c8fab2c1da1b604`, with eight local modifications
+(P-002 through P-009) documented below. The snapshot is newer than tag
+0.13.0 but is not a release: `YYJSON_VERSION_STRING` still reads `0.13.0`.
+`vendor/yyjson/VERSION` and `.upstream/yyjson.yml` record the commit. The
+upstream `vendor/yyjson/LICENSE`, `vendor/yyjson/README.md`, and
+`vendor/yyjson/CHANGELOG.md` are unchanged from that commit.
 
 The patch files under `vendor/yyjson/patches/` are the canonical replayable
 series. `scripts/verify-yyjson-patches.sh` downloads the pinned pristine
-release, checks its archive digest, applies the series in order, and compares
-the result byte-for-byte with the vendored sources. Run it after any patch or
-vendor update. The prose below records rationale and upgrade caveats.
+source (a release tag or a commit archive, from `VERSION`), checks its
+archive digest, applies the series in order, and compares the result
+byte-for-byte with the vendored sources. Run it after any patch or vendor
+update. The prose below records rationale and upgrade caveats.
+
+## Upstream sync: master `a84070f` (after 0.13.0)
+
+All eight patches applied to the new snapshot with line offsets only, no
+fuzz and no conflicts. None of the upstream changes since 0.13.0 touch a
+patched region: applying the upstream 0.13.0..a84070f diff to the
+previously vendored sources gives the same bytes as applying the series to
+the pristine snapshot. The patch files were refreshed for the new line
+numbers; their content is unchanged. No local patch was retired: upstream's
+document-owned mutable string setters (#313) are unrelated to all eight.
+
+Upstream changes in this range that fastjson's paths reach:
+
+- Long decimal numbers (#314). For a number with more than 768
+  significant digits, the slow path truncates the digit string before the
+  exact comparison that settles values near a rounding midpoint. When the
+  decimal point fell in the truncated part, the kept digits included one
+  more than the reader counted, so that comparison could round the wrong
+  way: a value just below the midpoint above 1e30 decoded to the next
+  double up. `fastjson_decode()`, `fastjson_file_decode()`, and the pointer
+  and merge-patch readers share this path. Covered by
+  `tests/decode_long_number_rounding.phpt`.
+
+Upstream changes in code fastjson does not call. The incremental reader and
+JSON Patch are compiled out (see "Compiled-out yyjson features" below):
+
+- Incremental reader (#315 and 332be7a). `yyjson_incr_read()` now restores
+  the byte it temporarily overwrites at the end of the available input on
+  every return, including errors. A failed growth of its value buffer is
+  now reported as a memory allocation error; before, it could be reported
+  as needing more data, with the larger buffer size already recorded in
+  the reader state although the reallocation had failed. fastjson never
+  calls `yyjson_incr_*`, so no PHPT can reach either path.
+- JSON Patch (`yyjson_patch()`): `add` replaces an existing object member,
+  and `test` compares numbers by value. fastjson does not use JSON Patch.
+- `YYJSON_WRITE_PRETTY_TABS` and `yyjson_mut_set_str[n]cpy()`. The
+  direct-write encoder uses only `YYJSON_WRITE_PRETTY` and
+  `yyjson_write_string_to_buf()` (P-003); `write_str()`,
+  `get_enc_table_with_flag()`, and `get_hex_table_with_flag()` keep their
+  signatures.
 
 ## Retired: P-001 lowercase hex table
 
@@ -163,7 +208,7 @@ to fit worst-case `\uXXXX` expansion plus surrounding quotes.
 **File:** `vendor/yyjson/yyjson.c` (the string reader `read_string`)
 **Region:** the `else` branch that handles a non-escape, non-quote byte,
 carrying the `"unexpected control character in string"` message (around
-line 5009 in the patched 0.13.0).
+line 5066 in the patched a84070f snapshot).
 
 **Reason.** ext/json rejects raw control characters (byte `< 0x20`)
 inside JSON strings as `JSON_ERROR_CTRL_CHAR`, *regardless* of its
@@ -295,7 +340,7 @@ full-string scan.
 
 **File:** `vendor/yyjson/yyjson.c`
 **Region:** the `push_ctn` macro inside `read_root_validate` (around line
-6237 in the patched tree; introduced by P-002)
+6735 in the patched tree; introduced by P-002)
 
 **Reason.** P-002's validate-only reader tracks open containers on a heap
 stack that starts at 32 inline slots and doubles on demand. The growth did
@@ -502,6 +547,18 @@ with the RAW flags included.
 
 ## Build-flag dependencies (not vendor patches)
 
+### Compiled-out yyjson features
+
+`config.m4` and `config.w32` define `YYJSON_DISABLE_INCR_READER`,
+`YYJSON_DISABLE_FILE`, and `YYJSON_DISABLE_UTILS`. fastjson never calls
+`yyjson_incr_*`, the `FILE*`/path readers and writers, or yyjson's JSON
+Pointer, JSON Patch, and JSON Merge Patch functions: it reads files
+through PHP streams and implements pointer and merge-patch handling
+itself. No local patch touches those regions. On upgrade, grep fastjson's
+own sources for `yyjson_` calls and confirm none falls inside a
+`YYJSON_DISABLE_INCR_READER`, `YYJSON_DISABLE_FILE`, or
+`YYJSON_DISABLE_UTILS` block; a call that does fails the build.
+
 These aren't edits to vendored sources, but they depend on a specific
 invariant in the upstream code. Re-check on every yyjson upgrade.
 
@@ -518,7 +575,8 @@ the compiler default. Without the workaround, `nm -D` lists ~49
 
 **Mechanism.** `config.m4` passes `-Dyyjson_api=` so the preprocessor
 sees the macro as already defined before `yyjson.h` reaches its
-`#ifndef yyjson_api` guard (line 339 of `yyjson.h` in 0.13.0). The
+`#ifndef yyjson_api` guard (line 339 of `yyjson.h` in the a84070f
+snapshot, unchanged from 0.13.0). The
 visibility-default branch is skipped; symbols inherit
 `-fvisibility=hidden`. fastjson is the only caller of yyjson within
 the .so, so hidden visibility doesn't affect functionality.

@@ -11,7 +11,9 @@ which run in-process under the same trust model as ext/json.
 
 | Version | Supported          |
 |---------|--------------------|
-| 0.8.x   | :white_check_mark: |
+| 0.10.x  | :white_check_mark: |
+| 0.9.x   | :x:                |
+| 0.8.x   | :x:                |
 | 0.7.x   | :x:                |
 | 0.6.x   | :x:                |
 | 0.5.x   | :x:                |
@@ -54,9 +56,10 @@ In scope:
 - Bugs in the vendored yyjson (`vendor/yyjson/yyjson.c`) reachable
   through fastjson's public API. fastjson ships this code statically,
   so report it here; we coordinate upstream where appropriate.
-- Depth and recursion handling. The `$depth` argument is a
-  denial-of-service boundary; stack exhaustion or overflow reachable
-  below the configured limit is in scope.
+- Depth and recursion handling. Stack exhaustion or overflow reachable
+  below the configured `$depth` limit is in scope. This limit does not
+  bound document size, total allocation, or CPU time; wide documents can
+  consume substantial resources even at shallow depths.
 - `open_basedir` or stream-wrapper bypasses in `fastjson_file_encode()`
   / `fastjson_file_decode()`, which go through PHP's stream layer.
 - Arginfo / ZPP mismatches that cause undefined behavior reachable from
