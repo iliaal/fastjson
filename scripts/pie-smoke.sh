@@ -37,6 +37,10 @@ git config --global --add safe.directory /fastjson
 git config --global --add safe.directory /fastjson/.git
 git clone -q file:///fastjson /tmp/src
 cd /tmp/src
+# PIE versions a path repository from its branch; a fixed branch name gives
+# the commit under test a version Packagist cannot serve, even when CI checks
+# out a detached HEAD.
+git checkout -q -B pie-smoke
 head_commit=$(git log --oneline -1)
 tag_name=$(git describe --tags --always)
 echo "HEAD: ${head_commit}"
@@ -67,27 +71,30 @@ echo
 echo "---- 5. pie install ----"
 PIE_OK=0
 
-mkdir -p /tmp/piework
-cat >/tmp/piework/composer.json <<'JSON'
-{
-    "name": "iliaal/pie-smoke",
-    "repositories": [
-        { "type": "path", "url": "/tmp/src", "options": { "symlink": false } }
-    ],
-    "minimum-stability": "dev",
-    "prefer-stable": true
-}
-JSON
-
-echo "   [A] pie install -d /tmp/piework iliaal/fastjson"
+readonly SMOKE_VERSION="dev-pie-smoke"
+echo "   [A] pie repository:add path /tmp/src"
+pie repository:add --with-php-config=/usr/local/bin/php-config path /tmp/src
+echo "   [A] pie install iliaal/fastjson:${SMOKE_VERSION}"
 pie install \
-	-d /tmp/piework \
+	--no-ansi \
 	--with-php-config=/usr/local/bin/php-config \
 	--auto-install-build-tools \
-	iliaal/fastjson 2>&1 |
+	"iliaal/fastjson:${SMOKE_VERSION}" 2>&1 |
 	tee /tmp/pie-A.out | tail -40 || true
 
-if php -m | grep -qi fastjson; then
+# Prove the install came from /tmp/src: only that path repository has a
+# dev-pie-smoke branch, and PIE must build it from source rather than take a
+# pre-packaged release binary.
+from_source=0
+if grep -qF "Found package: iliaal/fastjson:${SMOKE_VERSION} " /tmp/pie-A.out &&
+	grep -q '^Build complete: ' /tmp/pie-A.out &&
+	! grep -qiE 'pre-packaged binary|prebuilt archive' /tmp/pie-A.out; then
+	from_source=1
+fi
+echo "   [A] built ${SMOKE_VERSION} (${head_commit}) from source: ${from_source}"
+pie show --with-php-config=/usr/local/bin/php-config 2>&1 | grep -i fastjson || true
+
+if [[ "${from_source}" = "1" ]] && php -m | grep -qi fastjson; then
 	PIE_OK=1
 	echo "   [A] RESULT: success"
 fi
