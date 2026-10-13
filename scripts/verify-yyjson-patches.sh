@@ -67,9 +67,15 @@ main() {
 	require sha256sum
 	require tar
 
+	# VERSION holds a release tag or, for a master snapshot, a full commit SHA.
 	local version
+	local archive_ref
 	version=$(<"${VERSION_FILE}")
-	if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+	if [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+		archive_ref="refs/tags/${version}"
+	elif [[ "${version}" =~ ^[0-9a-f]{40}$ ]]; then
+		archive_ref="${version}"
+	else
 		printf 'Invalid yyjson version: %s\n' "${version}" >&2
 		exit 1
 	fi
@@ -78,7 +84,7 @@ main() {
 	local -r archive="${_tmpdir}/yyjson.tar.gz"
 	local -r source_dir="${_tmpdir}/source"
 	local -r work_dir="${_tmpdir}/work"
-	local -r url="https://github.com/ibireme/yyjson/archive/refs/tags/${version}.tar.gz"
+	local -r url="https://github.com/ibireme/yyjson/archive/${archive_ref}.tar.gz"
 
 	curl --fail --location --silent --show-error \
 		--connect-timeout 10 --max-time 60 \
