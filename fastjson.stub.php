@@ -240,6 +240,12 @@ function fastjson_file_decode(string $filename, ?bool $associative = null, int $
  * errors use the same error path. Otherwise $associative, $depth, and $flags
  * (including FASTJSON_DECODE_RELAXED) carry the same semantics as
  * fastjson_decode() and apply to the decoded subtree.
+ *
+ * With JSON_INVALID_UTF8_IGNORE or JSON_INVALID_UTF8_SUBSTITUTE, member
+ * names are matched after the UTF-8 sanitization fastjson_decode() applies
+ * (SUBSTITUTE wins when both are set), so the pointer selects the key the
+ * decoded result would show. Members whose names become equal after
+ * sanitization count as duplicates, so selecting that name is ambiguous.
  */
 function fastjson_pointer_get(string $json, string $pointer, ?bool $associative = null, int $depth = 512, int $flags = 0): mixed {}
 
@@ -257,6 +263,9 @@ function fastjson_pointer_get(string $json, string $pointer, ?bool $associative 
  * sets FASTJSON_ERROR_DEPTH. JSON parse errors also set an error. Either error
  * throws under JSON_THROW_ON_ERROR. $flags carries the parse-affecting bits of
  * fastjson_decode() (e.g. FASTJSON_DECODE_RELAXED, JSON_THROW_ON_ERROR).
+ * JSON_INVALID_UTF8_IGNORE and JSON_INVALID_UTF8_SUBSTITUTE match member
+ * names after sanitization and treat names that become equal as duplicates,
+ * as fastjson_pointer_get() does.
  */
 function fastjson_pointer_exists(string $json, string $pointer, int $flags = 0): bool {}
 
