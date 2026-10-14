@@ -45,7 +45,7 @@ function agg_find($tables, $subsection, $op) {
     return null;
 }
 
-/* Hero: two stacked bars (ext/json, fastjson) scaled to the larger. */
+/* Hero: both bars and tick labels use the same rounded-up axis maximum. */
 function hero($tables, $op, $captionExtra = '') {
     $r = agg_find($tables, 'Throughput, large corpus', $op) ?? [];
     // agg row: [Operation, Bytes, fastjson, ext/json, speedup]
@@ -56,12 +56,12 @@ function hero($tables, $op, $captionExtra = '') {
 <div class="hero">
   <div class="label-row">
     <div class="who">ext/json<span class="v"><?= e($GLOBALS['meta']['php']) ?></span></div>
-    <div class="bar-wrap"><div class="bar" style="width: <?= round($ext / $max * 100, 1) ?>%; background: var(--c-ext);"></div></div>
+    <div class="bar-wrap"><div class="bar" style="width: <?= round($ext / $tick * 100, 1) ?>%; background: var(--c-ext);"></div></div>
     <div class="num"><?= mbps($r[3] ?? '0') ?> <span class="u">MB/s</span></div>
   </div>
   <div class="label-row">
     <div class="who">fastjson <?= e($GLOBALS['meta']['fast']) ?><span class="v"><?= e($GLOBALS['meta']['php']) ?></span></div>
-    <div class="bar-wrap"><div class="bar" style="width: <?= round($fast / $max * 100, 1) ?>%; background: var(--c-fast);"></div></div>
+    <div class="bar-wrap"><div class="bar" style="width: <?= round($fast / $tick * 100, 1) ?>%; background: var(--c-fast);"></div></div>
     <div class="num"><?= mbps($r[2] ?? '0') ?> <span class="u">MB/s</span></div>
   </div>
   <div class="axis">

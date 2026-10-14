@@ -32,6 +32,7 @@ jobs:
       - run: scripts/test-build-warning-gates.sh
       - run: scripts/check-project-metadata.sh
       - run: scripts/verify-yyjson-patches.sh
+      - run: php scripts/test-baseline-renderer.php
 
   pie-smoke:
     name: PIE install smoke
