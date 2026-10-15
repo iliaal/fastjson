@@ -76,7 +76,10 @@ function bench_time(callable $callable, mixed $input, int $iterations): array
     sort($times);
     $drop = (int)floor($iterations * 0.1);
     $kept = array_slice($times, 0, $iterations - $drop);
-    $median = $kept[(int)floor(count($kept) / 2)];
+    $middle = intdiv(count($kept), 2);
+    $median = count($kept) % 2
+        ? $kept[$middle]
+        : ($kept[$middle - 1] + $kept[$middle]) / 2;
     $mean = array_sum($kept) / count($kept);
     return [$median, (int)$mean];
 }
@@ -97,13 +100,13 @@ function bench_mem(callable $callable, mixed $input): int
     return max(0, $peak - $baseline);
 }
 
-function fmt_mbps(int $bytes, int $ns): string
+function fmt_mbps(int $bytes, float $ns): string
 {
     if ($ns <= 0) return '∞';
     return number_format(($bytes / 1048576.0) / ($ns / 1e9), 1);
 }
 
-function fmt_ns(int $ns): string
+function fmt_ns(float $ns): string
 {
     if ($ns < 1000) return $ns . ' ns';
     if ($ns < 1_000_000) return number_format($ns / 1000, 1) . ' µs';
@@ -117,7 +120,7 @@ function fmt_bytes(int $b): string
     return number_format($b / 1048576, 2) . ' MB';
 }
 
-function fmt_speedup(int $fast_ns, int $ext_ns): string
+function fmt_speedup(float $fast_ns, float $ext_ns): string
 {
     if ($fast_ns <= 0) return '∞';
     return number_format($ext_ns / $fast_ns, 2) . 'x';
