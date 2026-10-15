@@ -52,14 +52,13 @@ foreach ($counts as $count) {
             $GLOBALS['clock'][] = 1000 + $sample;
         }
         $calls = 0;
-        [$median, $mean] = bench_time(static function ($input) use (&$calls): void {
+        $median = bench_time(static function ($input) use (&$calls): void {
             expect($input, 'input', 'callback input');
             $calls++;
         }, 'input', $count);
         $kept = $count - (int)floor($count * 0.1);
         $expected = 100 + ($kept - 1) * $step / 2;
         expect((float)$median, (float)$expected, "median n=$count step=$step");
-        expect($mean, (int)$expected, "mean n=$count step=$step");
         expect($calls, $count, 'call count');
         expect($GLOBALS['clock'], [], 'clock fully consumed');
     }

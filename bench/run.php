@@ -64,8 +64,8 @@ if (!$largeFiles && !$smallFiles) {
     exit(1);
 }
 
-/** Returns [median_ns, mean_ns] over $iterations runs, slowest 10% dropped. */
-function bench_time(callable $callable, mixed $input, int $iterations): array
+/** Returns the median ns over $iterations runs, slowest 10% dropped. */
+function bench_time(callable $callable, mixed $input, int $iterations): int|float
 {
     $times = [];
     for ($i = 0; $i < $iterations; $i++) {
@@ -77,11 +77,9 @@ function bench_time(callable $callable, mixed $input, int $iterations): array
     $drop = (int)floor($iterations * 0.1);
     $kept = array_slice($times, 0, $iterations - $drop);
     $middle = intdiv(count($kept), 2);
-    $median = count($kept) % 2
+    return count($kept) % 2
         ? $kept[$middle]
         : ($kept[$middle - 1] + $kept[$middle]) / 2;
-    $mean = array_sum($kept) / count($kept);
-    return [$median, (int)$mean];
 }
 
 /** Single-call peak heap delta in bytes.
@@ -276,7 +274,7 @@ function throughput_section(string $title, array $files, array $ops, int $iterat
 
             $medianByLabel = [];
             foreach ($fns as $label => $fn) {
-                [$med, ] = bench_time($fn, $input, $iterations);
+                $med = bench_time($fn, $input, $iterations);
                 $medianByLabel[$label] = $med;
                 $totalsByLabel[$label] += $med;
             }
