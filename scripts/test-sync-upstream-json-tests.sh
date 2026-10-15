@@ -60,6 +60,23 @@ cmp "$work_dir/before/.skiplist" "$dest/.skiplist"
 grep -Fq '| Synced count       | 2 |' "$dest/README.md"
 grep -Fq '| Skipped            | 1 (per .skiplist) |' "$dest/README.md"
 
+# A source read failure after earlier tests were processed must not erase or
+# partially replace the existing suite or its generated metadata.
+printf 'previous generated test\n' > "$dest/stale.phpt"
+printf 'maintained state\n' > "$dest/STATE.md"
+cp -R "$dest" "$work_dir/before-read-failure"
+ln -s "$source_dir/missing.phpt" "$source_dir/ext/json/tests/zz-unreadable.phpt"
+if bash "$project/scripts/sync-upstream-json-tests.sh" "$source_dir" \
+    > "$work_dir/output" 2>&1; then
+    echo 'unreadable source unexpectedly succeeded' >&2
+    exit 1
+fi
+grep -Fq 'zz-unreadable.phpt' "$work_dir/output"
+diff -r "$work_dir/before-read-failure" "$dest"
+# The disposable generation directory must be removed on failure too.
+[[ "$(find "$project/tests" -mindepth 1 -maxdepth 1 | wc -l)" -eq 1 ]]
+rm "$source_dir/ext/json/tests/zz-unreadable.phpt"
+
 # Existing extension requirements must survive the rewrite, with fastjson
 # added exactly once. Also pin the multiline --TEST-- insertion behavior.
 for fixture in existing already multiline trailing crlf; do
@@ -124,4 +141,18 @@ for entry in '  skip.phpt # indented entry' $'\tskip.phpt\t# tab-separated reaso
     cmp "$work_dir/expected-skiplist" "$dest/.skiplist"
     grep -Fq '| Skipped            | 1 (per .skiplist) |' "$dest/README.md"
 done
+# Every source can be skipped: publish metadata and remove stale generated
+# tests without treating the unmatched staged *.phpt pattern as a source file.
+for src in "$source_dir/ext/json/tests/"*.phpt; do
+    basename "$src"
+done > "$dest/.skiplist"
+cp "$dest/.skiplist" "$work_dir/all-skipped"
+bash "$project/scripts/sync-upstream-json-tests.sh" "$source_dir" > "$work_dir/output"
+[[ "$(find "$dest" -maxdepth 1 -name '*.phpt' | wc -l)" -eq 0 ]]
+[[ "$(find "$project/tests" -mindepth 1 -maxdepth 1 | wc -l)" -eq 1 ]]
+cmp "$work_dir/all-skipped" "$dest/.skiplist"
+cmp "$work_dir/all-skipped" "$dest/.manifest"
+cmp "$work_dir/before-read-failure/STATE.md" "$dest/STATE.md"
+grep -Fq '| Synced count       | 7 |' "$dest/README.md"
+grep -Fq '| Skipped            | 7 (per .skiplist) |' "$dest/README.md"
 printf 'upstream sync regressions passed\n'
