@@ -9,7 +9,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 
 - Scale benchmark hero bars to their labeled axis maximum, including the historical HTML baseline, without changing the reported measurements.
-- Average the middle two retained benchmark timings for even sample counts, preserving fractional nanoseconds in throughput, latency, and speedup formatting. Historical benchmark results remain unchanged.
 
 ## [0.10.0] - 2026-10-13
 
