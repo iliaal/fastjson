@@ -31,6 +31,14 @@
  * Output: markdown to stdout.
  */
 
+$dataDir = $argv[1] ?? __DIR__ . '/data';
+$iterations = (int)($argv[2] ?? 50);
+
+if ($iterations < 1) {
+    fwrite(STDERR, "iterations must be >= 1\n");
+    exit(1);
+}
+
 if (!extension_loaded('fastjson')) {
     fwrite(STDERR, "fastjson extension not loaded; pass -d extension=...\n");
     exit(1);
@@ -40,9 +48,6 @@ if (!extension_loaded('json')) {
     exit(1);
 }
 $haveSimdjson = extension_loaded('simdjson');
-
-$dataDir = $argv[1] ?? __DIR__ . '/data';
-$iterations = (int)($argv[2] ?? 50);
 
 if (!is_dir($dataDir)) {
     fwrite(STDERR, "data dir not found: $dataDir\n  run bench/fetch-data.sh first\n");
