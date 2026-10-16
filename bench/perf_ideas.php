@@ -9,6 +9,11 @@
  *       bench/perf_ideas.php [samples]
  */
 
+if (!function_exists('memory_reset_peak_usage')) {
+    fwrite(STDERR, "benchmark requires PHP 8.2+ with memory_reset_peak_usage() available\n");
+    exit(1);
+}
+
 if (!extension_loaded('fastjson')) {
     fwrite(STDERR, "fastjson extension not loaded; pass -d extension=...\n");
     exit(1);
