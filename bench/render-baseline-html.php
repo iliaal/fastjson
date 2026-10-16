@@ -13,6 +13,7 @@ $lines = explode("\n", $md);
 $meta = [];
 $tables = [];               // "section||subsection" => [ [cells...], ... ]
 $sec = $sub = '';
+$skipColumns = [];
 foreach ($lines as $l) {
     if (preg_match('/^- PHP (.+)$/', $l, $m))            $meta['php']  = 'PHP ' . $m[1];
     elseif (preg_match('/^- fastjson (\S+)(?: \(yyjson ([^)]+)\))?/', $l, $m)) {
@@ -23,14 +24,20 @@ foreach ($lines as $l) {
     elseif (preg_match('/^- (\d+) iterations/', $l, $m)) $meta['iter'] = $m[1];
     elseif (preg_match('/^- CPU: (.+)$/', $l, $m))       $meta['cpu']  = $m[1];
 
-    if (strpos($l, '### ') === 0)      { $sub = trim(substr($l, 4)); continue; }
-    if (strpos($l, '## ')  === 0)      { $sec = trim(substr($l, 3)); $sub = ''; continue; }
+    if (strpos($l, '### ') === 0)      { $sub = trim(substr($l, 4)); $skipColumns = []; continue; }
+    if (strpos($l, '## ')  === 0)      { $sec = trim(substr($l, 3)); $sub = ''; $skipColumns = []; continue; }
     if (($l[0] ?? '') !== '|')         continue;
     if (preg_match('/^\|[\s:\-|]+$/', $l)) continue;                 // separator row
     $cells = array_map('trim', explode('|', trim($l, '|')));
     $first = $cells[0] ?? '';
-    if ($first === 'File' || $first === 'Operation') continue;       // header row
-    $tables["$sec||$sub"][] = $cells;
+    if ($first === 'File' || $first === 'Operation') {
+        // Keep the fastjson/ext/json layout when run.php includes simdjson.
+        $skipColumns = array_keys(array_filter($cells,
+            static fn($cell) => $cell === 'simdjson' || $cell === 'sj/call'));
+        continue;
+    }
+    foreach ($skipColumns as $column) unset($cells[$column]);
+    $tables["$sec||$sub"][] = array_values($cells);
 }
 
 function num($s) { return (float) str_replace(',', '', $s); }        // "1,065.0 MB/s" -> 1065.0
