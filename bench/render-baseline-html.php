@@ -138,12 +138,19 @@ function table_small($tables, $op) {
 <?php return ob_get_clean();
 }
 
+/* bench/run.php formats memory with binary B/KB/MB units. Normalize before
+ * comparing values that may have crossed different display thresholds. */
+function memory_bytes($s) {
+    $scale = str_ends_with($s, ' MB') ? 1048576 : (str_ends_with($s, ' KB') ? 1024 : 1);
+    return num($s) * $scale;
+}
+
 /* Memory aggregate card (fastjson vs ext bars, normalized to the larger). */
 function mem_card($tables, $op, $title) {
     $agg = agg_find($tables, 'Memory peak (across all files)', $op);
     if (!$agg) return '';
     // [Operation, fastjson, ext/json, ratio]
-    $fast = num($agg[1]); $ext = num($agg[2]); $max = max($fast, $ext, 1);
+    $fast = memory_bytes($agg[1]); $ext = memory_bytes($agg[2]); $max = max($fast, $ext, 1);
     ob_start(); ?>
   <div class="mem-card">
     <h3><?= e($title) ?></h3>
