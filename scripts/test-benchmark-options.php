@@ -16,11 +16,46 @@ $cases = [
     'scientific-notation' => ['1e1', false],
 ];
 
-foreach ($cases as $name => [$argument, $invalid]) {
-    $command = [PHP_BINARY, '-n', $harness, __DIR__ . '/missing-corpus'];
+foreach (['json_validate', 'memory_reset_peak_usage',
+    'json_validate,memory_reset_peak_usage'] as $disabled) {
+    foreach (['default' => null, 'minimum' => '1', 'zero' => '0'] as $label => $argument) {
+        $cases["missing $disabled ($label)"] = [$argument, $argument === '0', $disabled];
+    }
+}
+
+foreach ($cases as $name => $case) {
+    [$argument, $invalid] = $case;
+    $disabled = $case[2] ?? '';
+    $command = [PHP_BINARY, '-n', '-d', "disable_functions=$disabled",
+        $harness, __DIR__ . '/missing-corpus'];
     if ($argument !== null) {
         $command[] = $argument;
     }
+    if ($invalid) {
+        $expected = "iterations must be >= 1\n";
+    } elseif ($disabled !== '' || PHP_VERSION_ID < 80300) {
+        $expected = "benchmark requires PHP 8.3+ with json_validate() and memory_reset_peak_usage() available\n";
+    } else {
+        $expected = "fastjson extension not loaded; pass -d extension=...\n";
+    }
+    checkBenchmarkCommand($command, $expected, $name);
+}
+
+$perfHarness = dirname(__DIR__) . '/bench/perf_ideas.php';
+foreach (['', 'json_validate', 'memory_reset_peak_usage',
+    'json_validate,memory_reset_peak_usage'] as $disabled) {
+    $expected = str_contains($disabled, 'memory_reset_peak_usage') || PHP_VERSION_ID < 80200
+        ? "benchmark requires PHP 8.2+ with memory_reset_peak_usage() available\n"
+        : "fastjson extension not loaded; pass -d extension=...\n";
+    checkBenchmarkCommand(
+        [PHP_BINARY, '-n', '-d', "disable_functions=$disabled", $perfHarness, '3'],
+        $expected,
+        "performance ideas, disabled=$disabled"
+    );
+}
+
+function checkBenchmarkCommand(array $command, string $expected, string $name): void
+{
     $process = proc_open($command, [
         0 => ['pipe', 'r'],
         1 => ['pipe', 'w'],
@@ -35,9 +70,6 @@ foreach ($cases as $name => [$argument, $invalid]) {
     fclose($pipes[1]);
     fclose($pipes[2]);
     $status = proc_close($process);
-    $expected = $invalid
-        ? "iterations must be >= 1\n"
-        : "fastjson extension not loaded; pass -d extension=...\n";
     if ($status !== 1 || $stdout !== '' || $stderr !== $expected) {
         throw new RuntimeException(sprintf(
             "%s: status=%d stdout=%s stderr=%s",
@@ -46,4 +78,4 @@ foreach ($cases as $name => [$argument, $invalid]) {
     }
 }
 
-echo "benchmark option regressions passed\n";
+echo count($cases) + 4, " benchmark option and runtime prerequisite regressions passed\n";
