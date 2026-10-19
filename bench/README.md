@@ -67,16 +67,16 @@ scan/copy trade-off, check ARM too; its crossover points differ from x86_64.
   `(encode | decode | validate)` on each file, timed with
   `hrtime(true)`. The slowest 10% are dropped (warmup and scheduler noise)
   and the median is reported.
-- Throughput is divided by the source JSON byte size, the same convention
-  simdjson and yyjson use, so numbers compare across projects.
+- Throughput is the source JSON byte size divided by the measured time.
+  The displayed MB/s uses 1,048,576 bytes per MB.
 - Encode is timed separately from decode: the harness decodes each file
   once up front, then times `encode($value)` only. Decode rows time
   `decode($json)` only.
 - Every case runs against `ext/json` in the same process, with the same
   input.
-- The aggregate row sums per-file medians instead of re-running on the
-  concatenated corpus, so its throughput is roughly the size-weighted
-  average of the per-file numbers.
+- The aggregate row divides the total source bytes by the sum of the
+  per-file median times, rather than re-running on a concatenated corpus.
+  This is a byte-weighted harmonic mean of the unrounded per-file rates.
 
 ## Data
 
