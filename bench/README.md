@@ -4,6 +4,22 @@ Throughput comparison of fastjson vs ext/json on canonical JSON corpora.
 
 ## Running
 
+The [corpus harness](run.php) requires PHP 8.3 or newer with
+[`json_validate()`](https://www.php.net/manual/en/function.json-validate.php)
+(PHP 8.3+) and
+[`memory_reset_peak_usage()`](https://www.php.net/manual/en/function.memory-reset-peak-usage.php)
+(PHP 8.2+) available. These provide the ext/json validation comparison and
+fresh peak-memory measurements; the [startup checks](run.php) reject missing
+functions before producing benchmark output. The extension itself still
+[supports PHP 8.1+](../composer.json).
+
+The separate [performance-ideas harness](perf_ideas.php) measures peak memory
+with [`memory_reset_peak_usage()`](https://www.php.net/manual/en/function.memory-reset-peak-usage.php),
+so it requires PHP 8.2+ with that function available. The
+[review-performance harness](review-performance.php) uses neither this
+function nor ext/json's `json_validate()`, so these prerequisites do not apply
+to it.
+
 ```sh
 # 1. Fetch the data (gitignored, ~10MB).
 bench/fetch-data.sh
