@@ -8,6 +8,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Honor changes to `serialize_precision` made by `JsonSerializable` callbacks and property hooks during encoding, including subsequent doubles and numeric strings.
+
 - Scale benchmark hero bars to their labeled axis maximum, including the historical HTML baseline, without changing the reported measurements.
 
 ## [0.10.0] - 2026-10-13
