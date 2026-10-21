@@ -18,7 +18,7 @@
  * Methodology:
  *   - Throughput: N iterations of encode + decode + validate per
  *     extension, hrtime(true) timing, slowest 10% dropped, median
- *     reported as MB/s using the source byte size as denominator.
+ *     reported as source bytes / median time (1 MB = 1,048,576 bytes).
  *   - The harness walks <data-dir>/*.json (large corpus) and
  *     <data-dir>/small/*.json (small corpus, where per-call overhead
  *     dominates and ns/call is the more useful number).
