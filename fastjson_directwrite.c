@@ -32,10 +32,6 @@ typedef struct fastjson_dw_ctx {
     smart_str       buf;
     zend_long       flags;
     yyjson_write_flag yflags;
-    /* PG(serialize_precision) sampled once at entry. ext/json formats every
-     * double via zend_gcvt(precision); the default -1 means shortest
-     * round-trip, which the yyjson fast path below already matches. */
-    int             precision;
     bool            partial_output;
     bool            pretty_print;
     bool            hard_error;
@@ -292,9 +288,11 @@ static bool dw_emit_double(fastjson_dw_ctx *ctx, double d)
     /* Non-default serialize_precision: ext/json formats every double with
      * zend_gcvt(precision), so the long shortcut and yyjson shortest
      * round-trip below would both diverge. Mirror php_json_encode_double. */
-    if (UNEXPECTED(ctx->precision != -1)) {
+    /* Userland callbacks can change this setting during an encode. */
+    int precision = (int)PG(serialize_precision);
+    if (UNEXPECTED(precision != -1)) {
         char num[ZEND_DOUBLE_MAX_LENGTH];
-        php_gcvt(d, ctx->precision, '.', 'e', num);
+        php_gcvt(d, precision, '.', 'e', num);
         size_t len = strlen(num);
         if ((ctx->flags & FASTJSON_ENCODE_PRESERVE_ZERO_FRACTION)
                 && strchr(num, '.') == NULL
@@ -1121,7 +1119,6 @@ zend_string *fastjson_directwrite_encode(zval *value, zend_long flags,
     memset(&ctx, 0, sizeof(ctx));
     ctx.flags = flags;
     ctx.yflags = fastjson_translate_write_flags(flags, false);
-    ctx.precision = (int)PG(serialize_precision);
     ctx.partial_output = (flags & FASTJSON_ENCODE_PARTIAL_OUTPUT_ON_ERROR) != 0;
     ctx.pretty_print = (flags & FASTJSON_ENCODE_PRETTY_PRINT) != 0;
     fastjson_error_state_clear(&ctx.error);
