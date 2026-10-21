@@ -151,3 +151,71 @@ if (memoryCards(file_get_contents($root . '/docs/baseline.html')) !== [
     throw new RuntimeException('historical memory card values or scales changed');
 }
 echo "11 memory cases (33 complete cards) and historical cards passed\n";
+
+function renderBaseline(string $input): string
+{
+    global $root, $fixture;
+    file_put_contents($fixture, $input);
+    $process = proc_open([PHP_BINARY, '-n', $root . '/bench/render-baseline-html.php', $fixture],
+        [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+    if (!is_resource($process)) throw new RuntimeException('cannot start column renderer');
+    fclose($pipes[0]);
+    $html = stream_get_contents($pipes[1]);
+    $stderr = stream_get_contents($pipes[2]);
+    fclose($pipes[1]);
+    fclose($pipes[2]);
+    $status = proc_close($process);
+    if ($status !== 0 || $stderr !== '') {
+        throw new RuntimeException("column renderer failed: $status $stderr");
+    }
+    return $html;
+}
+
+// Mirror run.php's optional column layouts. Per-file Encode stays narrow;
+// aggregate Encode includes a '-' simdjson placeholder. Small per-file
+// tables have both simdjson throughput and sj/call latency columns.
+function withSimdjsonColumns(string $input, string $scope): string
+{
+    $section = $subsection = '';
+    $lines = explode("\n", $input);
+    foreach ($lines as &$line) {
+        if (str_starts_with($line, '## ')) {
+            $section = substr($line, 3);
+            $subsection = '';
+        } elseif (str_starts_with($line, '### ')) {
+            $subsection = substr($line, 4);
+        }
+        if (!str_starts_with($line, '|') || preg_match('/^\|[\s:\-|]+$/', $line)) continue;
+        $aggregate = $section === 'Aggregate (sum across all files)';
+        $small = $section === 'Throughput, small corpus';
+        $memory = str_starts_with($aggregate ? $subsection : $section, 'Memory peak');
+        $group = $aggregate ? ($memory ? 'aggregate-memory' : 'aggregate-throughput')
+            : ($memory ? 'per-file-memory' : ($small ? 'small' : 'large'));
+        if ($scope !== 'all' && $scope !== $group) continue;
+        if (!$aggregate && $subsection === 'Encode') continue;
+        $cells = array_map('trim', explode('|', trim($line, '|')));
+        $header = $cells[0] === 'File' || $cells[0] === 'Operation';
+        $extra = $header ? 'simdjson'
+            : ($aggregate && $cells[0] === 'Encode' ? '-' : ($memory ? '9,999.9 MB' : '9,999.9 MB/s'));
+        array_splice($cells, $aggregate && $memory ? 3 : 4, 0, [$extra]);
+        if ($small) array_splice($cells, 7, 0, [$header ? 'sj/call' : '9,999.9 µs']);
+        $line = '| ' . implode(' | ', $cells) . ' |';
+    }
+    unset($line);
+    return implode("\n", $lines);
+}
+
+$expectedHtml = renderBaseline($baseline);
+foreach (['large', 'small', 'aggregate-throughput', 'aggregate-memory', 'all'] as $scope) {
+    $input = withSimdjsonColumns($baseline, $scope);
+    if ($input === $baseline || !str_contains($input, '| simdjson |')) {
+        throw new RuntimeException("missing optional columns for $scope");
+    }
+    // Compare the entire document, including all heroes, takeaways, rows,
+    // footers, latencies and complete memory cards. Extra measurements must
+    // not replace any of the displayed fastjson/ext/json values or labels.
+    if (renderBaseline($input) !== $expectedHtml) {
+        throw new RuntimeException("simdjson columns changed rendered output: $scope");
+    }
+}
+echo "5 optional-column fixtures preserve the complete fastjson/ext/json HTML\n";
