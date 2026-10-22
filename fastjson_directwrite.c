@@ -275,16 +275,6 @@ static bool dw_emit_double(fastjson_dw_ctx *ctx, double d)
         smart_str_free(&ctx->buf);
         return false;
     }
-    /* ext/json emits "-0", or "-0.0" with PRESERVE_ZERO_FRACTION. The long
-     * shortcut would drop the sign and yyjson always emits "-0.0". */
-    if (d == 0.0 && signbit(d)) {
-        if (ctx->flags & FASTJSON_ENCODE_PRESERVE_ZERO_FRACTION) {
-            smart_str_appendl(&ctx->buf, "-0.0", 4);
-        } else {
-            smart_str_appendl(&ctx->buf, "-0", 2);
-        }
-        return true;
-    }
     /* Non-default serialize_precision: ext/json formats every double with
      * zend_gcvt(precision), so the long shortcut and yyjson shortest
      * round-trip below would both diverge. Mirror php_json_encode_double. */
@@ -302,6 +292,18 @@ static bool dw_emit_double(fastjson_dw_ctx *ctx, double d)
             num[len] = '\0';
         }
         smart_str_appendl(&ctx->buf, num, len);
+        return true;
+    }
+
+    /* At default precision, ext/json emits "-0", or "-0.0" with
+     * PRESERVE_ZERO_FRACTION. The long shortcut would drop the sign
+     * and yyjson always emits "-0.0". */
+    if (d == 0.0 && signbit(d)) {
+        if (ctx->flags & FASTJSON_ENCODE_PRESERVE_ZERO_FRACTION) {
+            smart_str_appendl(&ctx->buf, "-0.0", 4);
+        } else {
+            smart_str_appendl(&ctx->buf, "-0", 2);
+        }
         return true;
     }
 
