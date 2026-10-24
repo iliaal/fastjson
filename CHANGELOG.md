@@ -6,6 +6,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Cross-check normal JSON Pointer parsing and allocation-free limit rejection with exhaustive short escape spellings, including embedded NULs and segment boundaries.
+
 ### Performance
 
 - Reject JSON Pointers above the segment or depth limit before allocating their segment plan, while preserving malformed-escape error precedence.
