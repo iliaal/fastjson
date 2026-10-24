@@ -714,8 +714,29 @@ static bool fj_pointer_fill_segments(const char *ptr, size_t len,
     return si == nsegs;
 }
 
+/* Segment-count gate for the plan and resolve paths. The absolute
+ * FASTJSON_POINTER_MAX_SEGMENTS cap always applies; the nsegs-vs-depth
+ * check applies only when check_depth. Both return DEPTH_FAIL so an
+ * oversized pointer reports FASTJSON_ERROR_DEPTH, not "absent". */
+static bool fj_pointer_nsegs_ok(size_t nsegs, size_t depth_limit,
+                                bool check_depth,
+                                fj_splice_status *status)
+{
+    if (nsegs > FASTJSON_POINTER_MAX_SEGMENTS) {
+        *status = FJ_SPLICE_DEPTH_FAIL;
+        return false;
+    }
+    if (check_depth && depth_limit > 0 && nsegs >= depth_limit) {
+        *status = FJ_SPLICE_DEPTH_FAIL;
+        return false;
+    }
+    return true;
+}
+
 static bool fj_pointer_parse(const char *pointer, size_t pointer_len,
-                             fastjson_pointer_plan *plan)
+                             size_t depth_limit,
+                             bool check_depth, fastjson_pointer_plan *plan,
+                             fj_splice_status *status)
 {
     memset(plan, 0, sizeof(*plan));
     if (pointer_len == 0) {
@@ -726,6 +747,20 @@ static bool fj_pointer_parse(const char *pointer, size_t pointer_len,
     }
 
     plan->nsegs = fastjson_pointer_count_segments(pointer, pointer_len);
+    if (!fj_pointer_nsegs_ok(plan->nsegs, depth_limit, check_depth, status)) {
+        /* Preserve syntax-error precedence without allocating a plan that
+         * the segment/depth gate will immediately discard. */
+        for (size_t i = 1; i < pointer_len; i++) {
+            if (pointer[i] == '~') {
+                if (++i == pointer_len
+                        || (pointer[i] != '0' && pointer[i] != '1')) {
+                    *status = FJ_SPLICE_SETTABLE_FAIL;
+                    break;
+                }
+            }
+        }
+        return false;
+    }
     plan->segs = safe_emalloc(plan->nsegs, sizeof(*plan->segs), 0);
     plan->storage = emalloc(pointer_len);
     size_t storage_used = 0;
@@ -796,39 +831,16 @@ static bool fj_pointer_walk(yyjson_val *root,
     return true;
 }
 
-/* Segment-count gate for the plan and resolve paths. The absolute
- * FASTJSON_POINTER_MAX_SEGMENTS cap always applies; the nsegs-vs-depth
- * check applies only when check_depth. Both return DEPTH_FAIL so an
- * oversized pointer reports FASTJSON_ERROR_DEPTH, not "absent". */
-static bool fj_pointer_nsegs_ok(size_t nsegs, size_t depth_limit,
-                                bool check_depth,
-                                fj_splice_status *status)
-{
-    if (nsegs > FASTJSON_POINTER_MAX_SEGMENTS) {
-        *status = FJ_SPLICE_DEPTH_FAIL;
-        return false;
-    }
-    if (check_depth && depth_limit > 0 && nsegs >= depth_limit) {
-        *status = FJ_SPLICE_DEPTH_FAIL;
-        return false;
-    }
-    return true;
-}
-
 bool fastjson_pointer_plan_init(yyjson_val *root, const char *pointer,
                                 size_t pointer_len, size_t depth_limit,
                                 fastjson_pointer_plan *plan,
                                 fj_splice_status *status)
 {
+    *status = FJ_SPLICE_SETTABLE_FAIL;
+    if (!fj_pointer_parse(pointer, pointer_len, depth_limit, true, plan, status)) {
+        return false;
+    }
     *status = FJ_SPLICE_OK;
-    if (!fj_pointer_parse(pointer, pointer_len, plan)) {
-        *status = FJ_SPLICE_SETTABLE_FAIL;
-        return false;
-    }
-    if (!fj_pointer_nsegs_ok(plan->nsegs, depth_limit, true, status)) {
-        fastjson_pointer_plan_destroy(plan);
-        return false;
-    }
 
     yyjson_val *target;
     if (!fj_pointer_walk(root, plan, 0, true, &target, status)) {
@@ -858,18 +870,13 @@ static fj_splice_status fj_pointer_resolve_impl(yyjson_val *root,
                                                 yyjson_val **target)
 {
     fastjson_pointer_plan plan;
-    if (!fj_pointer_parse(pointer, pointer_len, &plan)) {
+    fj_splice_status status = FJ_SPLICE_SETTABLE_FAIL;
+    if (!fj_pointer_parse(pointer, pointer_len, depth_limit, check_depth,
+                           &plan, &status)) {
         *target = NULL;
-        return FJ_SPLICE_SETTABLE_FAIL;
-    }
-
-    fj_splice_status status = FJ_SPLICE_OK;
-    if (!fj_pointer_nsegs_ok(plan.nsegs, depth_limit, check_depth,
-                             &status)) {
-        *target = NULL;
-        fastjson_pointer_plan_destroy(&plan);
         return status;
     }
+    status = FJ_SPLICE_OK;
     if (!fj_pointer_walk(root, &plan, flags, false, target, &status)) {
         *target = NULL;
     }

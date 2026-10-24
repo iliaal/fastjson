@@ -6,6 +6,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Performance
+
+- Reject JSON Pointers above the segment or depth limit before allocating their segment plan, while preserving malformed-escape error precedence.
+
 ### Fixed
 
 - Honor `serialize_precision=0` when encoding negative zero, including file output and JSON Pointer replacements.
