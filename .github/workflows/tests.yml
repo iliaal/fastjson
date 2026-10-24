@@ -352,8 +352,13 @@ jobs:
             --enable-cli \
             --prefix=/tmp/php-asan \
             || { echo "==== config.log tail ===="; tail -200 config.log; exit 1; }
-          make -j$(nproc)
-          make install
+          # PHP= stops make from regenerating the committed VM, arginfo, and
+          # tokenizer files with the runner's php. A shallow clone can leave
+          # Zend/zend_vm_gen.php newer than Zend/zend_vm_execute.h, and the
+          # PHP-8.1/8.2 zend_vm_gen.php emits an empty ZEND_VM_KIND under
+          # PHP >= 8.5, which defines ZEND_VM_KIND as a core constant.
+          make -j$(nproc) PHP=
+          make install PHP=
 
       - name: Build extension with ASAN
         run: |
