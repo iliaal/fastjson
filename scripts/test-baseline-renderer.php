@@ -219,3 +219,13 @@ foreach (['large', 'small', 'aggregate-throughput', 'aggregate-memory', 'all'] a
     }
 }
 echo "5 optional-column fixtures preserve the complete fastjson/ext/json HTML\n";
+
+// Pin the measured API in both new renders and the preserved historical page.
+foreach (['rendered' => $expectedHtml,
+          'historical' => file_get_contents($root . '/docs/baseline.html')] as $label => $html) {
+    if (!str_contains($html, 'The ext/json measurements use <code>json_validate()</code>.')
+            || str_contains($html, 'ext/json validates by fully decoding and discarding')) {
+        throw new RuntimeException("incorrect validation methodology in $label page");
+    }
+}
+echo "Rendered and historical pages describe the measured validation API\n";
