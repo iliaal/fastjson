@@ -137,10 +137,17 @@ function fastjson_encode(mixed $value, int $flags = 0, int $depth = 512): string
 /**
  * Encodes $value to JSON and writes it to $filename in one call.
  *
- * Equivalent to file_put_contents($filename, fastjson_encode($value, ...)).
+ * Encodes before opening the destination. If encoding fails without producing
+ * JSON bytes, the helper does not create or truncate the file. This differs
+ * from passing a false encode result to file_put_contents(), which writes an
+ * empty string. JSON_PARTIAL_OUTPUT_ON_ERROR can produce JSON despite an
+ * encoding error; that output is still written. User callbacks may have their
+ * own side effects.
+ *
  * The file is written through the PHP streams layer, so stream wrappers
- * and open_basedir apply. The write is not atomic. $flags and $depth carry the exact semantics of
- * fastjson_encode().
+ * and open_basedir apply. The write is not atomic. $flags and $depth carry
+ * the semantics of fastjson_encode(). Unlike file_put_contents(), this
+ * function returns a boolean, not a byte count.
  *
  * Returns true on success, false on failure (encode error or I/O
  * error). On failure fastjson_last_error() is set. Fastjson does not ask
@@ -198,10 +205,12 @@ function fastjson_decode(string $json, ?bool $associative = null, int $depth = 5
 /**
  * Reads $filename and decodes its contents as JSON in one call.
  *
- * Equivalent to fastjson_decode(file_get_contents($filename), ...). The
- * file is read through the PHP streams layer, so stream wrappers
- * (php://, user-registered wrappers) and open_basedir apply. $associative, $depth, and $flags carry the exact semantics
- * of fastjson_decode().
+ * The file is read through the PHP streams layer, so stream wrappers
+ * (php://, user-registered wrappers) and open_basedir apply. $associative,
+ * $depth, and $flags carry the semantics of fastjson_decode(). Invalid
+ * $depth arguments are rejected before opening the file. Unlike composing
+ * file_get_contents() with fastjson_decode(), I/O failures are reported
+ * separately from JSON parse failures, as described below.
  *
  * Returns the decoded value on success, or null on failure, with the same
  * contract as fastjson_decode(): check fastjson_last_error() to tell a
