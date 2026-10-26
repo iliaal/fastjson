@@ -40,6 +40,56 @@ function expect($actual, $expected, string $label): void
     if ($actual !== $expected) throw new \RuntimeException($label . ': ' . var_export($actual, true));
 }
 
+// The shared preparation path protects both throughput and peak-memory calls.
+// No clock samples may be consumed while probing the encoders.
+function fastjson_encode($value) {
+    return match ($GLOBALS['encode_probe_override'] ?? null) {
+        'reject' => false,
+        'accept' => 'null',
+        default => \json_encode($value),
+    };
+}
+$GLOBALS['clock'] = [];
+$validEncodeInputs = ['null', 'false', '0', '""', '"false"', '[]', '{}',
+    '{"nested":[1,true,null]}', '1e308', '-1e308', '1e-400'];
+foreach ($validEncodeInputs as $json) {
+    foreach ([false, true] as $optional) {
+        [$encoders, $value] = callables_for('encode', $json, $optional);
+        expect($value, \json_decode($json, true), 'prepared value preserved');
+        expect(array_keys($encoders), ['fastjson', 'ext/json'], 'encode labels unchanged');
+        foreach ($encoders as $encoder) {
+            expect($encoder($value), \json_encode($value), 'valid encode preserved');
+        }
+        expect($GLOBALS['clock'], [], 'preparation is untimed');
+    }
+}
+$invalidEncodeInputs = ['1e400', '-1e400', '[1e400]', '[-1e400]',
+    '{"nested":[0,{"overflow":1e400}]}', '{"nested":[0,{"overflow":-1e400}]}'];
+foreach ($invalidEncodeInputs as $json) {
+    foreach ([null => 'fastjson', 'accept' => 'ext/json'] as $override => $label) {
+        // Let the first encoder succeed to exercise rejection by the second.
+        $GLOBALS['encode_probe_override'] = $override;
+        try {
+            callables_for('encode', $json, false);
+            throw new \LogicException('accepted an unencodable value');
+        } catch (\RuntimeException $error) {
+            expect($error->getMessage(), "cannot benchmark encode: $label rejected the decoded corpus value",
+                'failed encoder identified');
+        }
+        expect($GLOBALS['clock'], [], 'rejection precedes timing');
+    }
+}
+$GLOBALS['encode_probe_override'] = 'reject';
+try {
+    callables_for('encode', 'null', false);
+    throw new \LogicException('ignored fastjson failure for encodable input');
+} catch (\RuntimeException $error) {
+    expect($error->getMessage(), 'cannot benchmark encode: fastjson rejected the decoded corpus value',
+        'fastjson failure independent of ext/json');
+}
+unset($GLOBALS['encode_probe_override']);
+echo "encode preparation: 22 valid cases and 13 encoder rejection cases passed\n";
+
 // Counts around 10% trim boundaries, including default 50 and documented 100.
 $counts = [1, 2, 3, 4, 9, 10, 11, 12, 19, 20, 21, 22, 49, 50, 51, 99, 100, 101];
 foreach ($counts as $count) {

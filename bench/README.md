@@ -94,7 +94,12 @@ scan/copy trade-off, check ARM too; its crossover points differ from x86_64.
 - Throughput is the source JSON byte size divided by the measured time.
   The displayed MB/s uses 1,048,576 bytes per MB.
 - Encode is timed separately from decode: the harness decodes each file
-  once up front, then times `encode($value)` only. Decode rows time
+  once up front, then times `encode($value)` only. Both encoders are also
+  called once outside the timing/memory measurement to reject error returns
+  (for example, valid JSON `1e400` decodes to an unencodable PHP infinity).
+  A rejected encode input stops the run non-zero; earlier operation rows may
+  already have been printed and are not a complete report. This checks failure
+  returns, not output equivalence or every timed call. Decode rows time
   `decode($json)` only.
 - Every case runs against `ext/json` in the same process, with the same
   input.
