@@ -83,8 +83,10 @@ jobs:
         # php-src: the oldest patch release of the minor, which the
         # binaries are built against. Hashes are the php.net-published
         # tar.xz SHA-256s. oldest-image/newest-image: official images the
-        # Linux gate loads each binary on, pinned by index digest. Move
-        # newest-image to each new patch release.
+        # Linux gate loads each binary on, pinned by index digest. The gate
+        # pulls the same digest from ghcr.io/iliaal/php first and falls back
+        # to ECR Public, mirror.gcr.io, and Docker Hub. Move newest-image to
+        # each new patch release.
         include:
           - php: '8.4'
             php-src: '8.4.1'

@@ -2,7 +2,7 @@
 # Usage: prebuilt-abi-smoke.sh MODULE.so OLDEST_IMAGE NEWEST_IMAGE
 #
 # Gates a prebuilt Linux module against the oldest and newest patch release
-# of its PHP minor. Each image is an official php:X.Y.Z-cli image reference;
+# of its PHP minor. Each image is a digest-pinned official php:X.Y.Z-cli image;
 # the X.Y.Z in its tag is the PHP_VERSION the image must report.
 #
 # 1. Every undefined (non-weak) dynamic symbol of the module must be exported
@@ -18,8 +18,6 @@ if [[ $# -ne 3 ]]; then
 fi
 
 module=$(realpath "$1")
-oldest=$2
-newest=$3
 smoke_php=$(realpath "$(dirname "$0")/prebuilt-abi-smoke.php")
 
 image_version() {
@@ -27,6 +25,47 @@ image_version() {
 	ref=${ref##*:}
 	printf '%s\n' "${ref%%-*}"
 }
+
+# Pulls a digest-pinned official php image, trying the GHCR copy first and
+# then the public mirrors of the Docker official images, all at the same
+# digest: ECR Public and Docker Hub both enforce data limits on shared runner
+# IPs. Prints the reference that was pulled.
+pull_image() {
+	local ref=$1 path prefix candidate attempt
+	if [[ "$ref" != *@sha256:* ]]; then
+		echo "::error::$ref is not pinned by digest" >&2
+		return 1
+	fi
+	path=$ref
+	for prefix in public.ecr.aws/docker/library/ mirror.gcr.io/library/ docker.io/library/; do
+		path=${path#"$prefix"}
+	done
+	local -a candidates=()
+	if [[ "$path" == php:* ]]; then
+		candidates=("ghcr.io/iliaal/$path" "public.ecr.aws/docker/library/$path"
+			"mirror.gcr.io/library/$path" "docker.io/library/$path")
+	else
+		candidates=("$ref")
+	fi
+	for candidate in "${candidates[@]}"; do
+		for attempt in 1 2 3; do
+			if docker pull -q "$candidate" >&2; then
+				echo "pulled $candidate" >&2
+				printf '%s\n' "$candidate"
+				return 0
+			fi
+			if [[ $attempt -lt 3 ]]; then
+				sleep $((attempt * 5))
+			fi
+		done
+		echo "pull of $candidate failed; trying the next mirror" >&2
+	done
+	echo "::error::could not pull $ref from any mirror" >&2
+	return 1
+}
+
+oldest=$(pull_image "$2")
+newest=$(pull_image "$3")
 
 work=$(mktemp -d)
 cid=""
