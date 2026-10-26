@@ -24,8 +24,7 @@ apt-get update -qq >/dev/null
 # unzip: composer's archive extractor prefers /usr/bin/unzip and silently
 # falls back to PHP ZipArchive when it's missing, laying the prebuilt .so
 # out at a path PIE's prePackagedBinary check doesn't look -> spurious
-# ExtensionBinaryNotFound. php:8.x-cli ships no unzip. See
-# ~/ai/wiki/debugging/php-ext-release-traps.md.
+# ExtensionBinaryNotFound. php:8.x-cli ships no unzip.
 apt-get install -y -qq git ca-certificates bison libtool-bin unzip >/dev/null
 git --version
 bison --version | head -1
