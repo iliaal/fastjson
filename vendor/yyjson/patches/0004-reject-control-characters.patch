@@ -19,7 +19,7 @@ diff --git a/vendor/yyjson/yyjson.c b/vendor/yyjson/yyjson.c
 index 66cf900..0712731 100644
 --- a/vendor/yyjson/yyjson.c
 +++ b/vendor/yyjson/yyjson.c
-@@ -5031,10 +5031,25 @@ copy_escape:
+@@ -5037,10 +5037,25 @@ copy_escape:
          if (con) con[0] = con[1] = NULL;
          return true;
      } else {

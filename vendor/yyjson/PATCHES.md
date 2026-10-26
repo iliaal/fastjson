@@ -2,7 +2,7 @@
 
 The bundled yyjson sources at `vendor/yyjson/yyjson.{c,h}` are an
 upstream master snapshot, commit
-`a84070fa6dc58f9b379ed75b8c8fab2c1da1b604`, with eight local modifications
+`2c9c76a4b6acda1931c7d8bef05a91f2a759302d`, with eight local modifications
 (P-002 through P-009) documented below. The snapshot is newer than tag
 0.13.0 but is not a release: `YYJSON_VERSION_STRING` still reads `0.13.0`.
 `vendor/yyjson/VERSION` and `.upstream/yyjson.yml` record the commit. The
@@ -16,45 +16,41 @@ archive digest, applies the series in order, and compares the result
 byte-for-byte with the vendored sources. Run it after any patch or vendor
 update. The prose below records rationale and upgrade caveats.
 
-## Upstream sync: master `a84070f` (after 0.13.0)
+## Upstream sync: master `2c9c76a` (from `a84070f`)
 
-All eight patches applied to the new snapshot with line offsets only, no
-fuzz and no conflicts. None of the upstream changes since 0.13.0 touch a
-patched region: applying the upstream 0.13.0..a84070f diff to the
-previously vendored sources gives the same bytes as applying the series to
-the pristine snapshot. The patch files were refreshed for the new line
-numbers; their content is unchanged. No local patch was retired: upstream's
-document-owned mutable string setters (#313) are unrelated to all eight.
+Seven of the eight patches applied to the new snapshot unchanged, with
+line offsets only and no fuzz; their hunk headers were refreshed for the
+new line numbers. P-005 conflicted with ibireme/yyjson#319 (949e399) and
+was re-ported; see P-005 below. No local patch was retired: none of the
+upstream changes in this range is equivalent to one of them.
 
 Upstream changes in this range that fastjson's paths reach:
 
-- Long decimal numbers (#314). For a number with more than 768
-  significant digits, the slow path truncates the digit string before the
-  exact comparison that settles values near a rounding midpoint. When the
-  decimal point fell in the truncated part, the kept digits included one
-  more than the reader counted, so that comparison could round the wrong
-  way: a value just below the midpoint above 1e30 decoded to the next
-  double up. `fastjson_decode()`, `fastjson_file_decode()`, and the pointer
-  and merge-patch readers share this path. Covered by
-  `tests/decode_long_number_rounding.phpt`.
+- Invalid UTF-8 strings are no longer marked `NOESC` (#319, 949e399).
+  Under `YYJSON_READ_ALLOW_INVALID_UNICODE`, a string whose first invalid
+  byte appears before any escape used to stay on the no-copy path and get
+  `YYJSON_SUBTYPE_NOESC`, which tells yyjson's tree writer to copy the
+  bytes without escaping. The reader now switches to the copy path at that
+  byte. The string's bytes, length, and errors are unchanged. fastjson
+  never reads `NOESC` and never uses yyjson's tree writer: the encoder and
+  the pointer splice escape through `yyjson_write_string_to_buf()` (P-003)
+  from the string bytes. Decode results are therefore unchanged.
+- `yyjson_locate_pos()` no longer forms `NULL + pos` before its NULL
+  check (#318, ffa5ecf). fastjson passes it a non-NULL input buffer, so the
+  undefined case was not reachable from fastjson. The same commit fixes
+  `yyjson_obj_foreach()` on a NULL object, which fastjson does not use.
 
-Upstream changes in code fastjson does not call. The incremental reader and
-JSON Patch are compiled out (see "Compiled-out yyjson features" below):
+Upstream changes in code fastjson does not call:
 
-- Incremental reader (#315 and 332be7a). `yyjson_incr_read()` now restores
-  the byte it temporarily overwrites at the end of the available input on
-  every return, including errors. A failed growth of its value buffer is
-  now reported as a memory allocation error; before, it could be reported
-  as needing more data, with the larger buffer size already recorded in
-  the reader state although the reallocation had failed. fastjson never
-  calls `yyjson_incr_*`, so no PHPT can reach either path.
-- JSON Patch (`yyjson_patch()`): `add` replaces an existing object member,
-  and `test` compares numbers by value. fastjson does not use JSON Patch.
-- `YYJSON_WRITE_PRETTY_TABS` and `yyjson_mut_set_str[n]cpy()`. The
-  direct-write encoder uses only `YYJSON_WRITE_PRETTY` and
-  `yyjson_write_string_to_buf()` (P-003); `write_str()`,
-  `get_enc_table_with_flag()`, and `get_hex_table_with_flag()` keep their
-  signatures.
+- JSON Patch `move` into its own child is now rejected (#320, b302245).
+  JSON Patch is compiled out (see "Compiled-out yyjson features" below);
+  `fastjson_merge_patch()` is RFC 7386 Merge Patch, implemented in
+  fastjson.
+- `YYJSON_WRITE_TRAILING_COMMAS` (#316, 34fdfc9) and the reordering of the
+  write-flag declarations (556bf1c, values unchanged). The new flag only
+  affects yyjson's tree writers. `fastjson_translate_write_flags()` never
+  sets it, and `write_str()`, `get_enc_table_with_flag()`, and
+  `get_hex_table_with_flag()` keep the signatures P-003 depends on.
 
 ## Retired: P-001 lowercase hex table
 
@@ -208,7 +204,7 @@ to fit worst-case `\uXXXX` expansion plus surrounding quotes.
 **File:** `vendor/yyjson/yyjson.c` (the string reader `read_string`)
 **Region:** the `else` branch that handles a non-escape, non-quote byte,
 carrying the `"unexpected control character in string"` message (around
-line 5066 in the patched a84070f snapshot).
+line 5066 in the patched 2c9c76a snapshot).
 
 **Reason.** ext/json rejects raw control characters (byte `< 0x20`)
 inside JSON strings as `JSON_ERROR_CTRL_CHAR`, *regardless* of its
@@ -307,8 +303,8 @@ decodes paid for a redundant scan; malformed strings were scanned once to
 detect the fault and again to sanitize it.
 
 **Patch.** Reserve tag bit `1 << 5` as
-`YYJSON_RESERVED_INVALID_UNICODE`. `read_str_opt()` records either invalid-
-Unicode acceptance branch in an internal high bit of its existing local flag
+`YYJSON_RESERVED_INVALID_UNICODE`. `read_str_opt()` records accepted invalid
+UTF-8 in an internal high bit of its existing local flag
 word, then includes the reserved bit in the final string tag. Reusing that word
 avoids the register pressure and strict-read regression caused by a dedicated
 per-string boolean. The bit is metadata only: the existing type, subtype,
@@ -319,15 +315,28 @@ fastjson's sanitizing walkers check this bit. Clean strings go directly to the
 Zend value; tagged strings go directly through the sanitizer without a
 separate well-formedness scan.
 
+Since ibireme/yyjson#319 every accepted invalid byte is on the copy path:
+the no-copy path jumps to `copy_utf8` at the first invalid byte under
+`ALLOW_INVALID_UNICODE`, and `copy_utf8` tests the same bytes with the
+same `is_utf8_seq*` checks, so it reaches its own invalid-UTF-8 branch for
+that byte. Nothing on the copy path jumps back to a `skip_*` label. The
+patch therefore sets the internal bit only in `copy_utf8` and tags only
+the copy-path string return. The earlier no-copy hunks, which set the bit
+before `++src` and tagged the `NOESC` return, would be unreachable on this
+snapshot and were dropped.
+
 **Re-apply recipe on yyjson upgrade.**
 
 1. Add `YYJSON_RESERVED_INVALID_UNICODE` to an unused reserved tag bit.
 2. Reserve an internal high bit in `read_str_opt()`'s by-value `flg` word; do
    not add another local variable to this register-sensitive loop.
-3. Set the internal bit in both branches that accept invalid UTF-8 under
-   `ALLOW_INVALID_UNICODE` (the no-escape and copy/escape paths).
+3. Set the internal bit in every branch that accepts invalid UTF-8 under
+   `ALLOW_INVALID_UNICODE`. On this snapshot that is only `copy_utf8`; if
+   the no-copy path again accepts an invalid byte without switching to
+   the copy path, set the bit there too.
 4. Write each normal string tag first, then OR the reserved tag bit inside an
-   `unlikely(flg & READ_INVALID_UNICODE_SEEN)` branch.
+   `unlikely(flg & READ_INVALID_UNICODE_SEEN)` branch, on every string
+   return that the bit can reach.
 5. Confirm immutable/mutable value-copy functions still copy the entire tag.
 
 **Verification.** Run the UTF-8 decode, pointer, merge-patch, and upstream
@@ -575,7 +584,7 @@ the compiler default. Without the workaround, `nm -D` lists ~49
 
 **Mechanism.** `config.m4` passes `-Dyyjson_api=` so the preprocessor
 sees the macro as already defined before `yyjson.h` reaches its
-`#ifndef yyjson_api` guard (line 339 of `yyjson.h` in the a84070f
+`#ifndef yyjson_api` guard (line 339 of `yyjson.h` in the 2c9c76a
 snapshot, unchanged from 0.13.0). The
 visibility-default branch is skipped; symbols inherit
 `-fvisibility=hidden`. fastjson is the only caller of yyjson within

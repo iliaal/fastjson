@@ -3138,8 +3138,7 @@ bool unsafe_yyjson_mut_equals(const yyjson_mut_val *lhs,
 bool yyjson_locate_pos(const char *str, size_t len, size_t pos,
                        size_t *line, size_t *col, size_t *chr) {
     usize line_sum = 0, line_pos = 0, chr_sum = 0;
-    const u8 *cur = (const u8 *)str;
-    const u8 *end = cur + pos;
+    const u8 *cur, *end;
 
     if (!str || pos > len) {
         if (line) *line = 0;
@@ -3147,6 +3146,9 @@ bool yyjson_locate_pos(const char *str, size_t len, size_t pos,
         if (chr) *chr = 0;
         return false;
     }
+
+    cur = (const u8 *)str;
+    end = cur + pos;
 
     if (pos >= 3 && is_utf8_bom(cur)) cur += 3; /* don't count BOM */
     while (cur < end) {
@@ -4908,10 +4910,7 @@ skip_ascii_end:
     gcc_store_barrier(*src);
     if (likely(*src == quo)) {
         val->tag = ((u64)(src - hdr) << YYJSON_TAG_BIT) | YYJSON_TYPE_STR |
-                   (quo == '"' ? YYJSON_SUBTYPE_NOESC : 0);
-        if (unlikely(flg & READ_INVALID_UNICODE_SEEN)) {
-            val->tag |= YYJSON_RESERVED_INVALID_UNICODE;
-        }
+                        (quo == '"' ? YYJSON_SUBTYPE_NOESC : 0);
         val->uni.str = (const char *)hdr;
         *src = '\0';
         *end = src + 1;
@@ -4960,11 +4959,12 @@ skip_utf8:
         }
 #endif
         if (unlikely(pos == src)) {
-            if (has_allow(INVALID_UNICODE)) {
-                flg |= READ_INVALID_UNICODE_SEEN;
-                ++src;
+            if (!has_allow(INVALID_UNICODE)) {
+                return_err(src, "invalid UTF-8 encoding in string");
             }
-            else return_err(src, "invalid UTF-8 encoding in string");
+            /* invalid UTF-8 should not be marked as NOESC, copy it */
+            dst = src;
+            goto copy_utf8;
         }
         goto skip_ascii;
     }
@@ -10267,6 +10267,7 @@ static_inline u8 *write_root_minify(const yyjson_val *root,
     bool esc = has_flg(ESCAPE_UNICODE) != 0;
     bool inv = has_allow(INVALID_UNICODE) != 0;
     bool newline = has_flg(NEWLINE_AT_END) != 0;
+    bool trailing = has_wflag(flg, YYJSON_WRITE_TRAILING_COMMAS, 1);
 
     if (buf) {
         hdr = (u8 *)buf;
@@ -10380,7 +10381,7 @@ ctn_end:
 #if YYJSON_WRITER_DEPTH_LIMIT
     ctn_depth--;
 #endif
-    cur--;
+    if (likely(!trailing)) cur--; /* remove the last comma */
     *cur++ = (u8)(']' | ((u8)ctn_obj << 5));
     *cur++ = ',';
     if (unlikely((u8 *)ctx >= end)) goto doc_end;
@@ -10478,6 +10479,7 @@ static_inline u8 *write_root_pretty(const yyjson_val *root,
     bool tabs = has_flg(PRETTY_TABS) != 0;
     usize spaces = tabs ? 1 : has_flg(PRETTY_TWO_SPACES) ? 2 : 4;
     bool newline = has_flg(NEWLINE_AT_END) != 0;
+    bool trailing = has_wflag(flg, YYJSON_WRITE_TRAILING_COMMAS, 1);
 
     if (buf) {
         hdr = (u8 *)buf;
@@ -10614,8 +10616,10 @@ ctn_end:
 #if YYJSON_WRITER_DEPTH_LIMIT
     ctn_depth--;
 #endif
-    cur -= 2;
-    *cur++ = '\n';
+    if (likely(!trailing)) { /* remove the last comma */
+        cur -= 2;
+        *cur++ = '\n';
+    }
     incr_len(level * 4);
     cur = write_indent(cur, --level, spaces, tabs);
     *cur++ = (u8)(']' | ((u8)ctn_obj << 5));
@@ -10914,6 +10918,7 @@ static_inline u8 *mut_write_root_minify(const yyjson_mut_val *root,
     bool esc = has_flg(ESCAPE_UNICODE) != 0;
     bool inv = has_allow(INVALID_UNICODE) != 0;
     bool newline = has_flg(NEWLINE_AT_END) != 0;
+    bool trailing = has_wflag(flg, YYJSON_WRITE_TRAILING_COMMAS, 1);
 
     if (buf) {
         hdr = (u8 *)buf;
@@ -11030,7 +11035,7 @@ ctn_end:
 #if YYJSON_WRITER_DEPTH_LIMIT
     ctn_depth--;
 #endif
-    cur--;
+    if (likely(!trailing)) cur--; /* remove the last comma */
     *cur++ = (u8)(']' | ((u8)ctn_obj << 5));
     *cur++ = ',';
     if (unlikely((u8 *)ctx >= end)) goto doc_end;
@@ -11131,6 +11136,7 @@ static_inline u8 *mut_write_root_pretty(const yyjson_mut_val *root,
     bool tabs = has_flg(PRETTY_TABS) != 0;
     usize spaces = tabs ? 1 : has_flg(PRETTY_TWO_SPACES) ? 2 : 4;
     bool newline = has_flg(NEWLINE_AT_END) != 0;
+    bool trailing = has_wflag(flg, YYJSON_WRITE_TRAILING_COMMAS, 1);
 
     if (buf) {
         hdr = (u8 *)buf;
@@ -11270,8 +11276,10 @@ ctn_end:
 #if YYJSON_WRITER_DEPTH_LIMIT
     ctn_depth--;
 #endif
-    cur -= 2;
-    *cur++ = '\n';
+    if (likely(!trailing)) { /* remove the last comma */
+        cur -= 2;
+        *cur++ = '\n';
+    }
     incr_len(level * 4);
     cur = write_indent(cur, --level, spaces, tabs);
     *cur++ = (u8)(']' | ((u8)ctn_obj << 5));
@@ -12154,6 +12162,13 @@ yyjson_mut_val *yyjson_patch(yyjson_mut_doc *doc,
                 break;
             case PATCH_OP_MOVE: /* val = remove(from), add(path, val) */
                 if (unlikely(from_len == 0 && path_len == 0)) break;
+                /* `from` must not be a proper prefix of `path` (RFC 6902) */
+                if (unlikely(from_len < path_len &&
+                             path->uni.str[from_len] == '/' &&
+                             !memcmp(from->uni.str, path->uni.str, from_len))) {
+                    return_err(INVALID_MEMBER,
+                               "cannot move `from` into its child");
+                }
                 val = ptr_remove(from);
                 if (unlikely(!val)) {
                     return_err(POINTER, "failed to remove `from`");
@@ -12275,6 +12290,13 @@ yyjson_mut_val *yyjson_mut_patch(yyjson_mut_doc *doc,
                 break;
             case PATCH_OP_MOVE: /* val = remove(from), add(path, val) */
                 if (unlikely(from_len == 0 && path_len == 0)) break;
+                /* `from` must not be a proper prefix of `path` (RFC 6902) */
+                if (unlikely(from_len < path_len &&
+                             path->uni.str[from_len] == '/' &&
+                             !memcmp(from->uni.str, path->uni.str, from_len))) {
+                    return_err(INVALID_MEMBER,
+                               "cannot move `from` into its child");
+                }
                 val = ptr_remove(from);
                 if (unlikely(!val)) {
                     return_err(POINTER, "failed to remove `from`");
