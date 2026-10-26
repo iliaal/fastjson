@@ -20,8 +20,8 @@ name: Release Linux & macOS binaries
 # released. Source builds are unaffected; they compile against the PHP
 # they load into. The test suite runs the shipped module on setup-php's
 # current patch, as before; the Linux gate also loads it on the oldest and
-# a pinned newest patch image, and macOS checks its imports against the
-# oldest patch's exports.
+# a pinned newest patch image, and macOS loads it on the oldest-patch build
+# PHP and on setup-php's.
 #
 # No macOS Intel (macos-13): GitHub's Intel runner pool is too contended
 # to ship reliably, and macOS 26 drops Intel. Intel Macs source-build.
@@ -247,28 +247,38 @@ jobs:
           test -f "$RUNNER_TEMP/packaged/fastjson.so"
           echo "name=$name" >> "$GITHUB_OUTPUT"
 
-      # The build PHP is the oldest patch of the minor; every symbol the
-      # module resolves through flat-namespace lookup must be exported by it.
-      - name: Check imports against the oldest patch (macOS)
+      # The build PHP is the oldest patch of the minor, so loading the
+      # packaged module into it and into setup-php's current patch covers
+      # both ends. nm cannot attribute imports here: the module uses flat
+      # namespace lookup and the system libraries live in the dyld cache.
+      - name: Gate on the oldest and newest patch (macOS)
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          set -euo pipefail
+          # GitHub runs bash with -e; a failed load must still print its
+          # output and fall through to the status checks.
+          set +e
+          set -uo pipefail
           module="$RUNNER_TEMP/packaged/fastjson.so"
-          build_php="$RUNNER_TEMP/php/bin"
-          nm -gU "$build_php/php" | awk 'NF >= 3 { print $3 }' | sort -u > "$RUNNER_TEMP/exported"
-          nm -m -u "$module" | sed -n -E 's/.* ([^ ]+) \(dynamically looked up\)$/\1/p' | sort -u > "$RUNNER_TEMP/imported"
-          if [[ ! -s "$RUNNER_TEMP/exported" || ! -s "$RUNNER_TEMP/imported" ]]; then
-            echo "::error::could not read the PHP exports or the module's dynamic imports"
-            exit 1
-          fi
-          missing=$(comm -23 "$RUNNER_TEMP/imported" "$RUNNER_TEMP/exported")
-          if [[ -n "$missing" ]]; then
-            echo "::error::fastjson.so imports symbols that PHP $("$build_php/php-config" --version) does not export:"
-            printf '%s\n' "$missing"
-            exit 1
-          fi
-          echo "import check OK: $(wc -l < "$RUNNER_TEMP/imported") dynamic imports, all exported by PHP $("$build_php/php-config" --version)"
+          status=0
+          for php_bin in "$RUNNER_TEMP/php/bin/php" "$(command -v php)"; do
+            want=$("$php_bin" -n -r 'echo PHP_VERSION;')
+            echo "== load and smoke on $php_bin (PHP $want)"
+            out=$("$php_bin" -n -d extension="$module" .release-gate/scripts/prebuilt-abi-smoke.php 2>&1)
+            rc=$?
+            printf '%s\n' "$out"
+            if [[ $rc -ne 0 ]]; then
+              echo "::error::smoke on PHP $want exited with status $rc"
+              status=1
+            elif grep -qiE 'symbol not found|undefined symbol' <<< "$out"; then
+              echo "::error::smoke on PHP $want reported an unresolved symbol"
+              status=1
+            elif ! grep -qF "ok php=$want " <<< "$out"; then
+              echo "::error::smoke on PHP $want did not report PHP $want"
+              status=1
+            fi
+          done
+          exit "$status"
 
       - name: Gate on the oldest and newest patch (Linux)
         if: runner.os == 'Linux'
