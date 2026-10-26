@@ -24,7 +24,8 @@
  *     dominates and ns/call is the more useful number).
  *   - Encode is timed independently of decode: each file is decoded
  *     once up front, then encode is timed on the resulting PHP value.
- *   - Memory: a single fresh call per (file, op, ext) pair, with
+ *     Both encoders are probed once outside measurement to reject errors.
+ *   - Memory: a single measured call per (file, op, ext) pair, with
  *     memory_reset_peak_usage() before. Reports peak heap (bytes)
  *     held during the call.
  *
@@ -201,6 +202,14 @@ function callables_for(string $op, string $json, bool $haveSimdjson): array
                 'fastjson' => fn($v) => fastjson_encode($v),
                 'ext/json' => fn($v) => json_encode($v),
             ];
+            // Valid JSON can decode to an unencodable PHP value (e.g. 1e400
+            // becomes INF). Probe both encoders before timing or resetting
+            // the memory peak; never report error-return speed as throughput.
+            foreach ($fns as $label => $fn) {
+                if ($fn($value) === false) {
+                    throw new \RuntimeException("cannot benchmark encode: $label rejected the decoded corpus value");
+                }
+            }
             return [$fns, $value];
         }
         case 'validate': {
