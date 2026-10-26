@@ -232,7 +232,7 @@ A PHP extension that wraps <a href="https://github.com/ibireme/yyjson">yyjson<?=
 <?= table_small($tables, 'Encode') ?>
 
 <h2>Validate <span class="pill"><?= e($meta['php'] ?? '') ?></span></h2>
-<p>fastjson's edge comes from vendor patch <code>P-002</code> (<code>YYJSON_READ_VALIDATE_ONLY</code>), a no-tree validate entry point that drops peak memory ~2.7&times; vs the stock read path. ext/json validates by fully decoding and discarding.</p>
+<p>fastjson's edge comes from vendor patch <code>P-002</code> (<code>YYJSON_READ_VALIDATE_ONLY</code>), a no-tree validate entry point that drops peak memory ~2.7&times; vs the stock read path. The ext/json measurements use <code>json_validate()</code>.</p>
 <?= hero($tables, 'Validate') ?>
 <h3>Per-file validate, large corpus</h3>
 <?= table_large($tables, 'Validate') ?>
