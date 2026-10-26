@@ -6,9 +6,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-10-26
+
 ### Changed
 
-- Cross-check normal JSON Pointer parsing and allocation-free limit rejection with exhaustive short escape spellings, including embedded NULs and segment boundaries.
 - Bundled yyjson is now upstream master `2c9c76a`; none of its changes since `a84070f` alters decode, encode, or validate results.
 
 ### Performance
@@ -19,8 +20,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Honor `serialize_precision=0` when encoding negative zero, including file output and JSON Pointer replacements.
 - Honor changes to `serialize_precision` made by `JsonSerializable` callbacks and property hooks during encoding, including subsequent doubles and numeric strings.
+- Documented existing file helper behavior: `fastjson_file_encode()` encodes before opening the destination, so an encode failure that produces no JSON does not create or truncate the file, and it returns a boolean, not a byte count. `fastjson_file_decode()` reports I/O failures separately from parse failures. This is a documentation correction; behavior is unchanged.
 
 - Scale benchmark hero bars to their labeled axis maximum, including the historical HTML baseline, without changing the reported measurements.
+- Correct the benchmark page's validate memory bars, which compared KB and MB values without converting units, and its description of the ext/json validate measurement, which uses `json_validate()`.
 
 ## [0.10.0] - 2026-10-13
 
@@ -374,7 +377,8 @@ backed by yyjson 0.12.0.
   `JSON_UNESCAPED_LINE_TERMINATORS` is also set. Without
   `JSON_UNESCAPED_UNICODE`, both extensions escape them.
 
-[Unreleased]: https://github.com/iliaal/fastjson/compare/0.10.0...HEAD
+[Unreleased]: https://github.com/iliaal/fastjson/compare/0.10.1...HEAD
+[0.10.1]: https://github.com/iliaal/fastjson/releases/tag/0.10.1
 [0.10.0]: https://github.com/iliaal/fastjson/releases/tag/0.10.0
 [0.9.0]: https://github.com/iliaal/fastjson/releases/tag/0.9.0
 [0.8.0]: https://github.com/iliaal/fastjson/releases/tag/0.8.0
