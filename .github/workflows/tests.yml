@@ -29,6 +29,7 @@ jobs:
       - run: composer validate --strict
       - run: php scripts/test-benchmark-options.php
       - run: php scripts/test-benchmark-medians.php
+      - run: php scripts/test-perf-ideas-validation.php
       - run: scripts/test-sync-upstream-json-tests.sh
       - run: scripts/test-fetch-bench-data.sh
       - run: scripts/test-build-warning-gates.sh
