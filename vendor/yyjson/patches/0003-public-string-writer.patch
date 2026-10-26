@@ -9,7 +9,7 @@ diff --git a/vendor/yyjson/yyjson.c b/vendor/yyjson/yyjson.c
 index 6ca8e1e..66cf900 100644
 --- a/vendor/yyjson/yyjson.c
 +++ b/vendor/yyjson/yyjson.c
-@@ -10972,6 +10972,23 @@ bool yyjson_mut_write_fp(FILE *fp,
+@@ -10986,6 +10986,23 @@ bool yyjson_mut_write_fp(FILE *fp,
  
  #endif /* !YYJSON_FREESTANDING && !YYJSON_DISABLE_FILE */
  
@@ -37,7 +37,7 @@ diff --git a/vendor/yyjson/yyjson.h b/vendor/yyjson/yyjson.h
 index 316e10f..b885197 100644
 --- a/vendor/yyjson/yyjson.h
 +++ b/vendor/yyjson/yyjson.h
-@@ -1926,6 +1926,28 @@ yyjson_api_inline char *yyjson_mut_write_number(const yyjson_mut_val *val,
+@@ -1931,6 +1931,28 @@ yyjson_api_inline char *yyjson_mut_write_number(const yyjson_mut_val *val,
      return yyjson_write_number((const yyjson_val *)val, buf);
  }
  

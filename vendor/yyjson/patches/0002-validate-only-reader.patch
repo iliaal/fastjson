@@ -69,7 +69,7 @@ diff --git a/vendor/yyjson/yyjson.c b/vendor/yyjson/yyjson.c
 index bc14fac..6ca8e1e 100644
 --- a/vendor/yyjson/yyjson.c
 +++ b/vendor/yyjson/yyjson.c
-@@ -6305,6 +6305,347 @@ fail_depth:             return_err(cur, DEPTH, MSG_DEPTH);
+@@ -6311,6 +6311,347 @@ fail_depth:             return_err(cur, DEPTH, MSG_DEPTH);
  
  
  
@@ -417,7 +417,7 @@ index bc14fac..6ca8e1e 100644
  /*==============================================================================
   * MARK: - JSON Reader (Public)
   *============================================================================*/
-@@ -6370,7 +6711,10 @@ yyjson_doc *yyjson_read_opts(char *dat, usize len,
+@@ -6376,7 +6717,10 @@ yyjson_doc *yyjson_read_opts(char *dat, usize len,
      }
  
      /* read json document */

@@ -28,7 +28,7 @@ diff --git a/vendor/yyjson/yyjson.c b/vendor/yyjson/yyjson.c
 index bd5bd19..cf179b7 100644
 --- a/vendor/yyjson/yyjson.c
 +++ b/vendor/yyjson/yyjson.c
-@@ -3456,7 +3456,7 @@ static_noinline bool skip_trivia(u8 **ptr, u8 *eof, yyjson_read_flag flg) {
+@@ -3458,7 +3458,7 @@ static_noinline bool skip_trivia(u8 **ptr, u8 *eof, yyjson_read_flag flg) {
          u8 *loop_begin = cur;
  
          /* skip standard whitespace */
@@ -37,7 +37,7 @@ index bd5bd19..cf179b7 100644
  
          /* skip extended whitespace */
          if (has_allow(EXT_WHITESPACE)) {
-@@ -3466,8 +3466,9 @@ static_noinline bool skip_trivia(u8 **ptr, u8 *eof, yyjson_read_flag flg) {
+@@ -3468,8 +3468,9 @@ static_noinline bool skip_trivia(u8 **ptr, u8 *eof, yyjson_read_flag flg) {
              }
          }
  
@@ -49,7 +49,7 @@ index bd5bd19..cf179b7 100644
              if (cur[1] == '/') { /* single-line comment */
                  cur += 2;
                  if (has_allow(EXT_WHITESPACE)) {
-@@ -3483,8 +3484,8 @@ static_noinline bool skip_trivia(u8 **ptr, u8 *eof, yyjson_read_flag flg) {
+@@ -3485,8 +3486,8 @@ static_noinline bool skip_trivia(u8 **ptr, u8 *eof, yyjson_read_flag flg) {
                  }
              } else if (cur[1] == '*') { /* multi-line comment */
                  cur += 2;
@@ -60,7 +60,7 @@ index bd5bd19..cf179b7 100644
                      *ptr = eof;
                      return false; /* unclosed comment */
                  }
-@@ -3505,7 +3506,9 @@ static bool is_truncated_utf8(u8 *cur, u8 *eof) {
+@@ -3507,7 +3508,9 @@ static bool is_truncated_utf8(u8 *cur, u8 *eof) {
      u8 c0, c1, c2;
      usize len = (usize)(eof - cur);
      if (cur >= eof || len >= 4) return false;
@@ -71,7 +71,7 @@ index bd5bd19..cf179b7 100644
      /* 1-byte UTF-8, not truncated */
      if (c0 < 0x80) return false;
      if (len == 1) {
-@@ -3635,7 +3638,7 @@ static_noinline bool is_truncated_end(u8 *hdr, u8 *cur, u8 *eof,
+@@ -3637,7 +3640,7 @@ static_noinline bool is_truncated_end(u8 *hdr, u8 *cur, u8 *eof,
              return true;
          }
          if (code == YYJSON_READ_ERROR_UNEXPECTED_CHARACTER &&

@@ -2,6 +2,6 @@
 resolver: github-head
 repo: ibireme/yyjson
 branch: master
-pinned: a84070fa6dc58f9b379ed75b8c8fab2c1da1b604
+pinned: 2c9c76a4b6acda1931c7d8bef05a91f2a759302d
 vendored_at: vendor/yyjson
 note: "Master snapshot after 0.13.0 (header still reports 0.13.0)"

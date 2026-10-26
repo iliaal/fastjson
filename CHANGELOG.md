@@ -9,6 +9,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 
 - Cross-check normal JSON Pointer parsing and allocation-free limit rejection with exhaustive short escape spellings, including embedded NULs and segment boundaries.
+- Bundled yyjson is now upstream master `2c9c76a`; none of its changes since `a84070f` alters decode, encode, or validate results.
 
 ### Performance
 

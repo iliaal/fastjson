@@ -1294,11 +1294,6 @@ static const yyjson_write_flag YYJSON_WRITE_ALLOW_INVALID_UNICODE   = 1 << 5;
     This flag will override `YYJSON_WRITE_PRETTY` flag. */
 static const yyjson_write_flag YYJSON_WRITE_PRETTY_TWO_SPACES       = 1 << 6;
 
-/** Write JSON pretty with tab indentation.
-    This flag will override `YYJSON_WRITE_PRETTY` and
-    `YYJSON_WRITE_PRETTY_TWO_SPACES` flags. */
-static const yyjson_write_flag YYJSON_WRITE_PRETTY_TABS             = 1 << 9;
-
 /** Adds a newline character `\n` at the end of the JSON.
     This can be helpful for text editors or NDJSON. */
 static const yyjson_write_flag YYJSON_WRITE_NEWLINE_AT_END          = 1 << 7;
@@ -1306,6 +1301,16 @@ static const yyjson_write_flag YYJSON_WRITE_NEWLINE_AT_END          = 1 << 7;
 /** Use lowercase hex digits in `\uXXXX` escape sequences instead of the default
     uppercase. Only effective when `YYJSON_WRITE_ESCAPE_UNICODE` is also set. */
 static const yyjson_write_flag YYJSON_WRITE_LOWERCASE_HEX           = 1 << 8;
+
+/** Write JSON pretty with tab indentation.
+    This flag will override `YYJSON_WRITE_PRETTY` and
+    `YYJSON_WRITE_PRETTY_TWO_SPACES` flags. */
+static const yyjson_write_flag YYJSON_WRITE_PRETTY_TABS             = 1 << 9;
+
+/** Write a comma after the last element of each non-empty array and object
+    (non-standard), such as `[1,2,]` or `{"a":1,}`.
+    Such output can be read back with `YYJSON_READ_ALLOW_TRAILING_COMMAS`. */
+static const yyjson_write_flag YYJSON_WRITE_TRAILING_COMMAS         = 1 << 10;
 
 
 
@@ -2474,7 +2479,7 @@ yyjson_api_inline yyjson_val *yyjson_obj_iter_getn(yyjson_obj_iter *iter,
     for ((idx) = 0, \
         (max) = yyjson_obj_size(obj), \
         (key) = (obj) ? unsafe_yyjson_get_first(obj) : NULL, \
-        (val) = (key) + 1; \
+        (val) = (key) ? (key) + 1 : NULL; \
         (idx) < (max); \
         (idx)++, \
         (key) = unsafe_yyjson_get_next(val), \
