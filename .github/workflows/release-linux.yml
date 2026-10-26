@@ -161,9 +161,9 @@ jobs:
           build_php="$RUNNER_TEMP/php/bin"
           test "$("$build_php/php-config" --version)" = "$PHP_SRC"
           test "$("$build_php/php" -n -r 'echo PHP_VERSION;')" = "$PHP_SRC"
-          test "$("$build_php/php" -n -r 'echo PHP_ZTS, PHP_DEBUG;')" = "00"
+          test "$("$build_php/php" -n -r 'echo (int) PHP_ZTS, (int) PHP_DEBUG;')" = "00"
           test "$(php -n -r 'echo PHP_MAJOR_VERSION, ".", PHP_MINOR_VERSION;')" = "$PHP_MINOR"
-          test "$(php -n -r 'echo PHP_ZTS, PHP_DEBUG;')" = "00"
+          test "$(php -n -r 'echo (int) PHP_ZTS, (int) PHP_DEBUG;')" = "00"
           echo "build PHP $PHP_SRC; test PHP $(php -n -r 'echo PHP_VERSION;') at $(command -v php)"
 
       - name: Build extension
