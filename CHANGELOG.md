@@ -6,6 +6,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- The 0.10.1 prebuilt Linux and macOS binaries failed on PHP 8.4 releases before 8.4.27 and PHP 8.5 releases before 8.5.12 with `undefined symbol: smart_str_ferealloc`, because they were compiled against newer PHP headers. Prebuilt binaries are now compiled against the oldest patch release of each PHP minor, and the release workflow rejects a binary that imports a symbol that release does not export. Source builds were unaffected.
+
 ## [0.10.1] - 2026-10-26
 
 ### Changed
