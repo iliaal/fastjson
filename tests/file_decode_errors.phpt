@@ -38,6 +38,32 @@ echo "---\n";
 $r = fastjson_file_decode($missing, true, 512, JSON_THROW_ON_ERROR);
 var_dump($r);
 
+// Observe open attempts directly; a missing path alone cannot prove ordering.
+class DepthOpenProbe {
+    public $context;
+    public static $opens = 0;
+    public function stream_open($path, $mode, $options, &$openedPath) {
+        self::$opens++;
+        return false;
+    }
+}
+stream_wrapper_register('fjdepthguard', DepthOpenProbe::class);
+$invalidDepths = [0, -1];
+if (PHP_INT_SIZE > 4) {
+    $invalidDepths[] = 2147483648;
+}
+foreach ([0, JSON_THROW_ON_ERROR] as $flags) {
+    foreach ($invalidDepths as $depth) {
+        try {
+            fastjson_file_decode('fjdepthguard://input', true, $depth, $flags);
+            echo "no depth error\n";
+        } catch (\ValueError $e) {
+            // Expected before any stream_open callback.
+        }
+    }
+    var_dump(DepthOpenProbe::$opens === 0);
+}
+stream_wrapper_unregister('fjdepthguard');
 unlink($file);
 ?>
 --EXPECT--
@@ -51,3 +77,5 @@ bool(true)
 threw: JsonException
 ---
 NULL
+bool(true)
+bool(true)
