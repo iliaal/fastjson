@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.10.2] - 2026-10-26
+
 ### Fixed
 
 - The 0.10.1 prebuilt Linux and macOS binaries failed on PHP 8.4 releases before 8.4.27 and PHP 8.5 releases before 8.5.12 with `undefined symbol: smart_str_ferealloc`, because they were compiled against newer PHP headers. Prebuilt binaries are now compiled against the oldest patch release of each PHP minor, and the release workflow rejects a binary that imports a symbol that release does not export. Source builds were unaffected.
@@ -381,7 +383,8 @@ backed by yyjson 0.12.0.
   `JSON_UNESCAPED_LINE_TERMINATORS` is also set. Without
   `JSON_UNESCAPED_UNICODE`, both extensions escape them.
 
-[Unreleased]: https://github.com/iliaal/fastjson/compare/0.10.1...HEAD
+[Unreleased]: https://github.com/iliaal/fastjson/compare/0.10.2...HEAD
+[0.10.2]: https://github.com/iliaal/fastjson/releases/tag/0.10.2
 [0.10.1]: https://github.com/iliaal/fastjson/releases/tag/0.10.1
 [0.10.0]: https://github.com/iliaal/fastjson/releases/tag/0.10.0
 [0.9.0]: https://github.com/iliaal/fastjson/releases/tag/0.9.0
