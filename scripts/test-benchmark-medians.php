@@ -5,7 +5,8 @@ namespace BenchmarkMedianTest;
 
 $source = file_get_contents(dirname(__DIR__) . '/bench/run.php');
 $wanted = ['bench_time', 'fmt_mbps', 'fmt_ns', 'fmt_speedup', 'fmt_bytes',
-    'callables_for', 'throughput_section', 'emit_aggregate_throughput'];
+    'callables_for', 'throughput_section', 'emit_aggregate_throughput',
+    'read_benchmark_json', 'validate_benchmark_corpus'];
 $tokens = token_get_all($source);
 $functions = [];
 for ($i = 0; $i < count($tokens); $i++) {
@@ -104,3 +105,56 @@ try {
     unlink($fixture);
 }
 echo "36 deterministic timing cases, 9 formatting cases, and per-file/aggregate propagation passed\n";
+
+// Real files exercise corpus preflight and the per-measurement reader. A valid
+// JSON null is not a decode failure; invalid input must never reach the clock.
+$fixture = tempnam(sys_get_temp_dir(), 'fastjson-corpus-');
+if ($fixture === false) throw new \RuntimeException('cannot prepare corpus fixture');
+try {
+    foreach (['null', 'false', '0', '""', '[]', '{}', '{"a":[1,true,null]}'] as $json) {
+        file_put_contents($fixture, $json);
+        expect(read_benchmark_json($fixture), $json, 'valid corpus bytes');
+        validate_benchmark_corpus([$fixture]);
+    }
+    foreach (['', '{bad', '[1,]', 'null trailing', '"' . chr(255) . '"',
+              str_repeat('[', 512) . '0' . str_repeat(']', 512)] as $json) {
+        file_put_contents($fixture, $json);
+        foreach (['reader', 'preflight', 'throughput'] as $route) {
+            ob_start();
+            try {
+                if ($route === 'reader') read_benchmark_json($fixture);
+                elseif ($route === 'preflight') validate_benchmark_corpus([$fixture]);
+                else throughput_section('invalid corpus', [$fixture],
+                    ['decode_obj' => ['Decode', false]], 1, false, false);
+                throw new \LogicException("$route accepted invalid corpus");
+            } catch (\RuntimeException $error) {
+                if (!str_contains($error->getMessage(), "invalid corpus JSON in $fixture:")) {
+                    throw $error;
+                }
+            } finally {
+                ob_end_clean();
+            }
+        }
+    }
+    foreach ([$fixture . '-missing', dirname($fixture)] as $path) {
+        try {
+            validate_benchmark_corpus([$path]);
+            throw new \LogicException('accepted unreadable corpus');
+        } catch (\RuntimeException $error) {
+            expect($error->getMessage(), "cannot read corpus file: $path", 'read failure');
+        }
+    }
+    // No stale cached validation after a successful preflight.
+    file_put_contents($fixture, 'null');
+    validate_benchmark_corpus([$fixture]);
+    unlink($fixture);
+    try {
+        read_benchmark_json($fixture);
+        throw new \LogicException('accepted removed corpus');
+    } catch (\RuntimeException $error) {
+        expect($error->getMessage(), "cannot read corpus file: $fixture", 'removed input');
+    }
+} finally {
+    if (is_file($fixture)) unlink($fixture);
+}
+echo "corpus validation: 7 valid values, 6 invalid values across 3 routes, and 3 read failures passed\n";

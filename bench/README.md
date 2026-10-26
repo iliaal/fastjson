@@ -35,6 +35,14 @@ php -d extension=... bench/run.php bench/data 200
 ```
 
 The iteration count defaults to 50 and must be at least 1.
+All selected corpus files must be readable regular files containing valid JSON
+at the default depth of 512. The harness validates both corpus directories before
+emitting a report, and checks each read again outside the timed/measured call.
+Invalid input exits non-zero with its filename instead of reporting the speed of
+malformed-input failures or encoding a fallback null. Inputs are not cached
+across files. This is input validation, not a full correctness check of every
+timed operation; for example, valid JSON `1e400` becomes infinity in PHP and
+cannot be encoded with the harness's default flags.
 
 The output is markdown. Redirect it to a file, or commit it as
 `bench/baseline.md` after a clean run.

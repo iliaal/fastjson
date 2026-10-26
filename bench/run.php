@@ -69,6 +69,36 @@ if (!$largeFiles && !$smallFiles) {
     exit(1);
 }
 
+/** Reject failed reads and invalid/deep JSON rather than timing error returns.
+ * Read again at each measurement so a changed file cannot bypass preflight.
+ * No corpus-wide string cache: peak-memory measurements retain one input only. */
+function read_benchmark_json(string $path): string
+{
+    $json = is_file($path) ? @file_get_contents($path) : false;
+    if ($json === false) {
+        throw new \RuntimeException("cannot read corpus file: $path");
+    }
+    if (!json_validate($json)) {
+        throw new \RuntimeException("invalid corpus JSON in $path: " . json_last_error_msg());
+    }
+    return $json;
+}
+
+function validate_benchmark_corpus(array $files): void
+{
+    foreach ($files as $path) {
+        read_benchmark_json($path);
+    }
+}
+
+// Reject an invalid corpus before emitting even a partial benchmark report.
+try {
+    validate_benchmark_corpus([...$largeFiles, ...$smallFiles]);
+} catch (\RuntimeException $error) {
+    fwrite(STDERR, $error->getMessage() . "\n");
+    exit(1);
+}
+
 /** Returns the median ns over $iterations runs, slowest 10% dropped. */
 function bench_time(callable $callable, mixed $input, int $iterations): int|float
 {
@@ -273,7 +303,7 @@ function throughput_section(string $title, array $files, array $ops, int $iterat
 
         foreach ($files as $path) {
             $name = basename($path);
-            $json = file_get_contents($path);
+            $json = read_benchmark_json($path);
             $bytes = strlen($json);
             [$fns, $input] = callables_for($op, $json, $useSimdjson);
 
@@ -367,7 +397,7 @@ foreach ($ops as $op => [$opTitle, $opHasSimdjson]) {
 
     foreach ($allFiles as $path) {
         $name = basename($path);
-        $json = file_get_contents($path);
+        $json = read_benchmark_json($path);
         $bytes = strlen($json);
         [$fns, $input] = callables_for($op, $json, $useSimdjson);
 
