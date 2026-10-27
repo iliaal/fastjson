@@ -6,7 +6,7 @@ namespace BenchmarkMedianTest;
 $source = file_get_contents(dirname(__DIR__) . '/bench/run.php');
 $wanted = ['bench_time', 'fmt_mbps', 'fmt_ns', 'fmt_speedup', 'fmt_bytes',
     'callables_for', 'throughput_section', 'emit_aggregate_throughput',
-    'read_benchmark_json', 'validate_benchmark_corpus'];
+    'read_benchmark_json', 'validate_benchmark_corpus', 'emit_memory_intro'];
 $tokens = token_get_all($source);
 $functions = [];
 for ($i = 0; $i < count($tokens); $i++) {
@@ -29,6 +29,24 @@ for ($i = 0; $i < count($tokens); $i++) {
 }
 if (count($functions) !== count($wanted)) throw new \RuntimeException('missing benchmark functions');
 eval('namespace ' . __NAMESPACE__ . ';' . implode("\n", $functions));
+
+// Check the complete emitted claim, including each operation's distinct model.
+ob_start();
+emit_memory_intro();
+$memoryIntro = ob_get_clean();
+$expectedMemoryIntro = "## Memory peak (single-call delta)\n\n"
+    . "Lower is better. The ratio is `fastjson / ext-json` peak heap; "
+    . "values **above 1.0 mean fastjson uses more memory**. Decode holds "
+    . "yyjson's parsed document while building the PHP result. Encode writes "
+    . "directly to `smart_str` without an intermediate yyjson value tree. "
+    . "Validate uses a no-value-tree parser, which still needs parser state. "
+    . "Peak-memory ratios depend on the input and build; the measurements "
+    . "below are not bounds or a guarantee of parity.\n\n";
+if ($memoryIntro !== $expectedMemoryIntro
+        || preg_match_all('/^emit_memory_intro\(\);$/m', $source) !== 1) {
+    throw new \RuntimeException('incorrect or disconnected memory methodology');
+}
+echo "Complete emitted memory methodology and call site passed\n";
 
 function hrtime(bool $asNumber): int
 {

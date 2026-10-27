@@ -94,6 +94,15 @@ function memoryCards(string $html): array
     return $matches[0];
 }
 
+function checkMemoryMethodology(string $html): void
+{
+    $expected = '<p>Single-call peak heap, <code>fastjson / ext-json</code>. Above 1.0 means fastjson uses more memory. Peak-memory ratios describe the measured input and build; they are not bounds or a guarantee of parity. See the benchmark version before applying these results to another build.</p>';
+    if (!preg_match('/<h2>Memory peak<\/h2>\s*(<p>.*?<\/p>)/s', $html, $matches)
+            || $matches[1] !== $expected) {
+        throw new RuntimeException('incorrect rendered memory methodology');
+    }
+}
+
 function expectedMemoryCard(string $title, string $fast, string $ext, string $ratio,
     int $fastWidth, int $extWidth): string
 {
@@ -140,6 +149,7 @@ foreach ($memoryCases as [$fast, $ext, $fastWidth, $extWidth]) {
     if ($status !== 0 || $stderr !== '' || memoryCards($html) !== $expected) {
         throw new RuntimeException("wrong memory cards for fast=$fast ext=$ext: $status $stderr");
     }
+    checkMemoryMethodology($html);
 }
 
 // Keep the published historical values; only the mixed-unit bar widths change.

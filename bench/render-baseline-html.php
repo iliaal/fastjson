@@ -244,7 +244,7 @@ A PHP extension that wraps <a href="https://github.com/ibireme/yyjson">yyjson<?=
 <?= table_small($tables, 'Validate') ?>
 
 <h2>Memory peak</h2>
-<p>Single-call peak heap, <code>fastjson / ext-json</code>. Above 1.0 means fastjson uses more &mdash; the price of yyjson's build-a-doc-then-walk model on decode. Encode is at parity (direct-write, no mutable doc); validate trades memory for the no-tree fast path.</p>
+<p>Single-call peak heap, <code>fastjson / ext-json</code>. Above 1.0 means fastjson uses more memory. Peak-memory ratios describe the measured input and build; they are not bounds or a guarantee of parity. See the benchmark version before applying these results to another build.</p>
 <div class="mem-grid">
 <?= mem_card($tables, 'Decode (objects)', 'Decode &rarr; stdClass') ?>
 <?= mem_card($tables, 'Encode', 'Encode') ?>

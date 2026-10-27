@@ -372,12 +372,19 @@ $largeTotals = throughput_section('Throughput, large corpus', $largeFiles, $ops,
 $smallTotals = throughput_section('Throughput, small corpus', $smallFiles, $ops, $iterations, true, $haveSimdjson);
 
 /* Memory section: all files combined, single-call peak heap delta. */
-echo "## Memory peak (single-call delta)\n\n";
-echo "Lower is better. The ratio is `fastjson / ext-json` peak heap; ";
-echo "values **above 1.0 mean fastjson uses more memory**. This is the ";
-echo "expected price of yyjson's two-stage model (build a doc, then walk ";
-echo "into zvals or write a string), versus ext/json's streaming parser/";
-echo "writer that emits results directly.\n\n";
+function emit_memory_intro(): void
+{
+    echo "## Memory peak (single-call delta)\n\n";
+    echo "Lower is better. The ratio is `fastjson / ext-json` peak heap; ";
+    echo "values **above 1.0 mean fastjson uses more memory**. Decode holds ";
+    echo "yyjson's parsed document while building the PHP result. Encode writes ";
+    echo "directly to `smart_str` without an intermediate yyjson value tree. ";
+    echo "Validate uses a no-value-tree parser, which still needs parser state. ";
+    echo "Peak-memory ratios depend on the input and build; the measurements ";
+    echo "below are not bounds or a guarantee of parity.\n\n";
+}
+
+emit_memory_intro();
 
 $allFiles = [...$largeFiles, ...$smallFiles];
 sort($allFiles);
