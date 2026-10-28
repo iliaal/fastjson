@@ -15,7 +15,13 @@ functions before producing benchmark output. The extension itself still
 
 The separate [performance-ideas harness](perf_ideas.php) measures peak memory
 with [`memory_reset_peak_usage()`](https://www.php.net/manual/en/function.memory-reset-peak-usage.php),
-so it requires PHP 8.2+ with that function available. The
+so it requires PHP 8.2+ with that function available. It checks every fixed
+case once against its expected value before printing the report or measuring
+anything, including the intentionally false invalid-JSON validation and scalar
+merge-patch result. A mismatch exits non-zero with the case name. JSON-returning
+cases are compared as decoded values, not byte-for-byte formatting. These
+preflight checks are outside the timing and memory measurements; they do not
+validate every measured call. The
 [review-performance harness](review-performance.php) uses neither this
 function nor ext/json's `json_validate()`, so these prerequisites do not apply
 to it.

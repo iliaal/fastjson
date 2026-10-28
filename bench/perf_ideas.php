@@ -156,6 +156,28 @@ function bench_peak(callable $fn): int
     return max(0, $peak - $baseline);
 }
 
+// Validate fixed fixtures before printing a report or entering measured calls.
+// JSON-returning cases are compared as values, not by whitespace/key escaping.
+function validate_bench_cases(array $cases): void
+{
+    foreach ($cases as $case) {
+        try {
+            $result = ($case['fn'])();
+            if ($case['json'] ?? false) {
+                if (!is_string($result)) {
+                    throw new RuntimeException('expected JSON string');
+                }
+                $result = json_decode($result, true, 512, JSON_THROW_ON_ERROR);
+            }
+            if ($result !== $case['expected']) {
+                throw new RuntimeException('unexpected result');
+            }
+        } catch (Throwable $error) {
+            throw new RuntimeException("cannot benchmark {$case['name']}: " . $error->getMessage(), 0, $error);
+        }
+    }
+}
+
 $dataset = bench_dataset(900);
 $json = json_encode($dataset, JSON_UNESCAPED_SLASHES);
 if (!is_string($json)) {
@@ -180,98 +202,143 @@ register_shutdown_function(static function () use ($tmpFile): void {
     }
 });
 
+$stringLeaf = $dataset;
+$stringLeaf['rows'][450]['name'] = 'renamed-item';
+$intLeaf = $dataset;
+$intLeaf['rows'][450]['id'] = 123456789;
+$arrayLeaf = $dataset;
+$arrayLeaf['rows'][450]['tags'] = ['red', 'green', 'blue'];
+$merged = $dataset;
+$merged['summary']['enabled'] = false;
+
 $cases = [
     [
         'name' => 'pointer_set string leaf',
         'bytes' => strlen($json),
         'loops' => 120,
         'fn' => static fn() => fastjson_pointer_set($json, '/rows/450/name', 'renamed-item'),
+        'expected' => $stringLeaf,
+        'json' => true,
     ],
     [
         'name' => 'pointer_set int leaf',
         'bytes' => strlen($json),
         'loops' => 120,
         'fn' => static fn() => fastjson_pointer_set($json, '/rows/450/id', 123456789),
+        'expected' => $intLeaf,
+        'json' => true,
     ],
     [
         'name' => 'pointer_set array leaf',
         'bytes' => strlen($json),
         'loops' => 100,
         'fn' => static fn() => fastjson_pointer_set($json, '/rows/450/tags', ['red', 'green', 'blue']),
+        'expected' => $arrayLeaf,
+        'json' => true,
     ],
     [
         'name' => 'pointer_set root scalar',
         'bytes' => 2,
         'loops' => 2000,
         'fn' => static fn() => fastjson_pointer_set('{}', '', 42),
+        'expected' => 42,
+        'json' => true,
     ],
     [
         'name' => 'pointer_set root replace large target',
         'bytes' => strlen($json),
         'loops' => 140,
         'fn' => static fn() => fastjson_pointer_set($json, '', 42),
+        'expected' => 42,
+        'json' => true,
     ],
     [
         'name' => 'pointer_set small string leaf',
         'bytes' => strlen($smallJson),
         'loops' => 2000,
         'fn' => static fn() => fastjson_pointer_set($smallJson, '/a/b', 'new'),
+        'expected' => ['a' => ['b' => 'new', 'c' => 1], 'd' => [1, 2, 3]],
+        'json' => true,
     ],
     [
         'name' => 'pretty encode broad',
         'bytes' => strlen($json),
         'loops' => 70,
         'fn' => static fn() => fastjson_encode($prettyBroad, JSON_PRETTY_PRINT),
+        'expected' => $prettyBroad,
+        'json' => true,
     ],
     [
         'name' => 'pretty encode deep',
         'bytes' => 0,
         'loops' => 350,
         'fn' => static fn() => fastjson_encode($prettyDeep, JSON_PRETTY_PRINT),
+        'expected' => $prettyDeep,
+        'json' => true,
     ],
     [
         'name' => 'decode assoc generated',
         'bytes' => strlen($json),
         'loops' => 180,
         'fn' => static fn() => fastjson_decode($json, true),
+        'expected' => $dataset,
     ],
     [
         'name' => 'file_decode assoc generated',
         'bytes' => strlen($json),
         'loops' => 100,
         'fn' => static fn() => fastjson_file_decode($tmpFile, true),
+        'expected' => $dataset,
     ],
     [
         'name' => 'merge_patch object merge',
         'bytes' => strlen($json),
         'loops' => 100,
         'fn' => static fn() => fastjson_merge_patch($json, '{"summary":{"enabled":false}}', true),
+        'expected' => $merged,
     ],
     [
         'name' => 'merge_patch scalar replace target',
         'bytes' => strlen($json),
         'loops' => 220,
         'fn' => static fn() => fastjson_merge_patch($json, '0', true),
+        'expected' => 0,
     ],
     [
         'name' => 'validate valid generated',
         'bytes' => strlen($json),
         'loops' => 350,
         'fn' => static fn() => fastjson_validate($json),
+        'expected' => true,
     ],
     [
         'name' => 'validate invalid tail',
         'bytes' => strlen($invalidJson),
         'loops' => 350,
         'fn' => static fn() => fastjson_validate($invalidJson),
+        'expected' => false,
     ],
     [
         'name' => 'encode JsonSerializable',
         'bytes' => 0,
         'loops' => 600,
         'fn' => static fn() => fastjson_encode($serializable),
+        'expected' => $serializable->jsonSerialize(),
+        'json' => true,
     ],
 ];
+
+try {
+    validate_bench_cases($cases);
+} catch (RuntimeException $error) {
+    fwrite(STDERR, $error->getMessage() . "\n");
+    exit(1);
+}
+// Do not retain oracle-only copies during memory measurements.
+foreach ($cases as &$case) {
+    unset($case['expected'], $case['json']);
+}
+unset($case, $stringLeaf, $intLeaf, $arrayLeaf, $merged);
 
 $cpu = trim((string)shell_exec("grep -m1 'model name' /proc/cpuinfo | cut -d: -f2"));
 $cpu = preg_replace('/\s+/', ' ', $cpu ?: '?');
