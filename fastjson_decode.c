@@ -619,21 +619,15 @@ PHP_FUNCTION(fastjson_file_decode)
     }
     bool read_failed = false;
     zend_string *contents = fastjson_read_and_close_stream(stream, &read_failed);
-    /* A userspace wrapper may throw from stream_close() after a successful
-     * read. Stop before parsing so the wrapper exception remains primary. */
+    /* Read, EOF, and close callbacks may throw. Stop before handling read
+     * failures or parsing so the wrapper exception remains primary. */
     if (EG(exception)) {
         zend_string_release(contents);
         fastjson_restore_error_state(throw_mode ? &saved_err : &operation_err);
         RETURN_THROWS();
     }
     if (read_failed) {
-        /* A userspace wrapper's read() may have thrown mid-copy; propagate
-         * it rather than clobbering it with a SYNTAX error. */
         zend_string_release(contents);
-        if (EG(exception)) {
-            fastjson_restore_error_state(throw_mode ? &saved_err : &operation_err);
-            RETURN_THROWS();
-        }
         fastjson_set_error_code(FASTJSON_ERROR_SYNTAX,
                                 "Failed to read file");
         RETURN_NULL();
