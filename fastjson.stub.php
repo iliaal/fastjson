@@ -149,17 +149,22 @@ function fastjson_encode(mixed $value, int $flags = 0, int $depth = 512): string
  * the semantics of fastjson_encode(). Unlike file_put_contents(), this
  * function returns a boolean, not a byte count.
  *
- * Returns true on success, false on failure (encode error or I/O
- * error). On failure fastjson_last_error() is set. Fastjson does not ask
- * the streams layer to report open errors, but open_basedir, individual
- * wrappers, and write callbacks may emit their own warnings, as they do
- * under file_put_contents().
+ * Returns true when the produced JSON is successfully written, including
+ * partial output. With JSON_PARTIAL_OUTPUT_ON_ERROR, true can be returned
+ * while fastjson_last_error() reports the encoding error. Returns false if
+ * encoding produces no JSON or file I/O fails; exceptions are described
+ * below. On a false return, fastjson_last_error() is set.
+ *
+ * Fastjson does not ask the streams layer to report open errors, but
+ * open_basedir, individual wrappers, and write callbacks may emit their own
+ * warnings, as they do under file_put_contents().
  * I/O failures use FASTJSON_ERROR_SYNTAX to stay inside the JSON_ERROR_*
  * code range; use fastjson_last_error_msg() ("Failed to open file for writing" or
  * "Failed to write file") to distinguish them from encode failures.
  * JSON_THROW_ON_ERROR throws on an encode error unless
- * JSON_PARTIAL_OUTPUT_ON_ERROR is also set. An I/O failure still returns
- * false.
+ * JSON_PARTIAL_OUTPUT_ON_ERROR is also set. A reported I/O failure returns
+ * false rather than throwing JsonException. Exceptions from user callbacks
+ * or stream wrappers propagate.
  */
 function fastjson_file_encode(string $filename, mixed $value, int $flags = 0, int $depth = 512): bool {}
 
