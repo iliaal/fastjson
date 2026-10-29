@@ -245,7 +245,12 @@ echo "Rendered and historical pages describe the measured validation API\n";
 
 // Custom corpora must carry their own counts and aggregate sizes. Per-file
 // sizes are deliberately unrelated: summing their rounded values is wrong.
-foreach ([[1, 0, '2 B', null], [2, 1, '3.25 MB', '17 B'], [3, 2, '9,876.5 KB', '1.5 KB']] as [$large, $small, $largeSize, $smallSize]) {
+foreach ([
+    [1, 0, '2 B', null, '2&nbsp;B', 'unreported size'],
+    [2, 1, '3.25 MB', '17 B', '3.25&nbsp;MB', '17&nbsp;B'],
+    [3, 2, '9,876.5 KB', '1.5 KB', '9,876.5&nbsp;KB', '1.5&nbsp;KB'],
+    [1, 0, '3 MB & note', null, '3 MB &amp; note', 'unreported size'],
+] as [$large, $small, $largeSize, $smallSize, $largeHtml, $smallHtml]) {
     $input = "- PHP fixture\n- fastjson fixture\n";
     foreach (['large' => $large, 'small' => $small] as $scope => $count) {
         $input .= "\n## Throughput, $scope corpus\n";
@@ -274,15 +279,15 @@ foreach ([[1, 0, '2 B', null], [2, 1, '3.25 MB', '17 B'], [3, 2, '9,876.5 KB', '
     preg_match('/<strong>Corpus:<\/strong> (\d+) files &mdash; (\d+) large \(([^)]+)\) \+ (\d+) small \(([^)]+)\)/', $html, $summary);
     $actual = array_slice($summary, 1);
     if (($total[1] ?? null) !== (string)($large + $small)
-            || $actual !== [(string)($large + $small), (string)$large, $largeSize,
-                (string)$small, $smallSize ?? 'unreported size']) {
+            || $actual !== [(string)($large + $small), (string)$large, $largeHtml,
+                (string)$small, $smallHtml]) {
         throw new RuntimeException('incorrect corpus counts or aggregate sizes');
     }
     preg_match_all('/Aggregate on the ([^<]+) large corpus\./', $html, $heroes);
     preg_match_all('/\(([^()]+) large corpus aggregate\)/', $html, $takeaways);
-    if ($heroes[1] !== array_fill(0, 3, $largeSize)
-            || $takeaways[1] !== array_fill(0, 3, $largeSize)) {
+    if ($heroes[1] !== array_fill(0, 3, $largeHtml)
+            || $takeaways[1] !== array_fill(0, 3, $largeHtml)) {
         throw new RuntimeException('incorrect hero or takeaway corpus sizes');
     }
 }
-echo "3 custom-corpus fixtures preserve counts and aggregate sizes\n";
+echo "4 custom-corpus fixtures preserve counts, escaped sizes and non-breaking units\n";
