@@ -54,7 +54,8 @@ foreach ($cases as [$fast, $ext, $extWidth, $fastWidth, $middle, $end]) {
     $input = preg_replace('/(### Throughput, large corpus\n).*?(?=\n###|\z)/s',
         '$1' . substr($aggregate, strpos($aggregate, '|')), $baseline);
     file_put_contents($fixture, $input);
-    $process = proc_open([PHP_BINARY, '-n', $root . '/bench/render-baseline-html.php', $fixture],
+    $process = proc_open([PHP_BINARY, '-n', '-d', 'display_errors=stderr', '-d', 'error_reporting=-1',
+        $root . '/bench/render-baseline-html.php', $fixture],
         [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
     if (!is_resource($process)) {
         throw new RuntimeException('cannot start renderer');
@@ -137,7 +138,8 @@ foreach ($memoryCases as [$fast, $ext, $fastWidth, $extWidth]) {
     }
     $input = preg_replace('/(### Memory peak \(across all files\)\n).*?(?=\n_|\z)/s', '$1' . $rows, $baseline);
     file_put_contents($fixture, $input);
-    $process = proc_open([PHP_BINARY, '-n', $root . '/bench/render-baseline-html.php', $fixture],
+    $process = proc_open([PHP_BINARY, '-n', '-d', 'display_errors=stderr', '-d', 'error_reporting=-1',
+        $root . '/bench/render-baseline-html.php', $fixture],
         [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
     if (!is_resource($process)) throw new RuntimeException('cannot start memory renderer');
     fclose($pipes[0]);
@@ -166,7 +168,8 @@ function renderBaseline(string $input): string
 {
     global $root, $fixture;
     file_put_contents($fixture, $input);
-    $process = proc_open([PHP_BINARY, '-n', $root . '/bench/render-baseline-html.php', $fixture],
+    $process = proc_open([PHP_BINARY, '-n', '-d', 'display_errors=stderr', '-d', 'error_reporting=-1',
+        $root . '/bench/render-baseline-html.php', $fixture],
         [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
     if (!is_resource($process)) throw new RuntimeException('cannot start column renderer');
     fclose($pipes[0]);
@@ -239,3 +242,47 @@ foreach (['rendered' => $expectedHtml,
     }
 }
 echo "Rendered and historical pages describe the measured validation API\n";
+
+// Custom corpora must carry their own counts and aggregate sizes. Per-file
+// sizes are deliberately unrelated: summing their rounded values is wrong.
+foreach ([[1, 0, '2 B', null], [2, 1, '3.25 MB', '17 B'], [3, 2, '9,876.5 KB', '1.5 KB']] as [$large, $small, $largeSize, $smallSize]) {
+    $input = "- PHP fixture\n- fastjson fixture\n";
+    foreach (['large' => $large, 'small' => $small] as $scope => $count) {
+        $input .= "\n## Throughput, $scope corpus\n";
+        foreach (['Decode (objects)', 'Encode', 'Validate'] as $operation) {
+            $input .= "\n### $operation\n";
+            $input .= $scope === 'small'
+                ? "| File | Size | fastjson | ext/json | fj/call | json/call | speedup |\n"
+                : "| File | Size | fastjson | ext/json | speedup |\n";
+            for ($i = 0; $i < $count; $i++) {
+                $input .= $scope === 'small'
+                    ? "| file-$i.json | 999 MB | 10 MB/s | 5 MB/s | 100 ns | 200 ns | 2x |\n"
+                    : "| file-$i.json | 999 MB | 10 MB/s | 5 MB/s | 2x |\n";
+            }
+        }
+    }
+    $input .= "\n## Aggregate (sum across all files)\n";
+    foreach (['large' => $largeSize, 'small' => $smallSize] as $scope => $size) {
+        if ($size === null) continue;
+        $input .= "\n### Throughput, $scope corpus\n";
+        foreach (['Decode (objects)', 'Encode', 'Validate'] as $operation) {
+            $input .= "| $operation | $size | 10 MB/s | 5 MB/s | 2x |\n";
+        }
+    }
+    $html = renderBaseline($input);
+    preg_match('/on a (\d+)-file corpus/', $html, $total);
+    preg_match('/<strong>Corpus:<\/strong> (\d+) files &mdash; (\d+) large \(([^)]+)\) \+ (\d+) small \(([^)]+)\)/', $html, $summary);
+    $actual = array_slice($summary, 1);
+    if (($total[1] ?? null) !== (string)($large + $small)
+            || $actual !== [(string)($large + $small), (string)$large, $largeSize,
+                (string)$small, $smallSize ?? 'unreported size']) {
+        throw new RuntimeException('incorrect corpus counts or aggregate sizes');
+    }
+    preg_match_all('/Aggregate on the ([^<]+) large corpus\./', $html, $heroes);
+    preg_match_all('/\(([^()]+) large corpus aggregate\)/', $html, $takeaways);
+    if ($heroes[1] !== array_fill(0, 3, $largeSize)
+            || $takeaways[1] !== array_fill(0, 3, $largeSize)) {
+        throw new RuntimeException('incorrect hero or takeaway corpus sizes');
+    }
+}
+echo "3 custom-corpus fixtures preserve counts and aggregate sizes\n";
