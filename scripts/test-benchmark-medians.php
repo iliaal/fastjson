@@ -84,7 +84,7 @@ foreach ($validEncodeInputs as $json) {
 $invalidEncodeInputs = ['1e400', '-1e400', '[1e400]', '[-1e400]',
     '{"nested":[0,{"overflow":1e400}]}', '{"nested":[0,{"overflow":-1e400}]}'];
 foreach ($invalidEncodeInputs as $json) {
-    foreach ([null => 'fastjson', 'accept' => 'ext/json'] as $override => $label) {
+    foreach (['' => 'fastjson', 'accept' => 'ext/json'] as $override => $label) {
         // Let the first encoder succeed to exercise rejection by the second.
         $GLOBALS['encode_probe_override'] = $override;
         try {
