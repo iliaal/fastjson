@@ -126,11 +126,19 @@ function fastjson_version(): string {}
  * where json_encode() emits "1.0e+17", and 1.0e-5 as "0.00001" vs
  * "1.0e-5". See CHANGELOG.md for the full divergence list.
  *
- * The $depth parameter caps recursion. On overflow the function
- * returns false with fastjson_last_error() == FASTJSON_ERROR_RECURSION
- * (for cyclic references) or FASTJSON_ERROR_DEPTH (for plain depth
- * overflow). $depth is validated lazily on the first container, so
- * fastjson_encode($x, 0, 0) returns false rather than raising.
+ * The $depth parameter limits container nesting. Without
+ * JSON_PARTIAL_OUTPUT_ON_ERROR or JSON_THROW_ON_ERROR, depth and recursion
+ * errors return false and set fastjson_last_error() to FASTJSON_ERROR_DEPTH
+ * or FASTJSON_ERROR_RECURSION, respectively. JSON_THROW_ON_ERROR instead
+ * throws JsonException while preserving the previous error state.
+ * JSON_PARTIAL_OUTPUT_ON_ERROR takes precedence: it substitutes null for an
+ * over-depth subtree or recursive reference and records the error. Unlike
+ * ext/json, fastjson truncates over-depth subtrees in partial output.
+ *
+ * The depth limit is checked when encoding a container, not a scalar.
+ * For example, fastjson_encode([], 0, 0) returns false without raising
+ * ValueError, while fastjson_encode(42, 0, 0) returns "42". JsonSerializable
+ * results and backed enum values use their serialized value's container depth.
  */
 function fastjson_encode(mixed $value, int $flags = 0, int $depth = 512): string|false {}
 

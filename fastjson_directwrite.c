@@ -276,7 +276,7 @@ static bool dw_emit_double(fastjson_dw_ctx *ctx, double d)
         return false;
     }
     /* Non-default serialize_precision: ext/json formats every double with
-     * zend_gcvt(precision), so the long shortcut and yyjson shortest
+     * php_gcvt(precision), so the long shortcut and yyjson shortest
      * round-trip below would both diverge. Mirror php_json_encode_double. */
     /* Userland callbacks can change this setting during an encode. */
     int precision = (int)PG(serialize_precision);
