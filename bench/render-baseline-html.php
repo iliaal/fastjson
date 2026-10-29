@@ -52,6 +52,20 @@ function agg_find($tables, $subsection, $op) {
     return null;
 }
 
+/* Count each input file once, even though several operations measure it. */
+function corpus_count($tables, $section) {
+    $files = [];
+    foreach ($tables as $key => $rows) {
+        if (strpos($key, $section . '||') !== 0) continue;
+        foreach ($rows as $row) $files[$row[0]] = true;
+    }
+    return count($files);
+}
+
+function corpus_size($tables, $section, $op = 'Decode (objects)') {
+    return agg_find($tables, $section, $op)[1] ?? 'unreported size';
+}
+
 /* Hero: both bars and tick labels use the same rounded-up axis maximum. */
 function hero($tables, $op, $captionExtra = '') {
     $r = agg_find($tables, 'Throughput, large corpus', $op) ?? [];
@@ -77,7 +91,7 @@ function hero($tables, $op, $captionExtra = '') {
     <div></div>
   </div>
   <div class="caption">
-    Aggregate on the 14.81&nbsp;MB large corpus. fastjson is <strong class="up" style="color:var(--c-up)"><?= e($sp) ?></strong> ext/json.<?= $captionExtra ? ' ' . $captionExtra : '' ?>
+    Aggregate on the <?= e(corpus_size($tables, 'Throughput, large corpus', $op)) ?> large corpus. fastjson is <strong class="up" style="color:var(--c-up)"><?= e($sp) ?></strong> ext/json.<?= $captionExtra ? ' ' . $captionExtra : '' ?>
   </div>
 </div>
 <?php return ob_get_clean();
@@ -168,6 +182,8 @@ function mem_card($tables, $op, $title) {
 <?php return ob_get_clean();
 }
 
+$largeCount = corpus_count($tables, 'Throughput, large corpus');
+$smallCount = corpus_count($tables, 'Throughput, small corpus');
 $fastVer = $meta['fast'] ?? '';
 echo '<!doctype html>' . "\n";
 echo '<html lang="en">' . "\n<head>\n";
@@ -184,14 +200,14 @@ foreach (['Decode (objects)', 'Encode', 'Validate'] as $op) {
 ?>
 <h1>fastjson <?= e($fastVer) ?> <span class="pill">benchmark baseline</span></h1>
 <p class="lede">
-A PHP extension that wraps <a href="https://github.com/ibireme/yyjson">yyjson<?= !empty($meta['yyjson']) ? ' ' . e($meta['yyjson']) : '' ?></a> behind a <code>fastjson_*</code> API mirroring ext/json. Side-by-side throughput, memory, and per-call latency against stock <code>ext/json</code> on a 21-file corpus, both hosted by <?= e($meta['php'] ?? '') ?>.
+A PHP extension that wraps <a href="https://github.com/ibireme/yyjson">yyjson<?= !empty($meta['yyjson']) ? ' ' . e($meta['yyjson']) : '' ?></a> behind a <code>fastjson_*</code> API mirroring ext/json. Side-by-side throughput, memory, and per-call latency against stock <code>ext/json</code> on a <?= $largeCount + $smallCount ?>-file corpus, both hosted by <?= e($meta['php'] ?? '') ?>.
 </p>
 
 <p class="meta">
 <span><strong>Hardware:</strong> <?= e($meta['cpu'] ?? '') ?></span>
 <span><strong>Build:</strong> release, both PHP and extension <code>-O2</code></span>
 <span><strong>Iterations:</strong> <?= e($meta['iter'] ?? '') ?> per case, slowest 10% dropped</span>
-<span><strong>Corpus:</strong> 21 files &mdash; 15 large (14.81&nbsp;MB) + 6 small (64.6&nbsp;KB), from simdjson_php's <code>jsonexamples</code></span>
+<span><strong>Corpus:</strong> <?= $largeCount + $smallCount ?> files &mdash; <?= $largeCount ?> large (<?= e(corpus_size($tables, 'Throughput, large corpus')) ?>) + <?= $smallCount ?> small (<?= e(corpus_size($tables, 'Throughput, small corpus')) ?>)</span>
 </p>
 
 <div class="takeaway-grid">
@@ -202,7 +218,7 @@ A PHP extension that wraps <a href="https://github.com/ibireme/yyjson">yyjson<?=
   <div class="takeaway">
     <div class="num"><?= e($sp) ?></div>
     <h3><?= $c[1] ?></h3>
-    <p>vs ext/json, <?= $c[2] ?> (14.81&nbsp;MB large corpus aggregate).</p>
+    <p>vs ext/json, <?= $c[2] ?> (<?= e(corpus_size($tables, 'Throughput, large corpus', $c[0])) ?> large corpus aggregate).</p>
   </div>
 <?php endforeach; ?>
 </div>
