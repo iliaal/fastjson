@@ -372,9 +372,12 @@ function fastjson_merge_patch(string $target, string $patch, ?bool $associative 
 function fastjson_validate(string $json, int $depth = 512, int $flags = 0): bool {}
 
 /**
- * Returns the JSON_ERROR_* code for the most recent fastjson_*
- * call in this request, or JSON_ERROR_NONE (0) if the last call
- * succeeded. Values and FASTJSON_ERROR_* aliases match ext/json's constants.
+ * Returns the currently recorded fastjson JSON_ERROR_* code in this request,
+ * or JSON_ERROR_NONE (0) when no error is recorded. A successful call need
+ * not clear a prior error: throw-mode encoding and decoding preserve it,
+ * while partial-output encoding can return JSON and record an error.
+ * See each operation's flag and error-handling contract.
+ * Values and FASTJSON_ERROR_* aliases match ext/json's constants.
  * yyjson does not distinguish every ext/json parse category: raw control
  * characters and invalid UTF-16 surrogate escapes are currently reported as
  * FASTJSON_ERROR_UTF8 rather than CTRL_CHAR or UTF16.
@@ -382,17 +385,18 @@ function fastjson_validate(string $json, int $depth = 512, int $flags = 0): bool
 function fastjson_last_error(): int {}
 
 /**
- * Returns the human-readable error message for the most recent
- * fastjson_* call in this request, or "No error" if no error is
- * recorded. The message is yyjson's diagnostic, which is more
- * specific than ext/json's static error strings.
+ * Returns the human-readable message for the currently recorded fastjson
+ * error in this request, or "No error" if no error is recorded. Parse
+ * diagnostics from yyjson can be more specific than ext/json's static
+ * error strings.
  */
 function fastjson_last_error_msg(): string {}
 
 /**
- * Returns the byte offset into the input at which the most recent
- * fastjson_* parse error occurred, or -1 when the last call succeeded or
- * the error has no source position (encode, file I/O, or depth errors).
+ * Returns the byte offset into the input for the currently recorded
+ * fastjson parse error, or -1 when no error is recorded or the error has
+ * no source position (encode, file I/O, or depth errors). Preserving a
+ * prior error state also preserves its source position.
  *
  * The offset indexes the raw input bytes; pair it with
  * fastjson_last_error_info() for the 1-based line and column.
@@ -400,7 +404,7 @@ function fastjson_last_error_msg(): string {}
 function fastjson_last_error_pos(): int {}
 
 /**
- * Returns the most recent fastjson_* error as a structured array, folding
+ * Returns the currently recorded fastjson error as a structured array, folding
  * fastjson_last_error(), fastjson_last_error_msg(), and
  * fastjson_last_error_pos() into one call:
  *
