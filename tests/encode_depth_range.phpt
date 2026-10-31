@@ -77,4 +77,4 @@ ValueError: fastjson_file_encode(): Argument #4 ($depth) must be between -214748
 bool(false)
 ValueError: fastjson_file_encode(): Argument #4 ($depth) must be between -2147483648 and 2147483647
 string(4) "keep"
-json_encode: %s
+json_encode: %r(same message|no range check in this PHP)%r
