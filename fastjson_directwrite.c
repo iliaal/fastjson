@@ -414,13 +414,7 @@ static zend_never_inline bool dw_emit_array(fastjson_dw_ctx *ctx, HashTable *ht,
         return dw_partial_or_fail(ctx, FASTJSON_ERROR_DEPTH,
             "Maximum stack depth exceeded", false);
     }
-    /* remaining_depth > INT_MAX means the caller passed a $depth above
-     * INT_MAX. ext/json stores max_depth in an int, so such a depth wraps
-     * non-positive and every container trips JSON_ERROR_DEPTH; match that
-     * (and keep the C-stack cap meaningful where zend_call_stack_overflowed
-     * is unavailable). Scalars never reach here, so a huge $depth on a
-     * scalar still encodes cleanly, as in ext/json. */
-    if (remaining_depth <= 0 || remaining_depth > INT_MAX) {
+    if (remaining_depth <= 0) {
         return dw_partial_or_fail(ctx, FASTJSON_ERROR_DEPTH,
             "Maximum stack depth exceeded", false);
     }
@@ -548,7 +542,7 @@ static bool dw_emit_jsonserializable(fastjson_dw_ctx *ctx, zval *zv,
     if (Z_TYPE(retval) == IS_OBJECT && Z_OBJ(retval) == obj) {
         dw_json_guard_unprotect(&guard);
         bool ok;
-        if (remaining_depth <= 0 || remaining_depth > INT_MAX) {
+        if (remaining_depth <= 0) {
             ok = dw_partial_or_fail(ctx, FASTJSON_ERROR_DEPTH,
                 "Maximum stack depth exceeded", false);
         } else {
@@ -589,11 +583,9 @@ static bool dw_emit_object(fastjson_dw_ctx *ctx, zval *zv,
         return dw_encode_zval(ctx, backing, remaining_depth);
     }
 
-    /* See dw_emit_array: a $depth above INT_MAX wraps non-positive in
-     * ext/json and trips JSON_ERROR_DEPTH on every container; match it.
-     * JsonSerializable and backed enums dispatch first because scalar
+    /* JsonSerializable and backed enums dispatch first because scalar
      * results do not add a container level. */
-    if (remaining_depth <= 0 || remaining_depth > INT_MAX) {
+    if (remaining_depth <= 0) {
         return dw_partial_or_fail(ctx, FASTJSON_ERROR_DEPTH,
             "Maximum stack depth exceeded", false);
     }
@@ -793,7 +785,7 @@ static bool dw_discard_array(fastjson_dw_ctx *ctx, HashTable *ht,
         return dw_partial_or_fail(ctx, FASTJSON_ERROR_DEPTH,
             "Maximum stack depth exceeded", false);
     }
-    if (remaining_depth <= 0 || remaining_depth > INT_MAX) {
+    if (remaining_depth <= 0) {
         return dw_partial_or_fail(ctx, FASTJSON_ERROR_DEPTH,
             "Maximum stack depth exceeded", false);
     }
@@ -927,7 +919,7 @@ static bool dw_discard_object(fastjson_dw_ctx *ctx, zval *zv,
         zval *backing = zend_enum_fetch_case_value(Z_OBJ_P(zv));
         return dw_discard_zval(ctx, backing, remaining_depth);
     }
-    if (remaining_depth <= 0 || remaining_depth > INT_MAX) {
+    if (remaining_depth <= 0) {
         return dw_partial_or_fail(ctx, FASTJSON_ERROR_DEPTH,
             "Maximum stack depth exceeded", false);
     }
@@ -1100,6 +1092,8 @@ zend_string *fastjson_directwrite_encode(zval *value, zend_long flags,
                                          zend_long depth,
                                          fastjson_error_state *error_state)
 {
+    /* Entry points reject a $depth outside the int range with ValueError. */
+    ZEND_ASSERT(!ZEND_LONG_EXCEEDS_INT(depth));
     switch (Z_TYPE_P(value)) {
     case IS_NULL:
         fastjson_error_state_clear(error_state);

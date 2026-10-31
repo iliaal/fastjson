@@ -139,6 +139,10 @@ function fastjson_version(): string {}
  * For example, fastjson_encode([], 0, 0) returns false without raising
  * ValueError, while fastjson_encode(42, 0, 0) returns "42". JsonSerializable
  * results and backed enum values use their serialized value's container depth.
+ * A $depth outside the int range raises ValueError before anything is
+ * encoded, for scalars too, and leaves the recorded error unchanged. This
+ * matches the range check json_encode() gained in php-src GH-23589 and
+ * applies on every PHP version fastjson supports.
  */
 function fastjson_encode(mixed $value, int $flags = 0, int $depth = 512): string|false {}
 
