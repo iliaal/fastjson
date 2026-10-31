@@ -66,6 +66,12 @@ function corpus_size($tables, $section, $op = 'Decode (objects)') {
     return agg_find($tables, $section, $op)[1] ?? 'unreported size';
 }
 
+/* Keep measured numbers and units together without changing fallback text. */
+function corpus_size_html($tables, $section, $op = 'Decode (objects)') {
+    return preg_replace('/(?<=\d) (?=(?:B|KB|MB|GB|TB)$)/', '&nbsp;',
+        e(corpus_size($tables, $section, $op)));
+}
+
 /* Hero: both bars and tick labels use the same rounded-up axis maximum. */
 function hero($tables, $op, $captionExtra = '') {
     $r = agg_find($tables, 'Throughput, large corpus', $op) ?? [];
@@ -91,7 +97,7 @@ function hero($tables, $op, $captionExtra = '') {
     <div></div>
   </div>
   <div class="caption">
-    Aggregate on the <?= e(corpus_size($tables, 'Throughput, large corpus', $op)) ?> large corpus. fastjson is <strong class="up" style="color:var(--c-up)"><?= e($sp) ?></strong> ext/json.<?= $captionExtra ? ' ' . $captionExtra : '' ?>
+    Aggregate on the <?= corpus_size_html($tables, 'Throughput, large corpus', $op) ?> large corpus. fastjson is <strong class="up" style="color:var(--c-up)"><?= e($sp) ?></strong> ext/json.<?= $captionExtra ? ' ' . $captionExtra : '' ?>
   </div>
 </div>
 <?php return ob_get_clean();
@@ -207,7 +213,7 @@ A PHP extension that wraps <a href="https://github.com/ibireme/yyjson">yyjson<?=
 <span><strong>Hardware:</strong> <?= e($meta['cpu'] ?? '') ?></span>
 <span><strong>Build:</strong> release, both PHP and extension <code>-O2</code></span>
 <span><strong>Iterations:</strong> <?= e($meta['iter'] ?? '') ?> per case, slowest 10% dropped</span>
-<span><strong>Corpus:</strong> <?= $largeCount + $smallCount ?> files &mdash; <?= $largeCount ?> large (<?= e(corpus_size($tables, 'Throughput, large corpus')) ?>) + <?= $smallCount ?> small (<?= e(corpus_size($tables, 'Throughput, small corpus')) ?>)</span>
+<span><strong>Corpus:</strong> <?= $largeCount + $smallCount ?> files &mdash; <?= $largeCount ?> large (<?= corpus_size_html($tables, 'Throughput, large corpus') ?>) + <?= $smallCount ?> small (<?= corpus_size_html($tables, 'Throughput, small corpus') ?>)</span>
 </p>
 
 <div class="takeaway-grid">
@@ -218,7 +224,7 @@ A PHP extension that wraps <a href="https://github.com/ibireme/yyjson">yyjson<?=
   <div class="takeaway">
     <div class="num"><?= e($sp) ?></div>
     <h3><?= $c[1] ?></h3>
-    <p>vs ext/json, <?= $c[2] ?> (<?= e(corpus_size($tables, 'Throughput, large corpus', $c[0])) ?> large corpus aggregate).</p>
+    <p>vs ext/json, <?= $c[2] ?> (<?= corpus_size_html($tables, 'Throughput, large corpus', $c[0]) ?> large corpus aggregate).</p>
   </div>
 <?php endforeach; ?>
 </div>
