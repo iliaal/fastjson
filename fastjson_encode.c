@@ -56,6 +56,20 @@ static zend_string *fastjson_do_encode(
     return NULL;
 }
 
+/* The encoder stores $depth as an int, so a wider value would silently
+ * narrow to an unrelated limit. Rejected before any error state is touched,
+ * matching json_encode(). In-range values, including 0 and negatives, keep
+ * failing at the first container instead. */
+static bool fastjson_encode_depth_in_range(zend_long depth, uint32_t argno)
+{
+    if (UNEXPECTED(ZEND_LONG_EXCEEDS_INT(depth))) {
+        zend_argument_value_error(argno, "must be between %d and %d",
+                                  INT_MIN, INT_MAX);
+        return false;
+    }
+    return true;
+}
+
 PHP_FUNCTION(fastjson_encode)
 {
     zval *value;
@@ -69,7 +83,9 @@ PHP_FUNCTION(fastjson_encode)
         Z_PARAM_LONG(depth)
     ZEND_PARSE_PARAMETERS_END();
 
-    /* Match ext/json: validate depth at the first container, without ValueError. */
+    if (!fastjson_encode_depth_in_range(depth, 3)) {
+        RETURN_THROWS();
+    }
 
     bool throw_mode = (flags & FASTJSON_ENCODE_THROW_ON_ERROR) != 0
         && !(flags & FASTJSON_ENCODE_PARTIAL_OUTPUT_ON_ERROR);
@@ -104,6 +120,10 @@ PHP_FUNCTION(fastjson_file_encode)
         Z_PARAM_LONG(flags)
         Z_PARAM_LONG(depth)
     ZEND_PARSE_PARAMETERS_END();
+
+    if (!fastjson_encode_depth_in_range(depth, 4)) {
+        RETURN_THROWS();
+    }
 
     bool throw_mode = (flags & FASTJSON_ENCODE_THROW_ON_ERROR) != 0
         && !(flags & FASTJSON_ENCODE_PARTIAL_OUTPUT_ON_ERROR);
