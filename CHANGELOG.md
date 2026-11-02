@@ -8,6 +8,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Remove the unused internal unlimited JSON Pointer resolver and simplify the shared depth-check path. PHP APIs and pointer limits are unchanged.
+
 - `fastjson_encode()` and `fastjson_file_encode()` throw `ValueError` when `$depth` is outside the int range, on every supported PHP version, matching the `json_encode()` check added in php-src GH-23589. Previously such a depth made every container fail with a depth error while a scalar still encoded.
 
 ## [0.10.2] - 2026-10-26
