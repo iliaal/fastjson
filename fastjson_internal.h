@@ -143,10 +143,6 @@ bool fastjson_pointer_plan_init(yyjson_val *root, const char *pointer,
                                 fastjson_pointer_plan *plan,
                                 fj_splice_status *status);
 void fastjson_pointer_plan_destroy(fastjson_pointer_plan *plan);
-fj_splice_status fastjson_pointer_resolve(yyjson_val *root,
-                                          const char *pointer,
-                                          size_t pointer_len,
-                                          yyjson_val **target);
 
 zend_string *fastjson_imut_pointer_set_write(yyjson_val *root,
                                              const fastjson_pointer_plan *plan,

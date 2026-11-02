@@ -246,12 +246,11 @@ bool fastjson_utf8_well_formed(const char *s, size_t len);
 /* Bound adversarial pointer walks even without a caller-supplied depth limit. */
 #define FASTJSON_POINTER_MAX_SEGMENTS 4096
 
-/* Like fastjson_pointer_resolve, but also fails with FJ_SPLICE_DEPTH_FAIL
- * when the pointer has depth_limit or more segments (the gate
- * fastjson_pointer_plan_init applies). Both enforce
- * FASTJSON_POINTER_MAX_SEGMENTS. pointer_get passes $depth; pointer_exists
- * passes 0 to apply only the cap. Keys use decode-side UTF-8 flags when
- * matching segments. */
+/* Resolve a pointer, failing with FJ_SPLICE_DEPTH_FAIL when a nonzero
+ * depth_limit is reached (the gate fastjson_pointer_plan_init applies).
+ * Always enforce FASTJSON_POINTER_MAX_SEGMENTS. pointer_get passes $depth;
+ * pointer_exists passes 0 to apply only the cap. Keys use decode-side UTF-8
+ * flags when matching segments. */
 fj_splice_status fastjson_pointer_resolve_limited(yyjson_val *root,
                                                   const char *pointer,
                                                   size_t pointer_len,
