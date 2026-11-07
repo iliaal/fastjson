@@ -275,9 +275,8 @@ char *fastjson_sanitize_utf8(const char *s, size_t len, zend_long flags,
                 adv = (i + 1 >= len || FJ_UTF8_LEAD((unsigned char)s[i + 1])) ? 1 : 2;
                 good = false;
             } else {
-                unsigned int cp = ((c & 0x1f) << 6) | ((unsigned char)s[i + 1] & 0x3f);
-                if (cp < 0x80) { adv = 2; good = false; } /* non-shortest */
-                else           { adv = 2; good = true; }
+                /* C2..DF followed by a trail byte is already shortest-form. */
+                adv = 2; good = true;
             }
         } else if (c < 0xF0) {
             /* 3-byte sequence. */
@@ -370,8 +369,7 @@ bool fastjson_utf8_well_formed(const char *s, size_t len)
         } else if (c < 0xE0) {
             if (i + 1 >= len) return false;
             if (!FJ_UTF8_TRAIL((unsigned char)s[i + 1])) return false;
-            unsigned int cp = ((c & 0x1f) << 6) | ((unsigned char)s[i + 1] & 0x3f);
-            if (cp < 0x80) return false;                     /* non-shortest */
+            /* C2..DF followed by a trail byte is already shortest-form. */
             i += 2;
         } else if (c < 0xF0) {
             if (i + 3 > len) return false;
