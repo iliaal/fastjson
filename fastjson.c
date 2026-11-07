@@ -587,9 +587,14 @@ fj_string_size_status fastjson_json_string_size(const char *s, size_t len,
         return FJ_STRING_SIZE_OK;
     }
 
-    size_t size = 2; /* surrounding quotes */
+    /* The ASCII scan already proved that this prefix needs no escaping.
+     * Count it directly instead of measuring the same bytes again. */
+    if (UNEXPECTED(prefix_len > ZSTR_MAX_LEN - 2)) {
+        return FJ_STRING_SIZE_TOO_LARGE;
+    }
+    size_t size = prefix_len + 2; /* prefix and surrounding quotes */
     bool copyable = true;
-    size_t i = 0;
+    size_t i = prefix_len;
     while (i < len) {
         unsigned char c = (unsigned char)s[i];
         size_t add;

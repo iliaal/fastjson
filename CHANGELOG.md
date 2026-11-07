@@ -6,6 +6,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Performance
+
+- Reuse the verified ASCII prefix when measuring exact output sizes for large JSON strings, avoiding a redundant byte-by-byte scan before a late escape or UTF-8 character.
+
 ### Changed
 
 - Remove the unused internal unlimited JSON Pointer resolver and simplify the shared depth-check path. PHP APIs and pointer limits are unchanged.
