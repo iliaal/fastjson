@@ -35,7 +35,7 @@ final class CallbackCloseStream {
                 self::$attempted = true;
                 self::$active = true;
                 try {
-                    pclose($stream);
+                    @pclose($stream);
                 } finally {
                     self::$active = false;
                 }
