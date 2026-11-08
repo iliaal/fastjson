@@ -101,10 +101,11 @@ $ascii256k = str_repeat('a', 256 * 1024);
 $ascii512k = str_repeat('a', 512 * 1024);
 $asciiBelow1m = str_repeat('a', 1024 * 1024 - 1);
 $ascii1m = str_repeat('a', 1024 * 1024);
-$escaped128k = str_repeat('"\\\n', intdiv(128 * 1024, 3));
-$escaped256k = str_repeat('"\\\n', intdiv(256 * 1024, 3));
-$escaped512k = str_repeat('"\\\n', intdiv(512 * 1024, 3));
-$escaped1m = str_repeat('"\\\n', intdiv(1024 * 1024, 3));
+// Repeat whole three-byte groups: quote, backslash, newline.
+$escaped128k = str_repeat("\"\\\n", intdiv(128 * 1024, 3));
+$escaped256k = str_repeat("\"\\\n", intdiv(256 * 1024, 3));
+$escaped512k = str_repeat("\"\\\n", intdiv(512 * 1024, 3));
+$escaped1m = str_repeat("\"\\\n", intdiv(1024 * 1024, 3));
 $lateQuote256k = str_repeat('a', 256 * 1024 - 1) . '"';
 $lateQuote512k = str_repeat('a', 512 * 1024 - 1) . '"';
 $unicode128k = str_repeat("é", intdiv(128 * 1024, 2));
