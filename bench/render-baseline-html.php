@@ -142,7 +142,7 @@ function table_small($tables, $op) {
     <th>File</th><th>Size</th>
     <th>ext/json<span class="sub">MB/s</span></th>
     <th>fastjson<span class="sub">MB/s</span></th>
-    <th>fast/call<span class="sub">ns</span></th>
+    <th>fast/call<span class="sub">latency</span></th>
     <th>fastjson vs<span class="sub">ext/json</span></th>
   </tr></thead>
   <tbody>
