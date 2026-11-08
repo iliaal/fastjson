@@ -7,7 +7,11 @@ use \RuntimeException;
 use \Throwable;
 
 function extension_loaded(string $name): bool { return true; }
-function hrtime(bool $number = false): never { throw new RuntimeException('unexpected timing'); }
+function hrtime(bool $number = false): int
+{
+    if (!$number || empty($GLOBALS['clock'])) throw new RuntimeException('unexpected timing');
+    return array_shift($GLOBALS['clock']);
+}
 function memory_reset_peak_usage(): never { throw new RuntimeException('unexpected memory measurement'); }
 function result(): mixed
 {
@@ -110,3 +114,35 @@ if (startup(-1) !== [0, "preflight passed\n", '']) {
     throw new RuntimeException('successful startup or oracle cleanup failed');
 }
 echo "successful startup and oracle cleanup passed\n";
+
+// Exercise the actual timing helper with unsorted durations, ties and both
+// median parities. Preserve warmup calls and normalize every statistic by loops.
+$timingCases = 0;
+foreach ([[30, 10, 20], [40, 10, 30, 20], [10, 10, 10], [9, 1, 1, 9],
+    [80, 20, 50, 10, 90, 40, 60, 30, 70]] as $durations) {
+    foreach ([1, 3, 8] as $loops) {
+        $GLOBALS['clock'] = [];
+        foreach ($durations as $duration) {
+            $GLOBALS['clock'][] = 1000;
+            $GLOBALS['clock'][] = 1000 + $duration;
+        }
+        $calls = 0;
+        $actual = bench_time(count($durations), $loops,
+            static function () use (&$calls): void { $calls++; });
+        $sorted = $durations;
+        sort($sorted, SORT_NUMERIC);
+        $last = count($sorted) - 1;
+        $expected = [
+            'median_ns' => ($sorted[intdiv($last, 2)] + $sorted[intdiv($last + 1, 2)]) / 2.0 / $loops,
+            'best_ns' => $sorted[0] / $loops,
+            'worst_ns' => $sorted[$last] / $loops,
+        ];
+        if ($actual !== $expected || $calls !== min(5, $loops) + count($durations) * $loops
+            || $GLOBALS['clock'] !== []) {
+            throw new RuntimeException('incorrect timing statistics or measured calls');
+        }
+        $timingCases++;
+    }
+}
+unset($GLOBALS['clock']);
+echo "$timingCases deterministic timing cases passed\n";
