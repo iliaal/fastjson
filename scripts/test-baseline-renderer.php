@@ -291,3 +291,44 @@ foreach ([
     }
 }
 echo "4 custom-corpus fixtures preserve counts, escaped sizes and non-breaking units\n";
+
+// run.php's fmt_ns() chooses ns, µs or ms. Keep each value's own unit
+// rather than labeling the whole column as nanoseconds.
+function checkLatencyHeaders(string $html, string $label): void
+{
+    preg_match_all('/<th>fast\/call<span class="sub">([^<]+)<\/span><\/th>/', $html, $headers);
+    if ($headers[1] !== array_fill(0, 3, 'latency')) {
+        throw new RuntimeException("incorrect per-call latency headers in $label");
+    }
+}
+
+checkLatencyHeaders($expectedHtml, 'rendered page');
+checkLatencyHeaders(file_get_contents($root . '/docs/baseline.html'), 'historical page');
+
+foreach (['999 ns', '1.0 µs', '999.9 µs', '1.00 ms', '1,234.57 ms'] as $latency) {
+    $input = "- PHP fixture\n- fastjson fixture\n\n## Throughput, small corpus\n";
+    foreach (['Decode (objects)', 'Encode', 'Validate'] as $operation) {
+        $input .= "\n### $operation\n"
+            . "| File | Size | fastjson | ext/json | fast/call | ext/call | speedup |\n"
+            . "| latency.json | 2 B | 2 MB/s | 1 MB/s | $latency | 9.9 ms | 2.00x |\n";
+    }
+    foreach ([$input, withSimdjsonColumns($input, 'small')] as $layout) {
+        $html = renderBaseline($layout);
+        checkLatencyHeaders($html, $latency);
+        // Each small-corpus table must retain its fastjson latency, including
+        // the decimal/grouping characters and unit, not ext/json's latency.
+        preg_match_all('/<table class="matrix">(.*?)<\/table>/s', $html, $tables);
+        $smallTables = array_values(array_filter($tables[1],
+            static fn(string $table): bool => str_contains($table, '<th>fast/call')));
+        if (count($smallTables) !== 3) {
+            throw new RuntimeException('missing small-corpus latency tables');
+        }
+        foreach ($smallTables as $table) {
+            if (substr_count($table, "<td>$latency</td>") !== 1
+                    || str_contains($table, '<td>9.9 ms</td>')) {
+                throw new RuntimeException("changed per-call latency: $latency");
+            }
+        }
+    }
+}
+echo "5 mixed-unit latency fixtures, with and without simdjson, and all historical headers passed\n";
