@@ -9,6 +9,13 @@ $end = strpos($source, '$selectedCases = [];');
 if ($start === false || $end === false) throw new RuntimeException('missing fixtures');
 eval(substr($source, $start, $end - $start));
 $names = array_keys($cases);
+// PHP 8.6 appends a source location to ext/json syntax errors. Compare the
+// complete runtime diagnostic rather than fixing one version's wording.
+try {
+    json_decode('wrong', false, 512, JSON_THROW_ON_ERROR);
+} catch (JsonException $error) {
+    $invalidJsonReason = $error->getMessage();
+}
 
 $stub = <<<'STUB'
 <?php
@@ -59,7 +66,7 @@ try {
         // Select every case: a rejection in the final case must still precede
         // every timing probe, rather than merely skipping that case's timing.
         [$status, $out, $err] = run($script, $harness, $name, '//', 'failure');
-        $reason = ($cases[$name]['json'] ?? false) ? 'Syntax error' : 'unexpected result';
+        $reason = ($cases[$name]['json'] ?? false) ? $invalidJsonReason : 'unexpected result';
         if ($status !== 1 || $out !== '' || $err !== "cannot benchmark $name: $reason\n") {
             throw new RuntimeException("bad startup for $name: $status/$out/$err");
         }
