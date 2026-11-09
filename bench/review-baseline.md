@@ -13,6 +13,14 @@ Absolute nanoseconds are machine-specific and are not a pass/fail gate. The
 column that matters is the delta against the previous release, measured in the
 same session (see bench/README.md).
 
+The four `encode_escaped_*` rows below are historical: their single-quoted
+fixture repeated quote, backslash, backslash, and literal `n`, not the intended
+three-byte quote/backslash/newline group. The 128k, 256k, 512k, and 1m cases
+therefore used 174,760, 349,524, 699,048, and 1,398,100 input bytes. The corrected
+harness uses 131,070, 262,143, 524,286, and 1,048,575 bytes (whole three-byte
+groups). These recorded timings are unchanged and must not be compared directly
+with corrected-case timings; rerun both builds with the same harness.
+
 | case | 0.6.0 (ns) | current (ns) | delta |
 |---|---:|---:|---:|
 | `merge_patch_2k` | 6,233,647 | 337,987 | -94.6% |
