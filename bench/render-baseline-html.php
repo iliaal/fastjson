@@ -77,6 +77,7 @@ function hero($tables, $op, $captionExtra = '') {
     $r = agg_find($tables, 'Throughput, large corpus', $op) ?? [];
     // agg row: [Operation, Bytes, fastjson, ext/json, speedup]
     $fast = num($r[2] ?? '0'); $ext = num($r[3] ?? '0'); $sp = $r[4] ?? '';
+    $direction = $fast >= $ext ? 'up' : 'down';
     $max = max($fast, $ext, 1);
     $tick = (int) ceil($max / 500) * 500;
     ob_start(); ?>
@@ -97,7 +98,7 @@ function hero($tables, $op, $captionExtra = '') {
     <div></div>
   </div>
   <div class="caption">
-    Aggregate on the <?= corpus_size_html($tables, 'Throughput, large corpus', $op) ?> large corpus. fastjson is <strong class="up" style="color:var(--c-up)"><?= e($sp) ?></strong> ext/json.<?= $captionExtra ? ' ' . $captionExtra : '' ?>
+    Aggregate on the <?= corpus_size_html($tables, 'Throughput, large corpus', $op) ?> large corpus. fastjson is <strong class="<?= $direction ?>" style="color:var(--c-<?= $direction ?>)"><?= e($sp) ?></strong> ext/json.<?= $captionExtra ? ' ' . $captionExtra : '' ?>
   </div>
 </div>
 <?php return ob_get_clean();
@@ -106,6 +107,7 @@ function hero($tables, $op, $captionExtra = '') {
 function table_large($tables, $op) {
     $rows = $tables["Throughput, large corpus||$op"] ?? [];
     $agg  = agg_find($tables, 'Throughput, large corpus', $op) ?? [];
+    $aggregateWin = num($agg[2] ?? '0') >= num($agg[3] ?? '0');
     ob_start(); ?>
 <table class="matrix">
   <thead><tr>
@@ -127,7 +129,7 @@ function table_large($tables, $op) {
   <tfoot>
     <tr><td>aggregate</td><td class="size"><?= e($agg[1] ?? '') ?></td>
         <td><?= mbps($agg[3] ?? '0') ?></td><td><?= mbps($agg[2] ?? '0') ?></td>
-        <td class="up"><?= e($agg[4] ?? '') ?></td></tr>
+        <td class="<?= $aggregateWin ? 'up' : 'down' ?>"><?= e($agg[4] ?? '') ?></td></tr>
   </tfoot>
 </table>
 <?php return ob_get_clean();
@@ -136,6 +138,7 @@ function table_large($tables, $op) {
 function table_small($tables, $op) {
     $rows = $tables["Throughput, small corpus||$op"] ?? [];
     $agg  = agg_find($tables, 'Throughput, small corpus', $op) ?? [];
+    $aggregateWin = num($agg[2] ?? '0') >= num($agg[3] ?? '0');
     ob_start(); ?>
 <table class="matrix">
   <thead><tr>
@@ -159,7 +162,7 @@ function table_small($tables, $op) {
   <tfoot>
     <tr><td>aggregate</td><td class="size"><?= e($agg[1] ?? '') ?></td>
         <td><?= mbps($agg[3] ?? '0') ?></td><td><?= mbps($agg[2] ?? '0') ?></td>
-        <td>&mdash;</td><td class="up"><?= e($agg[4] ?? '') ?></td></tr>
+        <td>&mdash;</td><td class="<?= $aggregateWin ? 'up' : 'down' ?>"><?= e($agg[4] ?? '') ?></td></tr>
   </tfoot>
 </table>
 <?php return ob_get_clean();

@@ -332,3 +332,60 @@ foreach (['999 ns', '1.0 µs', '999.9 µs', '1.00 ms', '1,234.57 ms'] as $latenc
     }
 }
 echo "5 mixed-unit latency fixtures, with and without simdjson, and all historical headers passed\n";
+
+// Aggregate highlights must follow the same numeric-throughput comparison as
+// per-file rows, not assume every custom benchmark is a fastjson win. Keep
+// ties in the existing "up" class, including displayed zero rates. The
+// near-tie fixtures deliberately share a rounded speedup label.
+$comparisons = [
+    ['50.0 MB/s', '100.0 MB/s', '0.50x', 'down'],
+    ['200.0 MB/s', '100.0 MB/s', '2.00x', 'up'],
+    ['100.0 MB/s', '100.0 MB/s', '1.00x', 'up'],
+    ['99.9 MB/s', '100.0 MB/s', '1.00x', 'down'],
+    ['100.1 MB/s', '100.0 MB/s', '1.00x', 'up'],
+    ['999.0 MB/s', '1,000.0 MB/s', '1.00x', 'down'],
+    ['1,000.0 MB/s', '999.0 MB/s', '1.00x', 'up'],
+    ['0.0 MB/s', '0.0 MB/s', '1.00x', 'up'],
+    ['0.0 MB/s', '1.0 MB/s', '0.00x', 'down'],
+    ['1.0 MB/s', '0.0 MB/s', 'infinite', 'up'],
+];
+$operations = ['Decode (objects)', 'Encode', 'Validate'];
+foreach (array_keys($comparisons) as $offset) {
+    $expectedHeroes = $expectedFooters = [];
+    $input = "- PHP fixture\n- fastjson fixture\n\n## Aggregate (sum across all files)\n";
+    foreach (['large', 'small'] as $sectionIndex => $scope) {
+        $input .= "\n### Throughput, $scope corpus\n"
+            . "| Operation | Bytes | fastjson | ext/json | speedup |\n";
+        foreach ($operations as $operationIndex => $operation) {
+            // Give operations and corpus sections different results so a
+            // reused Decode or large-corpus total cannot pass accidentally.
+            [$fast, $ext, $speedup, $direction] = $comparisons[
+                ($offset + $operationIndex + 3 * $sectionIndex) % count($comparisons)];
+            $input .= "| $operation | 2 B | $fast | $ext | $speedup |\n";
+            if ($scope === 'large') $expectedHeroes[] = [$direction, $direction, $speedup];
+            $expectedFooters[$operationIndex][$sectionIndex] = [$direction, $speedup];
+        }
+    }
+    foreach ([$input, withSimdjsonColumns($input, 'all')] as $layout) {
+        $html = renderBaseline($layout);
+        preg_match_all('/fastjson is <strong class="(up|down)" style="color:var\(--c-(up|down)\)">([^<]+)<\/strong>/',
+            $html, $heroes, PREG_SET_ORDER);
+        $actualHeroes = array_map(static fn(array $match): array => array_slice($match, 1), $heroes);
+        if ($actualHeroes !== $expectedHeroes) {
+            throw new RuntimeException("incorrect aggregate hero highlights: fixture $offset");
+        }
+        preg_match_all('/<tfoot>(.*?)<\/tfoot>/s', $html, $footers);
+        $actualFooters = [];
+        foreach ($footers[1] as $footer) {
+            if (!preg_match('/<td class="(up|down)">([^<]+)<\/td>/', $footer, $match)) {
+                throw new RuntimeException('missing aggregate footer highlight');
+            }
+            $actualFooters[] = array_slice($match, 1);
+        }
+        $orderedFooters = array_merge(...array_map('array_values', $expectedFooters));
+        if ($actualFooters !== $orderedFooters) {
+            throw new RuntimeException("incorrect aggregate footer highlights: fixture $offset");
+        }
+    }
+}
+echo "10 aggregate comparisons, with and without simdjson, preserve numeric win/loss highlights\n";
