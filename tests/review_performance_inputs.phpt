@@ -19,20 +19,20 @@ eval('namespace ' . __NAMESPACE__ . ';' . substr($source, $start, $end - $start)
 $pattern = chr(34) . chr(92) . chr(10); // quote, backslash, newline
 foreach (['128k' => 128 * 1024, '256k' => 256 * 1024,
           '512k' => 512 * 1024, '1m' => 1024 * 1024] as $suffix => $size) {
-    $input = $cases['encode_escaped_' . $suffix]();
+    $input = $cases['encode_escaped_' . $suffix]['fn']();
     $expected = str_repeat($pattern, intdiv($size, 3));
     echo "escaped_$suffix: ", $input === $expected ? 'ok' : 'wrong bytes or size', "\n";
     // Sibling inputs must keep their established payloads.
-    $input = $cases['encode_unicode_' . $suffix]();
+    $input = $cases['encode_unicode_' . $suffix]['fn']();
     echo "unicode_$suffix: ", $input === str_repeat("é", intdiv($size, 2)) ? 'ok' : 'wrong bytes or size', "\n";
-    $input = $cases['encode_ascii_' . $suffix]();
+    $input = $cases['encode_ascii_' . $suffix]['fn']();
     echo "ascii_$suffix: ", $input === str_repeat('a', $size) ? 'ok' : 'wrong bytes or size', "\n";
 }
 foreach (['256k' => 256 * 1024, '512k' => 512 * 1024] as $suffix => $size) {
-    $input = $cases['encode_late_quote_' . $suffix]();
+    $input = $cases['encode_late_quote_' . $suffix]['fn']();
     echo "late_quote_$suffix: ", $input === str_repeat('a', $size - 1) . '"' ? 'ok' : 'wrong bytes or size', "\n";
 }
-$input = $cases['encode_hex_32k']();
+$input = $cases['encode_hex_32k']['fn']();
 echo 'hex_32k: ', $input === str_repeat('<>&\'"', intdiv(32 * 1024, 5)) ? 'ok' : 'wrong bytes or size', "\n";
 ?>
 --EXPECT--

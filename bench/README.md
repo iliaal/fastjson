@@ -66,9 +66,12 @@ php -d extension=$(pwd)/modules/fastjson.so bench/review-performance.php \
     [samples] [target_ms] [/case-name-regex/]
 ```
 
-It validates each selected case's result before timing it and exits non-zero on
-an invalid or unmatched filter, so a case that starts returning `false` cannot
-read as a speedup.
+It checks every selected case once against its expected value and error state
+before timing any case, and exits non-zero on a mismatch, exception, or invalid
+or unmatched filter. JSON-returning cases preserve decoded values, scalar types
+and array/object shape; the two HEX-flag cases also require the requested escape
+spelling. These checks are outside the timing loop and do not validate every
+measured call; expected-value copies are discarded before timing.
 
 Compare builds within one session. Absolute numbers move with machine load;
 two runs minutes apart can differ by 40% on the same binary. Build the previous
