@@ -19,7 +19,8 @@ so it requires PHP 8.2+ with that function available. It checks every fixed
 case once against its expected value before printing the report or measuring
 anything, including the intentionally false invalid-JSON validation and scalar
 merge-patch result. A mismatch exits non-zero with the case name. JSON-returning
-cases are compared as decoded values, not byte-for-byte formatting. These
+cases are compared as decoded values, preserving scalar types and JSON
+array/object shape rather than byte-for-byte formatting. These
 preflight checks are outside the timing and memory measurements; they do not
 validate every measured call. The
 [review-performance harness](review-performance.php) uses neither this

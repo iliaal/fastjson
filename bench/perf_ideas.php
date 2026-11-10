@@ -157,19 +157,23 @@ function bench_peak(callable $fn): int
 }
 
 // Validate fixed fixtures before printing a report or entering measured calls.
-// JSON-returning cases are compared as values, not by whitespace/key escaping.
+// JSON-returning cases preserve scalar types and array/object shape while
+// ignoring whitespace and equivalent escape spellings.
 function validate_bench_cases(array $cases): void
 {
     foreach ($cases as $case) {
         try {
             $result = ($case['fn'])();
+            $expected = $case['expected'];
             if ($case['json'] ?? false) {
                 if (!is_string($result)) {
                     throw new RuntimeException('expected JSON string');
                 }
-                $result = json_decode($result, true, 512, JSON_THROW_ON_ERROR);
+                $result = serialize(json_decode($result, false, 512, JSON_THROW_ON_ERROR));
+                $expected = serialize(json_decode(json_encode($expected, JSON_THROW_ON_ERROR),
+                    false, 512, JSON_THROW_ON_ERROR));
             }
-            if ($result !== $case['expected']) {
+            if ($result !== $expected) {
                 throw new RuntimeException('unexpected result');
             }
         } catch (Throwable $error) {

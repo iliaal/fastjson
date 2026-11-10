@@ -13,7 +13,10 @@ function result(): mixed
 {
     $index = $GLOBALS['probe_calls']++;
     $case = $GLOBALS['cases'][$index];
-    if ($index === ($GLOBALS['reject_index'] ?? -1)) return null;
+    if ($index === ($GLOBALS['reject_index'] ?? -1)) {
+        return ($GLOBALS['reject_shape'] ?? false)
+            ? \json_encode($case['expected'], JSON_FORCE_OBJECT) : null;
+    }
     return ($case['json'] ?? false) ? \json_encode($case['expected']) : $case['expected'];
 }
 function fastjson_pointer_set(...$args): mixed { return result(); }
@@ -34,6 +37,7 @@ $imports = 'namespace ' . __NAMESPACE__ . '; use \\JsonSerializable; use \\Runti
 $GLOBALS['probe_calls'] = 0;
 if (($argv[1] ?? '') === '--integration') {
     $GLOBALS['reject_index'] = (int)$argv[2];
+    $GLOBALS['reject_shape'] = ($argv[3] ?? '') === 'shape';
     $argv = [__FILE__, '3'];
     eval($imports . substr($source, 0, $report));
     foreach ($cases as $validatedCase) {
@@ -54,6 +58,7 @@ validate_bench_cases($cases);
 if ($GLOBALS['probe_calls'] !== $count) throw new RuntimeException('case not probed exactly once');
 
 $rejections = 0;
+$shapeRejections = 0;
 foreach ($cases as $index => $case) {
     // Invalid types, malformed JSON, and valid-but-wrong results must fail.
     $wrong = ($case['json'] ?? false) ? ['null', '{}', '{bad', false, null] : [null, 'wrong', false, true, 0, 1];
@@ -61,6 +66,27 @@ foreach ($cases as $index => $case) {
         $changed = $case['expected'];
         $changed['unexpected-key'] = true;
         $wrong[] = $changed;
+    }
+    if ($case['json'] ?? false) {
+        $correctJson = \json_encode($case['expected'], JSON_THROW_ON_ERROR);
+        $objectJson = \json_encode($case['expected'], JSON_FORCE_OBJECT | JSON_THROW_ON_ERROR);
+        if ($objectJson !== $correctJson) {
+            $wrong[] = $objectJson;
+            if (startup($index, 'shape') !== [1, '', "cannot benchmark {$case['name']}: unexpected result\n"]) {
+                throw new RuntimeException("accepted object-shaped arrays at startup for {$case['name']}");
+            }
+            $shapeRejections++;
+        }
+        // Equivalent whitespace and escape spellings remain valid.
+        $good = $case;
+        $prettyJson = \json_encode($case['expected'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+        $good['fn'] = static fn() => $prettyJson;
+        validate_bench_cases([$good]);
+        if (str_contains($correctJson, '"tags":["red","green","blue"]')) {
+            // Narrow regression: only the replacement leaf changes shape.
+            $wrong[] = str_replace('"tags":["red","green","blue"]',
+                '"tags":{"0":"red","1":"green","2":"blue"}', $correctJson);
+        }
     }
     foreach ($wrong as $value) {
         if ($value === $case['expected']) continue;
@@ -93,10 +119,40 @@ foreach ($cases as $index => $case) {
     }
 }
 echo "$count valid fixtures, $rejections wrong results, $count exceptions and $count startup rejections passed\n";
+echo "$shapeRejections object-shaped array startup rejections passed\n";
 
-function startup(int $index): array
+// Synthetic neighbours exercise container distinctions and strict scalar types
+// independently of the current fixed dataset, including empty containers.
+$neighbours = [
+    [[], '[]', ['{}']],
+    [(object)[], '{}', ['[]']],
+    [[1, true, null], '[1,true,null]', ['{"0":1,"1":true,"2":null}', '[1.0,true,null]', '[1,1,null]']],
+    [['items' => []], '{"items":[]}', ['{"items":{}}']],
+    [['items' => (object)[]], '{"items":{}}', ['{"items":[]}']],
+    [['value' => 1], '{"value":1}', ['{"value":1.0}', '{"value":"1"}', '{"value":true}']],
+    [42, '42', ['42.0', '"42"', 'true']],
+];
+$neighbourRejections = 0;
+foreach ($neighbours as [$expected, $valid, $invalid]) {
+    $fixture = ['name' => 'shape neighbour', 'expected' => $expected, 'json' => true,
+        'fn' => static fn() => $valid];
+    validate_bench_cases([$fixture]);
+    foreach ($invalid as $value) {
+        $fixture['fn'] = static fn() => $value;
+        try {
+            validate_bench_cases([$fixture]);
+            throw new \LogicException("accepted shape/type neighbour: $value");
+        } catch (RuntimeException $error) {
+            if ($error->getMessage() !== 'cannot benchmark shape neighbour: unexpected result') throw $error;
+        }
+        $neighbourRejections++;
+    }
+}
+echo count($neighbours) . " valid neighbours, $neighbourRejections shape/type rejections passed\n";
+
+function startup(int $index, string $mode = ''): array
 {
-    $process = proc_open([PHP_BINARY, '-n', __FILE__, '--integration', (string)$index],
+    $process = proc_open([PHP_BINARY, '-n', __FILE__, '--integration', (string)$index, $mode],
         [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
     if (!is_resource($process)) throw new RuntimeException('cannot start integration');
     fclose($pipes[0]);
