@@ -254,9 +254,10 @@ function fastjson_file_decode(string $filename, ?bool $associative = null, int $
  *
  * Returns the value at the pointer, or null when the pointer does not
  * resolve. A missing path or a malformed pointer means "no value" and
- * leaves the error state clear. A pointer that
- * resolves to a JSON null also returns null; like the rest of the decode
- * family, callers cannot distinguish the two from PHP alone.
+ * leaves the error state clear. A pointer that resolves to a JSON null also
+ * returns null, so the return value alone cannot distinguish a missing path
+ * from a present null. Use fastjson_pointer_exists() to check whether the
+ * path exists.
  *
  * If an object traversed by the pointer contains the selected member more
  * than once, RFC 6901 evaluation is ambiguous. The function returns null with

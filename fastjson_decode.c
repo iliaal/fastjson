@@ -751,7 +751,8 @@ PHP_FUNCTION(fastjson_pointer_get)
     /* A pointer with $depth or more segments fails with DEPTH. Unresolvable
      * and malformed pointers (e.g. no leading '/') mean "no value": return
      * null with the error state clear. A pointer to a JSON null also returns
-     * null (target != NULL), the decode family's documented ambiguity. */
+     * null (target != NULL). fastjson_pointer_exists() distinguishes the two
+     * without materializing the referenced value. */
     yyjson_val *target;
     size_t resolve_depth = (size_t)fastjson_effective_walk_depth(depth);
     fj_splice_status pointer_status = fastjson_pointer_resolve_limited(
