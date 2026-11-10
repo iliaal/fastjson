@@ -108,17 +108,6 @@ function fmt_bytes(int $bytes): string
     return number_format($bytes / 1048576, 2) . ' MB';
 }
 
-function median(array $values): float
-{
-    sort($values, SORT_NUMERIC);
-    $count = count($values);
-    $mid = intdiv($count, 2);
-    if (($count & 1) === 1) {
-        return (float)$values[$mid];
-    }
-    return ($values[$mid - 1] + $values[$mid]) / 2.0;
-}
-
 function bench_time(int $samples, int $loops, callable $fn): array
 {
     for ($i = 0; $i < min(5, $loops); $i++) {
@@ -135,8 +124,11 @@ function bench_time(int $samples, int $loops, callable $fn): array
         $sampleNs[] = hrtime(true) - $t0;
     }
 
-    $medianTotal = median($sampleNs);
     sort($sampleNs, SORT_NUMERIC);
+    $mid = intdiv($samples, 2);
+    $medianTotal = ($samples & 1)
+        ? (float)$sampleNs[$mid]
+        : ($sampleNs[$mid - 1] + $sampleNs[$mid]) / 2.0;
 
     return [
         'median_ns' => $medianTotal / $loops,
