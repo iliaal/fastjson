@@ -371,10 +371,25 @@ yyjson_doc *fastjson_read_doc_ex(const char *json, size_t json_len,
     return doc;
 }
 
+/* Parse and report a failure under the caller's throw contract. The caller
+ * still owns input buffers and any previously parsed documents. */
 static yyjson_doc *fastjson_read_doc(const char *json, size_t json_len,
-                                     zend_long flags, yyjson_read_err *err)
+                                     zend_long flags,
+                                     yyjson_read_flag extra_yflags,
+                                     bool throw_mode,
+                                     const fastjson_error_state *saved_err)
 {
-    return fastjson_read_doc_ex(json, json_len, flags, 0, err);
+    yyjson_read_err err;
+    yyjson_doc *doc = fastjson_read_doc_ex(json, json_len, flags,
+                                          extra_yflags, &err);
+    if (doc == NULL) {
+        if (throw_mode) {
+            fastjson_throw_read_error(&err, saved_err);
+        } else {
+            fastjson_set_read_error(json, json_len, &err);
+        }
+    }
+    return doc;
 }
 
 /* Convert a resolved/merged immutable subtree into return_value.
@@ -436,31 +451,6 @@ static void fastjson_finish_decode(yyjson_doc *doc, bool use_assoc,
     }
 }
 
-/* Shared decode core for fastjson_decode and fastjson_file_decode.
- * $depth must already be validated and, in non-throw mode, the caller
- * must already have cleared the error state. The param is named
- * `return_value` so RETURN_NULL() / RETURN_THROWS() expand correctly. */
-static void fastjson_decode_into(const char *json, size_t json_len,
-                                 bool use_assoc, zend_long depth,
-                                 zend_long flags, bool throw_mode,
-                                 const fastjson_error_state *saved_err,
-                                 zval *return_value)
-{
-    yyjson_read_err err;
-    yyjson_doc *doc = fastjson_read_doc(json, json_len, flags, &err);
-    if (doc == NULL) {
-        if (throw_mode) {
-            fastjson_throw_read_error(&err, saved_err);
-            RETURN_THROWS();
-        }
-        fastjson_set_read_error(json, json_len, &err);
-        RETURN_NULL();
-    }
-
-    fastjson_finish_decode(doc, use_assoc, depth, flags, throw_mode,
-                           saved_err, return_value);
-}
-
 PHP_FUNCTION(fastjson_decode)
 {
     char *json;
@@ -493,9 +483,16 @@ PHP_FUNCTION(fastjson_decode)
         ? ((flags & FASTJSON_DECODE_OBJECT_AS_ARRAY) != 0)
         : (bool)assoc;
 
-    fastjson_decode_into(json, json_len, use_assoc, depth, flags,
-                         throw_mode, &saved_err,
-                         return_value);
+    yyjson_doc *doc = fastjson_read_doc(json, json_len, flags, 0,
+                                        throw_mode, &saved_err);
+    if (doc == NULL) {
+        if (throw_mode) {
+            RETURN_THROWS();
+        }
+        RETURN_NULL();
+    }
+    fastjson_finish_decode(doc, use_assoc, depth, flags, throw_mode,
+                           &saved_err, return_value);
 }
 
 static zend_string *fastjson_read_stream(php_stream *stream, bool *read_failed)
@@ -626,15 +623,9 @@ PHP_FUNCTION(fastjson_file_decode)
      * bytes, so release only after a successful parse or after the error
      * position has been recorded. The walk then overlaps the doc with the
      * zval tree and not with the file buffer. */
-    yyjson_read_err err;
     yyjson_doc *doc = fastjson_read_doc(ZSTR_VAL(contents), ZSTR_LEN(contents),
-                                        flags, &err);
+                                        flags, 0, throw_mode, &saved_err);
     if (doc == NULL) {
-        if (throw_mode) {
-            fastjson_throw_read_error(&err, &saved_err);
-        } else {
-            fastjson_set_read_error(ZSTR_VAL(contents), ZSTR_LEN(contents), &err);
-        }
         zend_string_release(contents);
         if (throw_mode) {
             RETURN_THROWS();
@@ -725,14 +716,12 @@ PHP_FUNCTION(fastjson_pointer_get)
         ? ((flags & FASTJSON_DECODE_OBJECT_AS_ARRAY) != 0)
         : (bool)assoc;
 
-    yyjson_read_err err;
-    yyjson_doc *doc = fastjson_read_doc(json, json_len, flags, &err);
+    yyjson_doc *doc = fastjson_read_doc(json, json_len, flags, 0,
+                                        throw_mode, &saved_err);
     if (doc == NULL) {
         if (throw_mode) {
-            fastjson_throw_read_error(&err, &saved_err);
             RETURN_THROWS();
         }
-        fastjson_set_read_error(json, json_len, &err);
         RETURN_NULL();
     }
 
@@ -1144,24 +1133,21 @@ PHP_FUNCTION(fastjson_merge_patch)
 
     /* $depth bounds the result, not discarded operand branches. Parsing is
      * iterative and memory_limit-bound; the merge below bounds recursion. */
-    yyjson_read_err err;
-    yyjson_doc *tdoc = fastjson_read_doc(target, target_len, flags, &err);
+    yyjson_doc *tdoc = fastjson_read_doc(target, target_len, flags, 0,
+                                         throw_mode, &saved_err);
     if (tdoc == NULL) {
         if (throw_mode) {
-            fastjson_throw_read_error(&err, &saved_err);
             RETURN_THROWS();
         }
-        fastjson_set_read_error(target, target_len, &err);
         RETURN_NULL();
     }
-    yyjson_doc *pdoc = fastjson_read_doc(patch, patch_len, flags, &err);
+    yyjson_doc *pdoc = fastjson_read_doc(patch, patch_len, flags, 0,
+                                         throw_mode, &saved_err);
     if (pdoc == NULL) {
         yyjson_doc_free(tdoc);
         if (throw_mode) {
-            fastjson_throw_read_error(&err, &saved_err);
             RETURN_THROWS();
         }
-        fastjson_set_read_error(patch, patch_len, &err);
         RETURN_NULL();
     }
 
@@ -1248,14 +1234,12 @@ PHP_FUNCTION(fastjson_pointer_exists)
     fastjson_error_state saved_err;
     fastjson_throw_mode_init(throw_mode, &saved_err);
 
-    yyjson_read_err err;
-    yyjson_doc *doc = fastjson_read_doc(json, json_len, flags, &err);
+    yyjson_doc *doc = fastjson_read_doc(json, json_len, flags, 0,
+                                        throw_mode, &saved_err);
     if (doc == NULL) {
         if (throw_mode) {
-            fastjson_throw_read_error(&err, &saved_err);
             RETURN_THROWS();
         }
-        fastjson_set_read_error(json, json_len, &err);
         RETURN_FALSE;
     }
 
@@ -1314,15 +1298,13 @@ PHP_FUNCTION(fastjson_pointer_set)
      * materialized into PHP, and low ext/json decode bits overlap encode bits.
      * UTF-8 handling applies to the replacement value only; invalid UTF-8 in
      * the base document is rejected so the writer never has to re-emit it. */
-    yyjson_read_err err;
-    yyjson_doc *idoc = fastjson_read_doc_ex(json, json_len,
-        flags & FASTJSON_DECODE_RELAXED, YYJSON_READ_NUMBER_AS_RAW, &err);
+    yyjson_doc *idoc = fastjson_read_doc(json, json_len,
+        flags & FASTJSON_DECODE_RELAXED, YYJSON_READ_NUMBER_AS_RAW,
+        throw_mode, &saved_err);
     if (idoc == NULL) {
         if (throw_mode) {
-            fastjson_throw_read_error(&err, &saved_err);
             RETURN_THROWS();
         }
-        fastjson_set_read_error(json, json_len, &err);
         RETURN_FALSE;
     }
 
