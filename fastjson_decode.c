@@ -28,20 +28,6 @@
 #include "fastjson_alloc.h"
 #include "yyjson.h"
 
-/* Validate $depth as ext/json does: <= 0 and > INT_MAX raise a ValueError
- * on argument `argno`. Expands RETURN_THROWS(), so use it only inside a
- * PHP_FUNCTION. */
-#define FASTJSON_VALIDATE_DEPTH(depth, argno) do { \
-    if ((depth) <= 0) { \
-        zend_argument_value_error((argno), "must be greater than 0"); \
-        RETURN_THROWS(); \
-    } \
-    if ((depth) > INT_MAX) { \
-        zend_argument_value_error((argno), "must be less than %d", INT_MAX); \
-        RETURN_THROWS(); \
-    } \
-} while (0)
-
 /* Secondary helpers below call recursive C code before the normal zval
  * walker can enforce the public $depth. Keep their effective depth bounded
  * even when the caller passes a very large value. */
@@ -493,11 +479,12 @@ PHP_FUNCTION(fastjson_decode)
     ZEND_PARSE_PARAMETERS_END();
 
     /* THROW_ON_ERROR preserves the entry error state on success and failure. */
-    bool throw_mode = (flags & FASTJSON_DECODE_THROW_ON_ERROR) != 0;
+    bool throw_mode;
     fastjson_error_state saved_err;
-    fastjson_throw_mode_init(throw_mode, &saved_err);
-
-    FASTJSON_VALIDATE_DEPTH(depth, 3);
+    if (!fastjson_entry_prologue(flags, FASTJSON_DECODE_THROW_ON_ERROR,
+                                 depth, 3, &throw_mode, &saved_err)) {
+        RETURN_THROWS();
+    }
 
     /* ext/json contract: explicit $associative wins; when null, the
      * JSON_OBJECT_AS_ARRAY bit in $flags pivots. Defaults to stdClass
@@ -587,13 +574,14 @@ PHP_FUNCTION(fastjson_file_decode)
         Z_PARAM_LONG(flags)
     ZEND_PARSE_PARAMETERS_END();
 
-    bool throw_mode = (flags & FASTJSON_DECODE_THROW_ON_ERROR) != 0;
+    bool throw_mode;
     fastjson_error_state saved_err;
-    fastjson_throw_mode_init(throw_mode, &saved_err);
+    if (!fastjson_entry_prologue(flags, FASTJSON_DECODE_THROW_ON_ERROR,
+                                 depth, 3, &throw_mode, &saved_err)) {
+        RETURN_THROWS();
+    }
     fastjson_error_state operation_err;
     fastjson_save_error_state(&operation_err);
-
-    FASTJSON_VALIDATE_DEPTH(depth, 3);
 
     bool use_assoc = assoc_is_null
         ? ((flags & FASTJSON_DECODE_OBJECT_AS_ARRAY) != 0)
@@ -1313,11 +1301,12 @@ PHP_FUNCTION(fastjson_pointer_set)
         Z_PARAM_LONG(flags)
     ZEND_PARSE_PARAMETERS_END();
 
-    bool throw_mode = (flags & FASTJSON_DECODE_THROW_ON_ERROR) != 0;
+    bool throw_mode;
     fastjson_error_state saved_err;
-    fastjson_throw_mode_init(throw_mode, &saved_err);
-
-    FASTJSON_VALIDATE_DEPTH(depth, 4);
+    if (!fastjson_entry_prologue(flags, FASTJSON_DECODE_THROW_ON_ERROR,
+                                 depth, 4, &throw_mode, &saved_err)) {
+        RETURN_THROWS();
+    }
     size_t output_depth = (size_t)fastjson_effective_walk_depth(depth);
 
     /* Parse the target document. RELAXED is the only decode-only bit accepted
