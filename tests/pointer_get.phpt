@@ -25,7 +25,7 @@ var_dump(fastjson_pointer_get($j, '/user/roles/9'));
 var_dump(fastjson_pointer_get($j, 'no-leading-slash'));
 var_dump(fastjson_last_error() === JSON_ERROR_NONE);
 
-// A pointer resolving to JSON null returns null too (indistinguishable).
+// JSON null has the same return value; pointer_exists() distinguishes it.
 var_dump(fastjson_pointer_get($j, '/z'));
 var_dump(fastjson_last_error() === JSON_ERROR_NONE);
 
