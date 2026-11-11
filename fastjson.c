@@ -248,12 +248,14 @@ char *fastjson_sanitize_utf8(const char *s, size_t len, zend_long flags,
         : (has_subst && !has_ignore);
 
     /* Each invalid byte can expand to the three-byte U+FFFD; safe_emalloc
-     * checks multiplication overflow. IGNORE never grows the input. */
+     * checks multiplication overflow. IGNORE never grows the input. Both
+     * reserve a terminator byte because key callers probe key[0] even when
+     * every byte was dropped. */
     char *out;
     if (substitute) {
         out = safe_emalloc(len, 3, 1);
     } else {
-        out = emalloc(len > 0 ? len : 1);
+        out = safe_emalloc(len, 1, 1);
     }
     char *w = out;
 
@@ -339,6 +341,7 @@ char *fastjson_sanitize_utf8(const char *s, size_t len, zend_long flags,
         }
         i += adv;
     }
+    *w = '\0';
     *out_len = (size_t)(w - out);
     return out;
 }
