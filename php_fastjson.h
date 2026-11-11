@@ -229,8 +229,8 @@ typedef enum {
 
 /* Sanitize a byte string under JSON_INVALID_UTF8_IGNORE /
  * JSON_INVALID_UTF8_SUBSTITUTE semantics. Returns a newly-emalloc'd
- * buffer; the caller must efree() it. The resulting length is
- * written to *out_len. */
+ * NUL-terminated buffer; the caller must efree() it. The resulting
+ * length, excluding the terminator, is written to *out_len. */
 char *fastjson_sanitize_utf8(const char *s, size_t len, zend_long flags,
                              fj_sanitize_mode mode, size_t *out_len);
 
