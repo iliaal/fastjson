@@ -221,20 +221,10 @@ static bool FJ_WALK_NAME(FJ_WALK_VAL *val, bool assoc,
                 zval_ptr_dtor(&child);
                 return false;
             }
-            if (assoc) {
-                /* Promote numeric array keys; preserve object keys below. */
-                zend_ulong idx;
-                if (ZEND_HANDLE_NUMERIC_STR(use_key, use_klen, idx)) {
-                    zend_hash_index_update(ht, idx, &child);
-                } else {
-                    zend_string *zk = fj_share_key(use_key, use_klen);
-                    if (zk != NULL) {
-                        zend_hash_update(ht, zk, &child);
-                        zend_string_release_ex(zk, 0);
-                    } else {
-                        zend_hash_str_update(ht, use_key, use_klen, &child);
-                    }
-                }
+            /* Promote numeric array keys; object keys stay strings. */
+            zend_ulong idx;
+            if (assoc && ZEND_HANDLE_NUMERIC_STR(use_key, use_klen, idx)) {
+                zend_hash_index_update(ht, idx, &child);
             } else {
                 zend_string *zk = fj_share_key(use_key, use_klen);
                 if (zk != NULL) {
