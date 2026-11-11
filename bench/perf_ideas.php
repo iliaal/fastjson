@@ -149,8 +149,9 @@ function bench_peak(callable $fn): int
 }
 
 // Validate fixed fixtures before printing a report or entering measured calls.
-// JSON-returning cases preserve scalar types and array/object shape while
-// ignoring whitespace and equivalent escape spellings.
+// JSON-returning cases compare types after default ext/json normalization of
+// the oracle (for example, 1.0 becomes int 1), preserving array/object shape
+// while ignoring whitespace and equivalent escape spellings.
 function validate_bench_cases(array $cases): void
 {
     foreach ($cases as $case) {

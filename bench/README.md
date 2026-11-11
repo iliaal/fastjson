@@ -19,8 +19,12 @@ so it requires PHP 8.2+ with that function available. It checks every fixed
 case once against its expected value before printing the report or measuring
 anything, including the intentionally false invalid-JSON validation and scalar
 merge-patch result. A mismatch exits non-zero with the case name. JSON-returning
-cases are compared as decoded values, preserving scalar types and JSON
-array/object shape rather than byte-for-byte formatting. These
+cases are compared as decoded values against an expected value round-tripped
+through ext/json's default encoding (without `JSON_PRESERVE_ZERO_FRACTION`).
+Types are compared **after** that normalization: expected `1.0` accepts JSON
+`1` and rejects JSON `1.0`. Nested array/object shape is preserved, while
+whitespace and equivalent escape spellings are ignored. This is a check of the
+fixed fixtures, not a general JSON-equivalence API. These
 preflight checks are outside the timing and memory measurements; they do not
 validate every measured call. The
 [review-performance harness](review-performance.php) uses neither this
@@ -68,10 +72,13 @@ php -d extension=$(pwd)/modules/fastjson.so bench/review-performance.php \
 
 It checks every selected case once against its expected value and error state
 before timing any case, and exits non-zero on a mismatch, exception, or invalid
-or unmatched filter. JSON-returning cases preserve decoded values, scalar types
-and array/object shape; the two HEX-flag cases also require the requested escape
-spelling. These checks are outside the timing loop and do not validate every
-measured call; expected-value copies are discarded before timing.
+or unmatched filter. JSON-returning cases use the same default ext/json oracle
+normalization described above, then compare decoded types and array/object
+shape. For example, expected `12345.0` accepts JSON `12345` and rejects JSON
+`12345.0`. Non-JSON results retain their PHP scalar types; the two HEX-flag
+cases require the requested escape spelling. These checks are outside the
+timing loop and do not validate every measured call; expected-value copies
+are discarded before timing.
 
 Compare builds within one session. Absolute numbers move with machine load;
 two runs minutes apart can differ by 40% on the same binary. Build the previous

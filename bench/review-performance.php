@@ -67,8 +67,10 @@ function reviewValidate(string $name, array $case): void
             $expected = json_decode(json_encode($expected, JSON_THROW_ON_ERROR),
                 false, 512, JSON_THROW_ON_ERROR);
         }
-        // Preserve scalar types and JSON array/object shape, including nested
-        // containers. Object identity and JSON escape spelling are irrelevant.
+        // Compare types after default ext/json normalization of JSON oracles:
+        // for example, 1.0 becomes int 1. Preserve array/object
+        // shape, including nested containers, but ignore object identity and
+        // JSON escape spelling.
         $valid = is_array($expected) || is_object($expected)
             ? serialize($result) === serialize($expected)
             : $result === $expected;
