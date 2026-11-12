@@ -111,11 +111,12 @@ function bench_time(callable $callable, mixed $input, int $iterations): int|floa
     }
     sort($times);
     $drop = (int)floor($iterations * 0.1);
-    $kept = array_slice($times, 0, $iterations - $drop);
-    $middle = intdiv(count($kept), 2);
-    return count($kept) % 2
-        ? $kept[$middle]
-        : ($kept[$middle - 1] + $kept[$middle]) / 2;
+    // Trimming changes the median indices, not the sorted samples we need.
+    $kept = $iterations - $drop;
+    $middle = intdiv($kept, 2);
+    return $kept % 2
+        ? $times[$middle]
+        : ($times[$middle - 1] + $times[$middle]) / 2;
 }
 
 /** Single-call peak heap delta in bytes.

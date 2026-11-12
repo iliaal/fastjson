@@ -132,6 +132,44 @@ foreach ($counts as $count) {
         expect($GLOBALS['clock'], [], 'clock fully consumed');
     }
 }
+// Nonuniform inputs keep trimming tied to rank, not to sample values.
+// Include ties, zero durations, large outliers and both retained parities.
+$distributionCases = 0;
+foreach (array_merge(range(1, 120), [999, 1000, 1001]) as $count) {
+    foreach (['ties', 'outliers', 'mixed'] as $distribution) {
+        $samples = [];
+        for ($i = 0; $i < $count; $i++) {
+            $samples[] = match ($distribution) {
+                'ties' => $i % 3,
+                'outliers' => $i % 11 === 0 ? 1000000 : 0,
+                default => ($i * 7919 + $count * 17) % 997,
+            };
+        }
+        $GLOBALS['clock'] = [];
+        foreach ($samples as $sample) {
+            $GLOBALS['clock'][] = 1000;
+            $GLOBALS['clock'][] = 1000 + $sample;
+        }
+        $calls = 0;
+        $actual = bench_time(static function ($input) use (&$calls): void {
+            expect($input, null, 'distribution callback input');
+            $calls++;
+        }, null, $count);
+        // Independent materialized-prefix oracle preserves the old contract.
+        sort($samples);
+        $prefix = array_slice($samples, 0, $count - (int)floor($count * 0.1));
+        $middle = intdiv(count($prefix), 2);
+        $expected = count($prefix) % 2
+            ? $prefix[$middle]
+            : ($prefix[$middle - 1] + $prefix[$middle]) / 2;
+        expect($actual, $expected, "$distribution median n=$count");
+        expect($calls, $count, 'distribution call count');
+        expect($GLOBALS['clock'], [], 'distribution clock fully consumed');
+        $distributionCases++;
+    }
+}
+echo "$distributionCases nonuniform timing distributions passed\n";
+
 expect(fmt_ns(100.5), '100.5 ns', 'fractional latency');
 expect(fmt_ns(100), '100 ns', 'integral latency');
 expect(fmt_ns(1000), '1.0 µs', 'microsecond boundary');
