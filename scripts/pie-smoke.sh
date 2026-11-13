@@ -10,9 +10,9 @@ echo " PIE install smoke test for iliaal/fastjson"
 echo "======================================================================"
 echo
 echo "PHP:"
-php --version | head -1
+php --version | sed -n 1p
 echo "phpize:"
-phpize --version 2>&1 | head -2
+phpize --version 2>&1 | sed -n '1,2p'
 echo
 
 echo "---- 1. System build tools ----"
@@ -27,8 +27,8 @@ apt-get update -qq >/dev/null
 # ExtensionBinaryNotFound. php:8.x-cli ships no unzip.
 apt-get install -y -qq git ca-certificates bison libtool-bin unzip >/dev/null
 git --version
-bison --version | head -1
-libtoolize --version | head -1 || echo "libtoolize not found"
+bison --version | sed -n 1p
+libtoolize --version | sed -n 1p || echo "libtoolize not found"
 echo
 
 echo "---- 2. Fresh clone from mounted source (avoids host build artifacts) ----"
@@ -54,7 +54,7 @@ curl -fsSL -o /tmp/composer.phar.sha256sum "https://getcomposer.org/download/${C
 chmod +x /tmp/composer.phar
 mv /tmp/composer.phar /usr/local/bin/composer
 composer_version_output=$(composer --version)
-printf '%s\n' "${composer_version_output}" | head -1
+printf '%s\n' "${composer_version_output}" | sed -n 1p
 printf '%s\n' "${composer_version_output}" | grep -F "${COMPOSER_VERSION}" >/dev/null
 echo
 
@@ -63,7 +63,7 @@ curl -fsSL "https://github.com/php/pie/releases/download/${PIE_VERSION}/pie.phar
 chmod +x /usr/local/bin/pie
 ls -la /usr/local/bin/pie
 pie_version_output=$(pie --version 2>&1)
-printf '%s\n' "${pie_version_output}" | head -3
+printf '%s\n' "${pie_version_output}" | sed -n '1,3p'
 printf '%s\n' "${pie_version_output}" | grep -F "${PIE_VERSION}" >/dev/null
 echo
 
@@ -93,7 +93,7 @@ fi
 echo "   [A] built ${SMOKE_VERSION} (${head_commit}) from source: ${from_source}"
 pie show --with-php-config=/usr/local/bin/php-config 2>&1 | grep -i fastjson || true
 
-if [[ "${from_source}" = "1" ]] && php -m | grep -qi fastjson; then
+if [[ "${from_source}" = "1" ]] && php -m | grep -i fastjson >/dev/null; then
 	PIE_OK=1
 	echo "   [A] RESULT: success"
 fi
