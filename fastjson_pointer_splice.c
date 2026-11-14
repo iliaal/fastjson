@@ -133,19 +133,91 @@ static bool fj_splice_write_number(fj_splice_ctx *ctx, const yyjson_val *val)
     return true;
 }
 
+/* Whether a raw number lexeme needs zend_strtod() to rule out a non-finite
+ * value. Lexemes without '.', 'e' or 'E' are never parsed. A plain decimal
+ * below 10^308 rounds to at most 1e308, so it is finite without parsing;
+ * anything else (more than 308 integer digits, a larger exponent, or a
+ * lexeme outside the plain decimal grammar) still goes through strtod. */
+#define FJ_RAW_EXP_CAP 100000L
+
+static bool fj_raw_number_may_be_non_finite(const char *raw, size_t len)
+{
+    size_t i = 0;
+    bool real = false;
+    for (; i < len; i++) {
+        char c = raw[i];
+        if (c == '.' || c == 'e' || c == 'E') {
+            real = true;
+            break;
+        }
+    }
+    if (!real) {
+        return false;
+    }
+
+    i = 0;
+    if (i < len && raw[i] == '-') {
+        i++;
+    }
+    size_t mantissa_digits = 0;
+    while (i < len && raw[i] == '0') {
+        i++;
+        mantissa_digits++;
+    }
+    /* Integer digits after leading zeros: |value| < 10^(int_digits + exp). */
+    size_t int_digits = 0;
+    while (i < len && raw[i] >= '0' && raw[i] <= '9') {
+        i++;
+        if (++int_digits > 308) {
+            return true;
+        }
+    }
+    mantissa_digits += int_digits;
+    if (i < len && raw[i] == '.') {
+        i++;
+        while (i < len && raw[i] >= '0' && raw[i] <= '9') {
+            i++;
+            mantissa_digits++;
+        }
+    }
+    if (mantissa_digits == 0) {
+        return true;
+    }
+    long exp = 0;
+    if (i < len && (raw[i] == 'e' || raw[i] == 'E')) {
+        i++;
+        bool neg = false;
+        if (i < len && (raw[i] == '+' || raw[i] == '-')) {
+            neg = raw[i] == '-';
+            i++;
+        }
+        if (i == len) {
+            return true;
+        }
+        while (i < len && raw[i] >= '0' && raw[i] <= '9') {
+            if (exp < FJ_RAW_EXP_CAP) {
+                exp = exp * 10 + (raw[i] - '0');
+            }
+            i++;
+        }
+        if (neg) {
+            exp = -exp;
+        }
+    }
+    if (i != len) {
+        return true;
+    }
+    return (long)int_digits + exp > 308;
+}
+
 static bool fj_splice_write_raw(fj_splice_ctx *ctx, const yyjson_val *val)
 {
     const char *raw = yyjson_get_raw(FJ_IMUT_VAL(val));
     size_t raw_len = yyjson_get_len(FJ_IMUT_VAL(val));
-    for (size_t i = 0; i < raw_len; i++) {
-        char c = raw[i];
-        if (c == '.' || c == 'e' || c == 'E') {
-            if (!isfinite(zend_strtod(raw, NULL))) {
-                ctx->status = FJ_SPLICE_INF_OR_NAN;
-                return false;
-            }
-            break;
-        }
+    if (fj_raw_number_may_be_non_finite(raw, raw_len)
+            && !isfinite(zend_strtod(raw, NULL))) {
+        ctx->status = FJ_SPLICE_INF_OR_NAN;
+        return false;
     }
     if (!fj_splice_reserve(ctx, raw_len)) {
         return false;
