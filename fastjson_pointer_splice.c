@@ -134,10 +134,12 @@ static bool fj_splice_write_number(fj_splice_ctx *ctx, const yyjson_val *val)
 }
 
 /* Whether a raw number lexeme needs zend_strtod() to rule out a non-finite
- * value. Lexemes without '.', 'e' or 'E' are never parsed. A plain decimal
- * below 10^308 rounds to at most 1e308, so it is finite without parsing;
- * anything else (more than 308 integer digits, a larger exponent, or a
- * lexeme outside the plain decimal grammar) still goes through strtod. */
+ * value. Lexemes without '.', 'e' or 'E' are never parsed. For plain decimal
+ * reals, skip conversion if int_digits <= 308 and int_digits + exp <= 308,
+ * where int_digits excludes leading zeros. This bounds |value| below 10^308
+ * (rounding to at most 1e308), but is not necessary for finiteness: 0.01e309
+ * still needs strtod. More than 308 integer digits, a larger sum, or a
+ * lexeme outside the recognized decimal grammar also needs strtod. */
 #define FJ_RAW_EXP_CAP 100000L
 
 static bool fj_raw_number_may_be_non_finite(const char *raw, size_t len)

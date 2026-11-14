@@ -5,8 +5,8 @@ fastjson
 --FILE--
 <?php
 
-/* Untouched reals below 10^308 skip strtod; the rest must still reject
- * values that overflow to INF. */
+/* The digit-count/exponent shortcut proves some untouched reals finite;
+ * the fallback must still reject values that overflow to INF. */
 $cases = [
     '9.99999999999999999e307', '1.7976931348623157e308', '-1.7976931348623157E+308',
     '1.7976931348623159e308', '0.1e310', '1000e306', '0.00002e313', '1e308',

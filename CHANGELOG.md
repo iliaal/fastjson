@@ -9,7 +9,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Performance
 
 - Reuse the verified ASCII prefix when measuring exact output sizes for large JSON strings, avoiding a redundant byte-by-byte scan before a late escape or UTF-8 character.
-- `fastjson_pointer_set()` no longer calls `zend_strtod()` on every untouched real to check for overflow. A plain decimal below 10^308 is accepted from its digit and exponent counts, making it 15–70% faster on the float-heavy bench corpus files (`canada.json` 20.2 → 6.2 ms). Other lexemes still go through `zend_strtod()`; output and errors are unchanged.
+- `fastjson_pointer_set()` no longer calls `zend_strtod()` on every untouched real to check for overflow. For plain decimal reals, it skips conversion when the integer-digit count (excluding leading zeros) is at most 308 and that count plus the signed exponent is at most 308. This sufficient condition does not cover every finite real: `0.01e309` still goes through `zend_strtod()`. The original float-heavy corpus measurements took 15–70% less time (`canada.json` 20.2 → 6.2 ms); output and errors are unchanged.
 
 ### Changed
 
