@@ -2,8 +2,8 @@
 
 The bundled yyjson sources at `vendor/yyjson/yyjson.{c,h}` are an
 upstream master snapshot, commit
-`2c9c76a4b6acda1931c7d8bef05a91f2a759302d`, with eight local modifications
-(P-002 through P-009) documented below. The snapshot is newer than tag
+`2c9c76a4b6acda1931c7d8bef05a91f2a759302d`, with nine local modifications
+(P-002 through P-010) documented below. The snapshot is newer than tag
 0.13.0 but is not a release: `YYJSON_VERSION_STRING` still reads `0.13.0`.
 `vendor/yyjson/VERSION` and `.upstream/yyjson.yml` record the commit. The
 upstream `vendor/yyjson/LICENSE`, `vendor/yyjson/README.md`, and
@@ -553,6 +553,82 @@ write only through `pre` and only under the RAW flags, and that
 (`F64_MAX_DEC_EXP`). Re-check `read_str`'s messages and the stop set of
 `char_is_ascii_skip`. Then rerun the prefix harness described in P-008
 with the RAW flags included.
+
+## P-010: vectorized UTF-8 string scanning and escaping
+
+**File:** `vendor/yyjson/yyjson.c` (new "SIMD String Scan" section after
+the UTF-8 validation macros; hooks in `read_str_opt`,
+`read_str_validate` and `write_str`)
+
+**Reason.** Non-ASCII strings went through 4-byte-load loops that
+checked one code point at a time, and the writer re-validated and
+dispatched through its encode table once per code point. On
+Neoverse-N1, validating JSON whose strings are CJK or Cyrillic ran at
+37-46% of the ASCII rate, and encoding at 54-64%.
+
+**Change.**
+
+- `simd_str_scan()` validates string bytes 16 at a time with the lookup
+  algorithm of Keiser and Lemire, "Validating UTF-8 In Less Than One
+  Instruction Per Byte" (2021), as used by simdutf and simdjson. It
+  stops before the first 16-byte block holding the quote, a backslash,
+  a control byte or an optional extra stop byte (`/` when slashes are
+  escaped), and backs up to a code point boundary. Errors are ORed over
+  the run: if any byte in it is invalid the scan returns 0, so the
+  scalar code finds every error at the same position with the same
+  message. SSSE3 is detected once with CPUID on x86-64; NEON is used
+  unconditionally on AArch64. Other targets, and builds with
+  `YYJSON_DISABLE_UTF8_VALIDATION` or `YYJSON_DISABLE_SIMD`, compile
+  the scan to `return 0`.
+- The reader calls it where a string first turns non-ASCII, in the
+  no-copy loop, after an escape on the copy path (followed by
+  `memmove`, since the destination trails the source by only the bytes
+  the escapes saved), and in `read_str_validate`.
+- `write_str` is now `write_str_part` with a `resume` flag. Where it
+  meets a non-ASCII byte it tail-calls `write_str_tail`, which copies
+  the scanned run (`JSON_UNESCAPED_UNICODE`) or escapes it with
+  `write_str_esc_run` without checking each code point again, then
+  resumes the scalar writer at the following byte. The tail call keeps
+  `yyjson_write_string_to_buf` a leaf function on ASCII strings; a
+  plain call there cost 4% on ASCII-only encode. In escape mode a run
+  that starts with a 4-byte code point skips the scan: sparse emoji in
+  ASCII text cost more to scan than to escape. Runs of eight or more
+  3-byte code points are escaped four at a time with byte shuffles that
+  read the hex nibbles straight from the UTF-8 bytes.
+
+**Effect.** MB/s of UTF-8 input on Neoverse-N1 (`gir`, GCC 13 `-O2`,
+PHP 8.4.27 release), 500 KB documents of 3,000-6,000 rows whose `text`
+fields hold words of the given script separated by spaces:
+
+| Strings | validate | decode | encode, escaped | encode, `JSON_UNESCAPED_UNICODE` |
+|---|---:|---:|---:|---:|
+| ASCII | 1,965 → 1,962 | 522 → 517 | 783 → 771 | 786 → 774 |
+| CJK | 909 → 1,658 | 559 → 685 | 449 → 463 | 507 → 1,017 |
+| Cyrillic | 734 → 1,616 | 481 → 677 | 419 → 471 | 429 → 1,015 |
+| ASCII with 1 in 5 words an emoji | 991 → 1,255 | 414 → 439 | 580 → 563 | 607 → 673 |
+
+Encoding 3,000 strings of 20-80 CJK characters without spaces took
+1,054 → 857 µs escaped and 909 → 614 µs unescaped. The ASCII encode
+cost is about 2.5 extra instructions per string (`perf stat`: +0.46%
+instructions, +2% cycles): GCC loads the escape prefix constant from
+memory instead of building it in a register.
+
+**Verification.** A differential harness compared every encode, decode
+and validate result, error code and message between the patched and
+unpatched builds over 120,000 generated strings mixing valid sequences of
+every length, ASCII stop bytes, JSON escapes and malformed sequences, on
+x86-64 (SSSE3) and Neoverse-N1 (NEON). Outputs were identical; planting
+a wrong table entry, a wrong output shuffle or a missing `/` stop byte
+made it fail. `tests/simd_utf8_strings.phpt` checks the same paths
+against ext/json at every offset around the 16-byte blocks.
+
+**Re-apply recipe on yyjson upgrade.** Re-check that `write_str`'s
+callers in `yyjson_write_string_to_buf` still return its result
+directly (the tail call depends on it), that the writer's encode tables
+still escape only `"`, `\\`, bytes below 0x20 and optionally `/` among
+ASCII bytes, and that the reader's string loops still enter their
+non-ASCII branch at a code point boundary. Then rerun the differential
+harness on both architectures.
 
 ## Build-flag dependencies (not vendor patches)
 

@@ -8,6 +8,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Performance
 
+- Strings with non-ASCII text are validated 16 bytes at a time with SSSE3 on x86-64 or NEON on ARM64: on Chinese or Russian text, `fastjson_validate()` runs about 1.8-2.2x faster, `fastjson_decode()` 1.2-1.4x, and `fastjson_encode()` with `JSON_UNESCAPED_UNICODE` about 2x; default encoding is 3-23% faster depending on how long the non-ASCII runs are. ASCII-only encoding is about 1.5% slower.
 - Reuse the verified ASCII prefix when measuring exact output sizes for large JSON strings, avoiding a redundant byte-by-byte scan before a late escape or UTF-8 character.
 - `fastjson_pointer_set()` no longer calls `zend_strtod()` on every untouched real to check for overflow. For plain decimal reals, it skips conversion when the integer-digit count (excluding leading zeros) is at most 308 and that count plus the signed exponent is at most 308. This sufficient condition does not cover every finite real: `0.01e309` still goes through `zend_strtod()`. The original float-heavy corpus measurements took 15–70% less time (`canada.json` 20.2 → 6.2 ms); output and errors are unchanged.
 

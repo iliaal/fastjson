@@ -1185,6 +1185,412 @@ utf8_seq_def(b4_req2, 03, 30, 00, 00)
 
 
 /*==============================================================================
+ * MARK: - SIMD String Scan (Private)
+ * fastjson patch P-010. Validates string bytes 16 at a time with the lookup
+ * algorithm of Keiser and Lemire, "Validating UTF-8 In Less Than One
+ * Instruction Per Byte" (2021), as used by simdutf and simdjson. A run stops
+ * before the first 16-byte block that holds the quote, a backslash, a control
+ * byte or an optional extra stop byte, and backs up to a code point boundary;
+ * the scalar code takes over from there. Errors are only ORed together: if
+ * the run holds any invalid byte, the scan reports 0 so the scalar code finds
+ * the error at the same position, with the same message, as before.
+ *
+ * SSSE3 is detected at run time on x86-64; NEON is baseline on AArch64.
+ * Define YYJSON_DISABLE_SIMD as 1 to compile the scan out.
+ *============================================================================*/
+
+#ifndef YYJSON_DISABLE_SIMD
+#define YYJSON_DISABLE_SIMD 0
+#endif
+
+#if !YYJSON_DISABLE_SIMD && !YYJSON_DISABLE_UTF8_VALIDATION && \
+    (defined(__x86_64__) || defined(_M_X64)) && \
+    (defined(__GNUC__) || defined(__clang__) || defined(_MSC_VER))
+#   define YYJSON_SIMD_SSSE3 1
+#   include <immintrin.h>
+#   if defined(_MSC_VER) && !defined(__clang__)
+#       include <intrin.h>
+#       define yyjson_target_ssse3
+#   else
+#       include <cpuid.h>
+#       define yyjson_target_ssse3 __attribute__((target("ssse3")))
+#   endif
+#elif !YYJSON_DISABLE_SIMD && !YYJSON_DISABLE_UTF8_VALIDATION && \
+    defined(__aarch64__) && (defined(__ARM_NEON) || defined(__ARM_NEON__))
+#   define YYJSON_SIMD_NEON 1
+#   include <arm_neon.h>
+#endif
+#ifndef YYJSON_SIMD_SSSE3
+#define YYJSON_SIMD_SSSE3 0
+#endif
+#ifndef YYJSON_SIMD_NEON
+#define YYJSON_SIMD_NEON 0
+#endif
+
+#if YYJSON_SIMD_SSSE3 || YYJSON_SIMD_NEON
+
+/* Error classes of a (previous byte, byte) pair; see the paper above. */
+#define SIMD_TOO_SHORT      0x01
+#define SIMD_TOO_LONG       0x02
+#define SIMD_OVERLONG_3     0x04
+#define SIMD_TOO_LARGE      0x08
+#define SIMD_SURROGATE      0x10
+#define SIMD_OVERLONG_2     0x20
+#define SIMD_TOO_LARGE_1000 0x40
+#define SIMD_OVERLONG_4     0x40
+#define SIMD_TWO_CONTS      0x80
+#define SIMD_CARRY (SIMD_TOO_SHORT | SIMD_TOO_LONG | SIMD_TWO_CONTS)
+#define SIMD_L5    (SIMD_CARRY | SIMD_TOO_LARGE | SIMD_TOO_LARGE_1000)
+#define SIMD_C8    (SIMD_TOO_LONG | SIMD_OVERLONG_2 | SIMD_TWO_CONTS)
+
+/* Indexed by the high nibble of the previous byte. */
+static const u8 simd_utf8_b1h[16] = {
+    SIMD_TOO_LONG, SIMD_TOO_LONG, SIMD_TOO_LONG, SIMD_TOO_LONG,
+    SIMD_TOO_LONG, SIMD_TOO_LONG, SIMD_TOO_LONG, SIMD_TOO_LONG,
+    SIMD_TWO_CONTS, SIMD_TWO_CONTS, SIMD_TWO_CONTS, SIMD_TWO_CONTS,
+    SIMD_TOO_SHORT | SIMD_OVERLONG_2,
+    SIMD_TOO_SHORT,
+    SIMD_TOO_SHORT | SIMD_OVERLONG_3 | SIMD_SURROGATE,
+    SIMD_TOO_SHORT | SIMD_TOO_LARGE | SIMD_TOO_LARGE_1000 | SIMD_OVERLONG_4
+};
+
+/* Indexed by the low nibble of the previous byte. */
+static const u8 simd_utf8_b1l[16] = {
+    SIMD_CARRY | SIMD_OVERLONG_3 | SIMD_OVERLONG_2 | SIMD_OVERLONG_4,
+    SIMD_CARRY | SIMD_OVERLONG_2,
+    SIMD_CARRY, SIMD_CARRY,
+    SIMD_CARRY | SIMD_TOO_LARGE,
+    SIMD_L5, SIMD_L5, SIMD_L5, SIMD_L5, SIMD_L5, SIMD_L5, SIMD_L5, SIMD_L5,
+    SIMD_L5 | SIMD_SURROGATE,
+    SIMD_L5, SIMD_L5
+};
+
+/* Indexed by the high nibble of the current byte. */
+static const u8 simd_utf8_b2h[16] = {
+    SIMD_TOO_SHORT, SIMD_TOO_SHORT, SIMD_TOO_SHORT, SIMD_TOO_SHORT,
+    SIMD_TOO_SHORT, SIMD_TOO_SHORT, SIMD_TOO_SHORT, SIMD_TOO_SHORT,
+    SIMD_C8 | SIMD_OVERLONG_3 | SIMD_TOO_LARGE_1000 | SIMD_OVERLONG_4,
+    SIMD_C8 | SIMD_OVERLONG_3 | SIMD_TOO_LARGE,
+    SIMD_C8 | SIMD_SURROGATE | SIMD_TOO_LARGE,
+    SIMD_C8 | SIMD_SURROGATE | SIMD_TOO_LARGE,
+    SIMD_TOO_SHORT, SIMD_TOO_SHORT, SIMD_TOO_SHORT, SIMD_TOO_SHORT
+};
+
+/* A sequence that starts in the last three bytes of the run may continue
+   into the stop block, so the run ends before its lead byte. */
+static_inline usize simd_run_end(const u8 *beg, usize len) {
+    usize k;
+    for (k = 1; k <= 3 && k <= len; k++) {
+        u8 c = beg[len - k];
+        if (c >= 0xC0) return len - k;
+        if (c < 0x80) break;
+    }
+    return len;
+}
+
+#endif /* YYJSON_SIMD_SSSE3 || YYJSON_SIMD_NEON */
+
+#if YYJSON_SIMD_SSSE3
+
+/* -1 until the first scan; racing first writes all store the same value. */
+static int simd_ssse3_state = -1;
+
+static_noinline void simd_detect_ssse3(void) {
+#if defined(_MSC_VER) && !defined(__clang__)
+    int regs[4];
+    __cpuid(regs, 1);
+    simd_ssse3_state = (regs[2] >> 9) & 1;
+#else
+    unsigned int a, b, c, d;
+    simd_ssse3_state = (__get_cpuid(1, &a, &b, &c, &d) && ((c >> 9) & 1));
+#endif
+}
+
+yyjson_target_ssse3
+static usize simd_str_scan_ssse3(const u8 *src, const u8 *end, u8 quo,
+                                 u8 extra, u8 *dst) {
+    const u8 *beg = src;
+    const __m128i zero = _mm_setzero_si128();
+    const __m128i nib = _mm_set1_epi8(0x0F);
+    const __m128i t1h = _mm_loadu_si128((const __m128i *)simd_utf8_b1h);
+    const __m128i t1l = _mm_loadu_si128((const __m128i *)simd_utf8_b1l);
+    const __m128i t2h = _mm_loadu_si128((const __m128i *)simd_utf8_b2h);
+    const __m128i v_quo = _mm_set1_epi8((char)quo);
+    const __m128i v_bsl = _mm_set1_epi8('\\');
+    const __m128i v_ext = _mm_set1_epi8((char)extra);
+    const __m128i v_ctl = _mm_set1_epi8(0x1F);
+    const __m128i k3 = _mm_set1_epi8((char)(0xE0 - 0x80));
+    const __m128i k4 = _mm_set1_epi8((char)(0xF0 - 0x80));
+    const __m128i k80 = _mm_set1_epi8((char)0x80);
+    __m128i prev = zero, err = zero;
+
+    while (end - src >= 16) {
+        __m128i v = _mm_loadu_si128((const __m128i *)src);
+        __m128i stop = _mm_or_si128(
+            _mm_or_si128(_mm_cmpeq_epi8(v, v_quo), _mm_cmpeq_epi8(v, v_bsl)),
+            _mm_or_si128(_mm_cmpeq_epi8(v, v_ext),
+                         _mm_cmpeq_epi8(_mm_min_epu8(v, v_ctl), v)));
+        __m128i p1, p2, p3, sc, must23;
+        if (_mm_movemask_epi8(stop)) break;
+        p1 = _mm_alignr_epi8(v, prev, 15);
+        p2 = _mm_alignr_epi8(v, prev, 14);
+        p3 = _mm_alignr_epi8(v, prev, 13);
+        sc = _mm_and_si128(_mm_and_si128(
+            _mm_shuffle_epi8(t1h, _mm_and_si128(_mm_srli_epi16(p1, 4), nib)),
+            _mm_shuffle_epi8(t1l, _mm_and_si128(p1, nib))),
+            _mm_shuffle_epi8(t2h, _mm_and_si128(_mm_srli_epi16(v, 4), nib)));
+        must23 = _mm_and_si128(_mm_or_si128(_mm_subs_epu8(p2, k3),
+                                            _mm_subs_epu8(p3, k4)), k80);
+        err = _mm_or_si128(err, _mm_xor_si128(must23, sc));
+        if (dst) {
+            _mm_storeu_si128((__m128i *)dst, v);
+            dst += 16;
+        }
+        prev = v;
+        src += 16;
+    }
+    if (_mm_movemask_epi8(_mm_cmpeq_epi8(err, zero)) != 0xFFFF) return 0;
+    return simd_run_end(beg, (usize)(src - beg));
+}
+
+#endif /* YYJSON_SIMD_SSSE3 */
+
+#if YYJSON_SIMD_NEON
+
+static_inline u64 simd_neon_any(uint8x16_t v) {
+    uint64x2_t w = vreinterpretq_u64_u8(v);
+    return vgetq_lane_u64(w, 0) | vgetq_lane_u64(w, 1);
+}
+
+static usize simd_str_scan_neon(const u8 *src, const u8 *end, u8 quo,
+                                u8 extra, u8 *dst) {
+    const u8 *beg = src;
+    const uint8x16_t zero = vdupq_n_u8(0);
+    const uint8x16_t nib = vdupq_n_u8(0x0F);
+    const uint8x16_t t1h = vld1q_u8(simd_utf8_b1h);
+    const uint8x16_t t1l = vld1q_u8(simd_utf8_b1l);
+    const uint8x16_t t2h = vld1q_u8(simd_utf8_b2h);
+    const uint8x16_t v_quo = vdupq_n_u8(quo);
+    const uint8x16_t v_bsl = vdupq_n_u8('\\');
+    const uint8x16_t v_ext = vdupq_n_u8(extra);
+    const uint8x16_t v_ctl = vdupq_n_u8(0x1F);
+    const uint8x16_t k3 = vdupq_n_u8(0xE0 - 0x80);
+    const uint8x16_t k4 = vdupq_n_u8(0xF0 - 0x80);
+    const uint8x16_t k80 = vdupq_n_u8(0x80);
+    uint8x16_t prev = zero, err = zero;
+
+    while (end - src >= 16) {
+        uint8x16_t v = vld1q_u8(src);
+        uint8x16_t stop = vorrq_u8(
+            vorrq_u8(vceqq_u8(v, v_quo), vceqq_u8(v, v_bsl)),
+            vorrq_u8(vceqq_u8(v, v_ext), vcleq_u8(v, v_ctl)));
+        uint8x16_t p1, p2, p3, sc, must23;
+        if (simd_neon_any(stop)) break;
+        p1 = vextq_u8(prev, v, 15);
+        p2 = vextq_u8(prev, v, 14);
+        p3 = vextq_u8(prev, v, 13);
+        sc = vandq_u8(vandq_u8(vqtbl1q_u8(t1h, vshrq_n_u8(p1, 4)),
+                               vqtbl1q_u8(t1l, vandq_u8(p1, nib))),
+                      vqtbl1q_u8(t2h, vshrq_n_u8(v, 4)));
+        must23 = vandq_u8(vorrq_u8(vqsubq_u8(p2, k3), vqsubq_u8(p3, k4)), k80);
+        err = vorrq_u8(err, veorq_u8(must23, sc));
+        if (dst) {
+            vst1q_u8(dst, v);
+            dst += 16;
+        }
+        prev = v;
+        src += 16;
+    }
+    if (simd_neon_any(err)) return 0;
+    return simd_run_end(beg, (usize)(src - beg));
+}
+
+#endif /* YYJSON_SIMD_NEON */
+
+#if YYJSON_SIMD_SSSE3 || YYJSON_SIMD_NEON
+static const u8 simd_hex_lower[16] = {
+    '0', '1', '2', '3', '4', '5', '6', '7',
+    '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'
+};
+static const u8 simd_hex_upper[16] = {
+    '0', '1', '2', '3', '4', '5', '6', '7',
+    '8', '9', 'A', 'B', 'C', 'D', 'E', 'F'
+};
+
+/* Shuffle indices for four 3-byte sequences in bytes 0..11. Lane 4k+j of
+   the A gather holds the byte that carries hex digit j of code point k (the
+   third digit also needs the high bits of the third byte, from the B
+   gather). The output indices interleave "\u" with the 16 hex digits. */
+static const u8 simd_esc3_ia[16] = {
+    0, 1, 1, 2, 3, 4, 4, 5, 6, 7, 7, 8, 9, 10, 10, 11
+};
+static const u8 simd_esc3_ib[16] = {
+    0x80, 0x80, 2, 0x80, 0x80, 0x80, 5, 0x80,
+    0x80, 0x80, 8, 0x80, 0x80, 0x80, 11, 0x80
+};
+static const u8 simd_esc3_m03[16] = {
+    0xFF, 0, 0, 0xFF, 0xFF, 0, 0, 0xFF, 0xFF, 0, 0, 0xFF, 0xFF, 0, 0, 0xFF
+};
+static const u8 simd_esc3_m1[16] = {
+    0, 0xFF, 0, 0, 0, 0xFF, 0, 0, 0, 0xFF, 0, 0, 0, 0xFF, 0, 0
+};
+static const u8 simd_esc3_m2[16] = {
+    0, 0, 0xFF, 0, 0, 0, 0xFF, 0, 0, 0, 0xFF, 0, 0, 0, 0xFF, 0
+};
+static const u8 simd_esc3_o0[16] = {
+    0x80, 0x80, 0, 1, 2, 3, 0x80, 0x80, 4, 5, 6, 7, 0x80, 0x80, 8, 9
+};
+static const u8 simd_esc3_p0[16] = {
+    '\\', 'u', 0, 0, 0, 0, '\\', 'u', 0, 0, 0, 0, '\\', 'u', 0, 0
+};
+static const u8 simd_esc3_o1[16] = {
+    10, 11, 0x80, 0x80, 12, 13, 14, 15,
+    0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80
+};
+static const u8 simd_esc3_p1[16] = {
+    0, 0, '\\', 'u', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+};
+
+#define simd_is_lead3(c) (((c) & 0xF0) == 0xE0)
+#define simd_esc3_ready(src, end) ((end) - (src) >= 16 && \
+    simd_is_lead3((src)[0]) && simd_is_lead3((src)[3]) && \
+    simd_is_lead3((src)[6]) && simd_is_lead3((src)[9]))
+#endif
+
+#if YYJSON_SIMD_SSSE3
+/* Escapes groups of four 3-byte code points as \uXXXX, 12 bytes in and 24
+   out per group, while the next 16 bytes are readable. The input must be
+   validated. Returns the bytes consumed; the output is twice that. */
+yyjson_target_ssse3
+static usize simd_esc3_ssse3(u8 *cur, const u8 *src, const u8 *end,
+                             const u8 *digits) {
+    const u8 *beg = src;
+    const __m128i lut = _mm_loadu_si128((const __m128i *)digits);
+    const __m128i ia = _mm_loadu_si128((const __m128i *)simd_esc3_ia);
+    const __m128i ib = _mm_loadu_si128((const __m128i *)simd_esc3_ib);
+    const __m128i m03 = _mm_loadu_si128((const __m128i *)simd_esc3_m03);
+    const __m128i m1 = _mm_loadu_si128((const __m128i *)simd_esc3_m1);
+    const __m128i m2 = _mm_loadu_si128((const __m128i *)simd_esc3_m2);
+    const __m128i o0 = _mm_loadu_si128((const __m128i *)simd_esc3_o0);
+    const __m128i p0 = _mm_loadu_si128((const __m128i *)simd_esc3_p0);
+    const __m128i o1 = _mm_loadu_si128((const __m128i *)simd_esc3_o1);
+    const __m128i p1 = _mm_loadu_si128((const __m128i *)simd_esc3_p1);
+    const __m128i k0f = _mm_set1_epi8(0x0F);
+    const __m128i k0c = _mm_set1_epi8(0x0C);
+    const __m128i k03 = _mm_set1_epi8(0x03);
+
+    while (simd_esc3_ready(src, end)) {
+        __m128i v = _mm_loadu_si128((const __m128i *)src);
+        __m128i a = _mm_shuffle_epi8(v, ia);
+        __m128i b = _mm_shuffle_epi8(v, ib);
+        __m128i x = _mm_and_si128(a, k0f);
+        __m128i y = _mm_and_si128(_mm_srli_epi16(a, 2), k0f);
+        __m128i z = _mm_or_si128(_mm_and_si128(_mm_slli_epi16(a, 2), k0c),
+                                 _mm_and_si128(_mm_srli_epi16(b, 4), k03));
+        __m128i n = _mm_or_si128(_mm_or_si128(_mm_and_si128(x, m03),
+                                              _mm_and_si128(y, m1)),
+                                 _mm_and_si128(z, m2));
+        __m128i hex = _mm_shuffle_epi8(lut, n);
+        _mm_storeu_si128((__m128i *)cur,
+                         _mm_or_si128(_mm_shuffle_epi8(hex, o0), p0));
+        _mm_storel_epi64((__m128i *)(cur + 16),
+                         _mm_or_si128(_mm_shuffle_epi8(hex, o1), p1));
+        src += 12;
+        cur += 24;
+    }
+    return (usize)(src - beg);
+}
+#endif
+
+#if YYJSON_SIMD_NEON
+static usize simd_esc3_neon(u8 *cur, const u8 *src, const u8 *end,
+                            const u8 *digits) {
+    const u8 *beg = src;
+    const uint8x16_t lut = vld1q_u8(digits);
+    const uint8x16_t ia = vld1q_u8(simd_esc3_ia);
+    const uint8x16_t ib = vld1q_u8(simd_esc3_ib);
+    const uint8x16_t m03 = vld1q_u8(simd_esc3_m03);
+    const uint8x16_t m1 = vld1q_u8(simd_esc3_m1);
+    const uint8x16_t m2 = vld1q_u8(simd_esc3_m2);
+    const uint8x16_t o0 = vld1q_u8(simd_esc3_o0);
+    const uint8x16_t p0 = vld1q_u8(simd_esc3_p0);
+    const uint8x16_t o1 = vld1q_u8(simd_esc3_o1);
+    const uint8x16_t p1 = vld1q_u8(simd_esc3_p1);
+    const uint8x16_t k0f = vdupq_n_u8(0x0F);
+    const uint8x16_t k0c = vdupq_n_u8(0x0C);
+    const uint8x16_t k03 = vdupq_n_u8(0x03);
+
+    while (simd_esc3_ready(src, end)) {
+        uint8x16_t v = vld1q_u8(src);
+        uint8x16_t a = vqtbl1q_u8(v, ia);
+        uint8x16_t b = vqtbl1q_u8(v, ib);
+        uint8x16_t x = vandq_u8(a, k0f);
+        uint8x16_t y = vandq_u8(vshrq_n_u8(a, 2), k0f);
+        uint8x16_t z = vorrq_u8(vandq_u8(vshlq_n_u8(a, 2), k0c),
+                                vandq_u8(vshrq_n_u8(b, 4), k03));
+        uint8x16_t n = vorrq_u8(vorrq_u8(vandq_u8(x, m03), vandq_u8(y, m1)),
+                                vandq_u8(z, m2));
+        uint8x16_t hex = vqtbl1q_u8(lut, n);
+        vst1q_u8(cur, vorrq_u8(vqtbl1q_u8(hex, o0), p0));
+        vst1_u8(cur + 16, vget_low_u8(vorrq_u8(vqtbl1q_u8(hex, o1), p1)));
+        src += 12;
+        cur += 24;
+    }
+    return (usize)(src - beg);
+}
+#endif
+
+/* True if eight 3-byte code points start at src; needs 22 readable bytes. */
+#define simd_run3_long(src) ( \
+    simd_is_lead3((src)[0]) && simd_is_lead3((src)[3]) && \
+    simd_is_lead3((src)[6]) && simd_is_lead3((src)[9]) && \
+    simd_is_lead3((src)[12]) && simd_is_lead3((src)[15]) && \
+    simd_is_lead3((src)[18]) && simd_is_lead3((src)[21]))
+
+#ifndef simd_is_lead3
+#define simd_run3_long(src) 0
+#endif
+
+/* Vector \uXXXX escaping for a validated run of 3-byte code points, or 0. */
+static_inline usize simd_esc3(u8 *cur, const u8 *src, const u8 *end,
+                              bool lower) {
+#if YYJSON_SIMD_SSSE3
+    if (simd_ssse3_state <= 0) return 0;
+    return simd_esc3_ssse3(cur, src, end,
+                           lower ? simd_hex_lower : simd_hex_upper);
+#elif YYJSON_SIMD_NEON
+    return simd_esc3_neon(cur, src, end,
+                          lower ? simd_hex_lower : simd_hex_upper);
+#else
+    (void)cur; (void)src; (void)end; (void)lower;
+    return 0;
+#endif
+}
+
+/*
+ Returns the length of a prefix of [src, end) that is well-formed UTF-8 made
+ of whole code points and holds no quo, extra, backslash or control byte, or
+ 0. src must start a code point. If dst is not NULL, at least that prefix is
+ copied there and up to 15 more bytes may be written; dst must not overlap
+ [src, end).
+ */
+static_inline usize simd_str_scan(const u8 *src, const u8 *end, u8 quo,
+                                  u8 extra, u8 *dst) {
+#if YYJSON_SIMD_SSSE3
+    if (unlikely(simd_ssse3_state < 0)) simd_detect_ssse3();
+    if (!simd_ssse3_state) return 0;
+    return simd_str_scan_ssse3(src, end, quo, extra, dst);
+#elif YYJSON_SIMD_NEON
+    return simd_str_scan_neon(src, end, quo, extra, dst);
+#else
+    (void)src; (void)end; (void)quo; (void)extra; (void)dst;
+    return 0;
+#endif
+}
+
+
+
+/*==============================================================================
  * MARK: - Power10 Lookup Table (Private)
  * These data are used by the floating-point number reader and writer.
  *============================================================================*/
@@ -4943,6 +5349,8 @@ skip_utf8:
             else break;
         })
 #else
+        /* fastjson patch P-010: vector scan over long runs. */
+        src += simd_str_scan(src, eof, quo, quo, NULL);
         uni = byte_load_4(src);
         while (is_utf8_seq3(uni)) {
             src += 3;
@@ -5110,6 +5518,18 @@ copy_ascii:
 copy_utf8:
     if (*src & 0x80) { /* non-ASCII character */
         pos = src;
+#if !YYJSON_DISABLE_UTF8_VALIDATION
+        {
+            /* fastjson patch P-010. dst trails src by only the bytes the
+               escapes saved, so the scan must not store in place. */
+            usize n = simd_str_scan(src, eof, quo, quo, NULL);
+            if (n) {
+                memmove(dst, src, n);
+                dst += n;
+                src += n;
+            }
+        }
+#endif
         uni = byte_load_4(src);
 #if YYJSON_DISABLE_UTF8_VALIDATION
         while (true) repeat4({
@@ -6413,6 +6833,9 @@ skip_ascii_end:
 skip_utf8:
     if (likely((usize)(eof - src) >= 4)) {
         pos = src;
+        /* fastjson patch P-010. */
+        src += simd_str_scan(src, eof, '"', '"', NULL);
+        if (unlikely((usize)(eof - src) < 4)) goto skip_ascii;
         uni = byte_load_4(src);
         while (is_utf8_seq3(uni)) {
             src += 3;
@@ -9763,6 +10186,83 @@ static_inline u8 *write_str_noesc(u8 *cur, const u8 *str, usize str_len) {
     return cur;
 }
 
+/*
+ fastjson patch P-010. Writes [src, end) as JSON string content with every
+ non-ASCII code point as \uXXXX (a surrogate pair above U+FFFF). The run must
+ be well-formed UTF-8 without bytes that need an ASCII escape, as returned by
+ simd_str_scan(). Requires (end - src) * 6 bytes of buffer.
+ */
+static_inline u8 *write_str_esc_run(u8 *cur, const u8 *src, const u8 *end,
+                                    const u8 *hex_table) {
+    bool lower = hex_table == esc_hex_char_table_lower;
+    bool run3 = false; /* the previous code point was 3 bytes */
+    while (src < end) {
+        u32 c = src[0], u, hi, lo;
+        if (c < 0x80) {
+            run3 = false;
+            *cur++ = (u8)c;
+            src += 1;
+            while (end - src >= 8) {
+                u64 w;
+                memcpy(&w, src, 8);
+                if (w & U64(0x80808080, 0x80808080)) break;
+                memcpy(cur, &w, 8);
+                cur += 8;
+                src += 8;
+            }
+            continue;
+        }
+        if (c < 0xE0) {
+            run3 = false;
+            u = ((c & 0x1F) << 6) | (src[1] & 0x3F);
+            src += 2;
+        } else if (c < 0xF0) {
+            /* Checked once per run: short words cost more to set up than
+               they save. */
+            if (!run3 && end - src >= 28 && simd_run3_long(src)) {
+                usize k = simd_esc3(cur, src, end, lower);
+                if (k) {
+                    src += k;
+                    cur += k * 2;
+                    continue;
+                }
+            }
+            run3 = true;
+            u = ((c & 0x0F) << 12) | ((u32)(src[1] & 0x3F) << 6) |
+                (src[2] & 0x3F);
+            src += 3;
+        } else {
+            run3 = false;
+            u = (((c & 0x07) << 18) | ((u32)(src[1] & 0x3F) << 12) |
+                 ((u32)(src[2] & 0x3F) << 6) | (src[3] & 0x3F)) - 0x10000;
+            hi = (u >> 10) + 0xD800;
+            lo = (u & 0x3FF) + 0xDC00;
+            cur[0] = '\\';
+            cur[1] = 'u';
+            byte_copy_2(cur + 2, &hex_table[(hi >> 8) * 2]);
+            byte_copy_2(cur + 4, &hex_table[(hi & 0xFF) * 2]);
+            cur[6] = '\\';
+            cur[7] = 'u';
+            byte_copy_2(cur + 8, &hex_table[(lo >> 8) * 2]);
+            byte_copy_2(cur + 10, &hex_table[(lo & 0xFF) * 2]);
+            cur += 12;
+            src += 4;
+            continue;
+        }
+        cur[0] = '\\';
+        cur[1] = 'u';
+        byte_copy_2(cur + 2, &hex_table[(u >> 8) * 2]);
+        byte_copy_2(cur + 4, &hex_table[(u & 0xFF) * 2]);
+        cur += 6;
+    }
+    return cur;
+}
+
+static u8 *write_str_tail(u8 *cur, bool esc, bool inv,
+                          const u8 *src, const u8 *end,
+                          const char_enc_type *enc_table,
+                          const u8 *hex_table);
+
 /**
  Write UTF-8 string (requires len * 6 + 2 bytes buffer).
  @param cur Buffer cursor.
@@ -9771,12 +10271,13 @@ static_inline u8 *write_str_noesc(u8 *cur, const u8 *str, usize str_len) {
  @param str A UTF-8 string, null-terminator is not required.
  @param str_len Length of string in bytes.
  @param enc_table Encode type table for character.
+ @param resume Continue a string at a non-ASCII byte: no opening quote.
  @return The buffer cursor after string, or NULL on invalid unicode.
  */
-static_inline u8 *write_str(u8 *cur, bool esc, bool inv,
-                            const u8 *str, usize str_len,
-                            const char_enc_type *enc_table,
-                            const u8 *hex_table) {
+static_inline u8 *write_str_part(u8 *cur, bool esc, bool inv,
+                                 const u8 *str, usize str_len,
+                                 const char_enc_type *enc_table,
+                                 const u8 *hex_table, bool resume) {
     /* The replacement character U+FFFD, used to indicate invalid character.
        Looked up via hex_table so that LOWERCASE_HEX produces "fffd" while
        the default produces "FFFD". */
@@ -9784,6 +10285,7 @@ static_inline u8 *write_str(u8 *cur, bool esc, bool inv,
 
     const u8 *src = str;
     const u8 *end = str + str_len;
+    if (resume) goto copy_utf8;
     *cur++ = '"';
 
 copy_ascii:
@@ -9801,7 +10303,7 @@ copy_ascii:
 #define expr_stop(i) \
     stop_char_##i: \
     memcpy(cur, src, i); \
-    cur += i; src += i; goto copy_utf8;
+    cur += i; src += i; goto copy_simd;
 
     while (end - src >= 16) {
         repeat16_incr(expr_jump)
@@ -9827,6 +10329,13 @@ copy_ascii:
 
 #undef expr_jump
 #undef expr_stop
+
+copy_simd:
+    /* fastjson patch P-010. A tail call, so the ASCII path needs no stack
+       frame. Escaping a lone emoji in ASCII text costs less than the scan. */
+    if (*src >= 0x80 && (!esc || *src < 0xF0)) {
+        return write_str_tail(cur, esc, inv, src, end, enc_table, hex_table);
+    }
 
 copy_utf8:
     if (unlikely(src + 4 > end)) {
@@ -9989,6 +10498,34 @@ err_esc:
     cur += 6;
     src += 1;
     goto copy_utf8;
+}
+
+static_inline u8 *write_str(u8 *cur, bool esc, bool inv,
+                            const u8 *str, usize str_len,
+                            const char_enc_type *enc_table,
+                            const u8 *hex_table) {
+    return write_str_part(cur, esc, inv, str, str_len, enc_table, hex_table,
+                          false);
+}
+
+/*
+ fastjson patch P-010. Entered from write_str_part() at a non-ASCII byte:
+ validates the run ahead with the vector scan, copies or escapes it without
+ checking each code point again, then resumes the scalar writer, which
+ always consumes the byte it resumes at.
+ */
+static_noinline u8 *write_str_tail(u8 *cur, bool esc, bool inv,
+                                   const u8 *src, const u8 *end,
+                                   const char_enc_type *enc_table,
+                                   const u8 *hex_table) {
+    u8 extra = enc_table['/'] ? (u8)'/' : (u8)'"';
+    usize n = simd_str_scan(src, end, '"', extra, esc ? NULL : cur);
+    if (n) {
+        cur = esc ? write_str_esc_run(cur, src, src + n, hex_table) : cur + n;
+        src += n;
+    }
+    return write_str_part(cur, esc, inv, src, (usize)(end - src), enc_table,
+                          hex_table, true);
 }
 
 

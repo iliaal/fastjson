@@ -8,7 +8,7 @@ readonly PROJECT_DIR="${SCRIPT_DIR%/scripts}"
 readonly PATCH_DIR="${PROJECT_DIR}/vendor/yyjson/patches"
 readonly VERSION_FILE="${PROJECT_DIR}/vendor/yyjson/VERSION"
 readonly ARCHIVE_SHA256="ccf8d91f623ddcbacef08d19bdeb207c60b5a911eb15d386700c852533339fa1"
-readonly EXPECTED_PATCH_COUNT=8
+readonly EXPECTED_PATCH_COUNT=9
 
 _tmpdir=""
 
