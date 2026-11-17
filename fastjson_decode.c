@@ -323,6 +323,24 @@ static void fj_key_share_pop(fj_key_cache *cache, fj_key_cache *prev)
 #undef FJ_WALK_SANITIZE
 #undef FJ_WALK_MUTABLE
 
+/* True when json[pos] starts `\u` plus four hex digits. yyjson accepts
+ * every such escape except a surrogate it cannot pair, so a read error
+ * there is an unpaired surrogate. */
+static bool fastjson_escape_is_surrogate(const char *json, size_t json_len,
+                                         size_t pos)
+{
+    if (json_len - pos < 6 || json[pos + 1] != 'u') {
+        return false;
+    }
+    for (size_t i = pos + 2; i < pos + 6; i++) {
+        unsigned char c = (unsigned char)json[i];
+        if (!((c >= '0' && c <= '9') || ((c | 0x20) >= 'a' && (c | 0x20) <= 'f'))) {
+            return false;
+        }
+    }
+    return true;
+}
+
 yyjson_doc *fastjson_read_doc_ex(const char *json, size_t json_len,
                                  zend_long flags,
                                  yyjson_read_flag extra_yflags,
@@ -367,6 +385,14 @@ yyjson_doc *fastjson_read_doc_ex(const char *json, size_t json_len,
          * yyjson lumps both as UNEXPECTED_CHARACTER, so reclassify only
          * genuinely malformed UTF-8. */
         err->code = YYJSON_READ_ERROR_INVALID_STRING;
+    }
+    if (err->code == YYJSON_READ_ERROR_INVALID_STRING
+            && err->pos < json_len && json[err->pos] == '\\'
+            && !fastjson_escape_is_surrogate(json, json_len, err->pos)) {
+        /* yyjson reports a malformed escape (`\x`, `\u12`) as INVALID_STRING,
+         * which maps to JSON_ERROR_UTF8; ext/json reports JSON_ERROR_SYNTAX.
+         * A surrogate escape keeps the documented UTF8 code. */
+        err->code = YYJSON_READ_ERROR_UNEXPECTED_CHARACTER;
     }
     return doc;
 }
