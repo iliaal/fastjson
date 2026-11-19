@@ -20,6 +20,13 @@ Fast JSON encode, decode, and validate for PHP 8.1+. A drop-in alternative to `e
 pie install iliaal/fastjson
 ```
 
+On Linux glibc (x86_64, arm64) and macOS arm64 with PHP 8.4, 8.5, or 8.6, PIE
+installs a prebuilt binary. The 8.4 and 8.5 binaries require PHP 8.4.27+ or
+8.5.12+: they are built against those patches so they stop at `memory_limit`
+instead of running to PHP's hard limit, which ends the process. On an earlier
+patch the Linux or macOS extension refuses to start with a warning, so upgrade PHP or build
+from source there.
+
 On a minimal PHP image (for example `php:8.x-cli` from Docker Hub), install these build tools before running PIE:
 
 ```bash
@@ -70,6 +77,8 @@ Function signatures match `ext/json`, so you can migrate a call site by replacin
 **JSON Pointer and merge patch:** `fastjson_pointer_get()` extracts one value by [RFC 6901](https://www.rfc-editor.org/rfc/rfc6901) JSON Pointer without materializing the rest of the document. `fastjson_pointer_exists()` reports whether a pointer resolves, so you can tell "present but null" from "absent". `fastjson_pointer_set()` sets one value by pointer and returns the re-serialized document; it splices the edit into the parsed document, so a single edit on a large document skips a full decode and re-encode. Formatting and escaping flags apply to the whole pointer-set output; value-transforming flags apply only to the replacement. Pointer-set rejects a target member that appears more than once in its object. Under `JSON_INVALID_UTF8_IGNORE` or `JSON_INVALID_UTF8_SUBSTITUTE`, pointer-get and pointer-exists match member names after the same sanitization decode applies, and report a target name shared by several members after sanitization as ambiguous. `fastjson_merge_patch()` applies an [RFC 7396](https://www.rfc-editor.org/rfc/rfc7396) merge patch and collapses duplicate members in each merged object to the last value at the first insertion position. Merge-patch member matching uses the raw JSON key bytes. `JSON_INVALID_UTF8_IGNORE` and `JSON_INVALID_UTF8_SUBSTITUTE` sanitize only the materialized PHP result, so malformed and valid key spellings that sanitize to the same PHP key stay distinct during the merge.
 
 **Error location:** `fastjson_last_error_pos()` returns the byte offset of the currently recorded parse error (`-1` when no error or no source position is recorded). `fastjson_last_error_info()` returns `['code', 'msg', 'pos', 'line', 'col']` for that recorded error in one call (1-based line and column, or `0` when unknown). These getters need not describe the latest call: `fastjson_decode()` with `JSON_THROW_ON_ERROR` preserves the prior error state, including its location, on success or failure. For JSON errors under `JSON_THROW_ON_ERROR`, the thrown class is `JsonException` when `ext/json` is loaded, `Fastjson\JsonException` otherwise.
+
+**Long-running workers:** fastjson resets its error state when a PHP request starts, as `ext/json` does. FrankenPHP worker mode serves many HTTP requests from one PHP request, so `fastjson_last_error()`, `fastjson_last_error_msg()`, `fastjson_last_error_pos()`, and `fastjson_last_error_info()` can still report an error recorded while serving an earlier HTTP request, just as `json_last_error()` can. Read them right after the call you are checking, or use `JSON_THROW_ON_ERROR`.
 
 [`CHANGELOG.md`](CHANGELOG.md) has the full feature list and the known divergences from `ext/json` output.
 

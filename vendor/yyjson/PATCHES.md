@@ -573,11 +573,14 @@ Neoverse-N1, validating JSON whose strings are CJK or Cyrillic ran at
   Instruction Per Byte" (2021), as used by simdutf and simdjson. It
   stops before the first 16-byte block holding the quote, a backslash,
   a control byte or an optional extra stop byte (`/` when slashes are
-  escaped), and backs up to a code point boundary. Errors are ORed over
-  the run: if any byte in it is invalid the scan returns 0, so the
-  scalar code finds every error at the same position with the same
-  message. SSSE3 is detected once with CPUID on x86-64; NEON is used
-  unconditionally on AArch64. Other targets, and builds with
+  escaped), and before the first block holding an invalid byte, then
+  backs up to a code point boundary. The prefix it returns is valid, so
+  the scalar code finds every error at the same position with the same
+  message, and a scan that starts at an invalid byte reads one block
+  before returning, which keeps decoding with ignored or substituted
+  invalid bytes linear. SSSE3 is detected once with CPUID on x86-64 and cached with
+  relaxed atomic loads and stores, since ZTS threads can run the first
+  detection concurrently; NEON is used unconditionally on AArch64. Other targets, and builds with
   `YYJSON_DISABLE_UTF8_VALIDATION` or `YYJSON_DISABLE_SIMD`, compile
   the scan to `return 0`.
 - The reader calls it where a string first turns non-ASCII, in the

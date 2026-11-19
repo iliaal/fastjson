@@ -1292,18 +1292,33 @@ static_inline usize simd_run_end(const u8 *beg, usize len) {
 
 #if YYJSON_SIMD_SSSE3
 
-/* -1 until the first scan; racing first writes all store the same value. */
+/* -1 until the first scan. Threads may detect concurrently; every store
+   writes the same value and no other data hangs off it, so relaxed atomic
+   accesses suffice and plain ones would be a data race. */
 static int simd_ssse3_state = -1;
 
-static_noinline void simd_detect_ssse3(void) {
+#if defined(_MSC_VER) && !defined(__clang__)
+/* MSVC: an aligned int load or store is single-copy atomic on x64. */
+#define simd_state_load() (*(volatile int *)&simd_ssse3_state)
+#define simd_state_store(v) (*(volatile int *)&simd_ssse3_state = (v))
+#else
+#define simd_state_load() __atomic_load_n(&simd_ssse3_state, __ATOMIC_RELAXED)
+#define simd_state_store(v) \
+    __atomic_store_n(&simd_ssse3_state, (v), __ATOMIC_RELAXED)
+#endif
+
+static_noinline int simd_detect_ssse3(void) {
+    int state;
 #if defined(_MSC_VER) && !defined(__clang__)
     int regs[4];
     __cpuid(regs, 1);
-    simd_ssse3_state = (regs[2] >> 9) & 1;
+    state = (regs[2] >> 9) & 1;
 #else
     unsigned int a, b, c, d;
-    simd_ssse3_state = (__get_cpuid(1, &a, &b, &c, &d) && ((c >> 9) & 1));
+    state = (__get_cpuid(1, &a, &b, &c, &d) && ((c >> 9) & 1));
 #endif
+    simd_state_store(state);
+    return state;
 }
 
 yyjson_target_ssse3
@@ -1322,7 +1337,7 @@ static usize simd_str_scan_ssse3(const u8 *src, const u8 *end, u8 quo,
     const __m128i k3 = _mm_set1_epi8((char)(0xE0 - 0x80));
     const __m128i k4 = _mm_set1_epi8((char)(0xF0 - 0x80));
     const __m128i k80 = _mm_set1_epi8((char)0x80);
-    __m128i prev = zero, err = zero;
+    __m128i prev = zero;
 
     while (end - src >= 16) {
         __m128i v = _mm_loadu_si128((const __m128i *)src);
@@ -1341,7 +1356,8 @@ static usize simd_str_scan_ssse3(const u8 *src, const u8 *end, u8 quo,
             _mm_shuffle_epi8(t2h, _mm_and_si128(_mm_srli_epi16(v, 4), nib)));
         must23 = _mm_and_si128(_mm_or_si128(_mm_subs_epu8(p2, k3),
                                             _mm_subs_epu8(p3, k4)), k80);
-        err = _mm_or_si128(err, _mm_xor_si128(must23, sc));
+        if (_mm_movemask_epi8(_mm_cmpeq_epi8(_mm_xor_si128(must23, sc), zero))
+                != 0xFFFF) break;
         if (dst) {
             _mm_storeu_si128((__m128i *)dst, v);
             dst += 16;
@@ -1349,7 +1365,6 @@ static usize simd_str_scan_ssse3(const u8 *src, const u8 *end, u8 quo,
         prev = v;
         src += 16;
     }
-    if (_mm_movemask_epi8(_mm_cmpeq_epi8(err, zero)) != 0xFFFF) return 0;
     return simd_run_end(beg, (usize)(src - beg));
 }
 
@@ -1377,7 +1392,7 @@ static usize simd_str_scan_neon(const u8 *src, const u8 *end, u8 quo,
     const uint8x16_t k3 = vdupq_n_u8(0xE0 - 0x80);
     const uint8x16_t k4 = vdupq_n_u8(0xF0 - 0x80);
     const uint8x16_t k80 = vdupq_n_u8(0x80);
-    uint8x16_t prev = zero, err = zero;
+    uint8x16_t prev = zero;
 
     while (end - src >= 16) {
         uint8x16_t v = vld1q_u8(src);
@@ -1393,7 +1408,7 @@ static usize simd_str_scan_neon(const u8 *src, const u8 *end, u8 quo,
                                vqtbl1q_u8(t1l, vandq_u8(p1, nib))),
                       vqtbl1q_u8(t2h, vshrq_n_u8(v, 4)));
         must23 = vandq_u8(vorrq_u8(vqsubq_u8(p2, k3), vqsubq_u8(p3, k4)), k80);
-        err = vorrq_u8(err, veorq_u8(must23, sc));
+        if (simd_neon_any(veorq_u8(must23, sc))) break;
         if (dst) {
             vst1q_u8(dst, v);
             dst += 16;
@@ -1401,7 +1416,6 @@ static usize simd_str_scan_neon(const u8 *src, const u8 *end, u8 quo,
         prev = v;
         src += 16;
     }
-    if (simd_neon_any(err)) return 0;
     return simd_run_end(beg, (usize)(src - beg));
 }
 
@@ -1555,7 +1569,7 @@ static usize simd_esc3_neon(u8 *cur, const u8 *src, const u8 *end,
 static_inline usize simd_esc3(u8 *cur, const u8 *src, const u8 *end,
                               bool lower) {
 #if YYJSON_SIMD_SSSE3
-    if (simd_ssse3_state <= 0) return 0;
+    if (simd_state_load() <= 0) return 0;
     return simd_esc3_ssse3(cur, src, end,
                            lower ? simd_hex_lower : simd_hex_upper);
 #elif YYJSON_SIMD_NEON
@@ -1577,8 +1591,9 @@ static_inline usize simd_esc3(u8 *cur, const u8 *src, const u8 *end,
 static_inline usize simd_str_scan(const u8 *src, const u8 *end, u8 quo,
                                   u8 extra, u8 *dst) {
 #if YYJSON_SIMD_SSSE3
-    if (unlikely(simd_ssse3_state < 0)) simd_detect_ssse3();
-    if (!simd_ssse3_state) return 0;
+    int state = simd_state_load();
+    if (unlikely(state < 0)) state = simd_detect_ssse3();
+    if (!state) return 0;
     return simd_str_scan_ssse3(src, end, quo, extra, dst);
 #elif YYJSON_SIMD_NEON
     return simd_str_scan_neon(src, end, quo, extra, dst);

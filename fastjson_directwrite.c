@@ -1071,6 +1071,12 @@ emit_string:
 static bool dw_encode_zval(fastjson_dw_ctx *ctx, zval *zv,
                            zend_long remaining_depth)
 {
+    if (UNEXPECTED(fastjson_oom_pending())) {
+        /* Stop without partial output or the discard walk. */
+        ctx->hard_error = true;
+        ctx->discard_aborted = true;
+        return false;
+    }
 #if !FASTJSON_HAVE_NATIVE_STACK_LIMIT
     /* JsonSerializable and reference chains can recurse without consuming
      * JSON container depth. Keep those paths bounded on PHP/platforms where

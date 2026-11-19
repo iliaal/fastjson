@@ -11,17 +11,21 @@ name: Release Linux & macOS binaries
 # makes extra versions cheap; glibc/macOS ship only current PHP versions,
 # like phpser and fastchart. Drop the 8.4 lane when 8.4 hits EOL.
 #
-# Each lane compiles against the oldest patch release of its minor, built
-# from the checksum-pinned php.net tarball. Patch releases add ZEND_API
-# functions and call them from inline header code (8.4.27 and 8.5.12 route
-# smart_str_alloc() through smart_str_ferealloc()), so a module built
-# against newer headers imports symbols an older patch does not export and
-# dies with "undefined symbol". 8.4.1 is the oldest 8.4: 8.4.0 was never
-# released. Source builds are unaffected; they compile against the PHP
-# they load into. The test suite runs the shipped module on setup-php's
-# current patch, as before; the Linux gate also loads it on the oldest and
-# a pinned newest patch image, and macOS loads it on the oldest-patch build
-# PHP and on setup-php's.
+# Each lane compiles against a pinned NEWEST patch release of its minor
+# (8.4.27, 8.5.12, 8.6.0), built from the checksum-pinned php.net tarball,
+# so the binary carries the memory_limit stop behind ZEND_HAS_OOM. Those
+# headers route inline helpers through ZEND_API functions earlier patches do
+# not export (smart_str_alloc() calls smart_str_ferealloc()), so the binaries
+# require 8.4.27+ / 8.5.12+ / 8.6.0+. On an older patch the extension refuses
+# to start with a warning (MINIT compares php_version_id() against the
+# build's PHP_VERSION_ID) instead of dying with "undefined symbol" on first
+# use. Bumping a php-src pin raises that floor. Source builds are
+# unaffected; they compile against the PHP they load into. The test suite
+# runs the shipped module on setup-php's current patch; the Linux gate checks
+# its imports against and loads it on the pinned newest patch image, and
+# requires it to refuse to start on the oldest patch image (8.4.1 is the
+# oldest 8.4: 8.4.0 was never released). macOS loads it on the build PHP and
+# on setup-php's.
 #
 # The official php:8.6 images are ZTS by design (docker-library/php#1686)
 # and have no NTS variant, so the Linux 8.6 gate image is NTS PHP 8.6.0
@@ -94,22 +98,24 @@ jobs:
           - ubuntu-24.04-arm
           - macos-15
         php: ['8.4', '8.5', '8.6']
-        # php-src: the oldest patch release of the minor, which the
-        # binaries are built against. Hashes are the php.net-published
+        # php-src: the newest patch release of the minor, which the
+        # binaries are built against and which sets their PHP floor; keep it
+        # equal to newest-image's patch. Hashes are the php.net-published
         # tar.xz SHA-256s. oldest-image/newest-image: official images the
-        # Linux gate loads each binary on, pinned by index digest. The gate
+        # Linux gate refuses (oldest) and loads (newest) each binary on,
+        # pinned by index digest. The gate
         # pulls the same digest from ghcr.io/iliaal/php first and falls back
-        # to ECR Public, mirror.gcr.io, and Docker Hub. Move newest-image to
-        # each new patch release.
+        # to ECR Public, mirror.gcr.io, and Docker Hub. Move php-src and
+        # newest-image together, and only to a patch users can be asked to run.
         include:
           - php: '8.4'
-            php-src: '8.4.1'
-            php-src-sha256: 94c8a4fd419d45748951fa6d73bd55f6bdf0adaefb8814880a67baa66027311f
+            php-src: '8.4.27'
+            php-src-sha256: dcf93923b0e38e0d5252b25b796520b5a47761a08b3488b6d0b5d1115764d3f0
             oldest-image: php:8.4.1-cli@sha256:246d2ca7e9cf21c4e7c354ce87e87bf1ad6d41b2061c77668845e04a8f8889d4
             newest-image: php:8.4.27-cli@sha256:debadc2e36b857657846e2e952cbaf52702e55482dd3c2c43806f68d8c534a70
           - php: '8.5'
-            php-src: '8.5.0'
-            php-src-sha256: 39cb6e4acd679b574d3d3276f148213e935fc25f90403eb84fb1b836a806ef1e
+            php-src: '8.5.12'
+            php-src-sha256: 08bc2eba2a588654ade1357174aa646b761556c862dda0678345ee29ed481209
             oldest-image: php:8.5.0-cli@sha256:fb551f94cba4698612c90158aa7d4fe8e1a5355f9c444d0f90929d366fc75b36
             newest-image: php:8.5.12-cli@sha256:635a4b998025ab269194639a5549c6fdcd9b4f88ec8cd761b092de8653d40663
           - php: '8.6'
@@ -284,11 +290,10 @@ jobs:
           test -f "$RUNNER_TEMP/packaged/fastjson.so"
           echo "name=$name" >> "$GITHUB_OUTPUT"
 
-      # The build PHP is the oldest patch of the minor, so loading the
-      # packaged module into it and into setup-php's current patch covers
-      # both ends. nm cannot attribute imports here: the module uses flat
+      # The build PHP is the pinned newest patch of the minor, the floor the
+      # binary requires; setup-php's current patch is at or above it. nm cannot attribute imports here: the module uses flat
       # namespace lookup and the system libraries live in the dyld cache.
-      - name: Gate on the oldest and newest patch (macOS)
+      - name: Gate on the build and current patch (macOS)
         if: runner.os == 'macOS'
         shell: bash
         run: |

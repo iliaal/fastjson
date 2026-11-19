@@ -94,6 +94,27 @@ ZEND_EXTERN_MODULE_GLOBALS(fastjson)
 
 #define FASTJSON_G(v) ZEND_MODULE_GLOBALS_ACCESSOR(fastjson, v)
 
+#if defined(ZTS) && defined(COMPILE_DL_FASTJSON)
+ZEND_TSRMLS_CACHE_EXTERN()
+#endif
+
+/* Engines that define ZEND_HAS_OOM() (PHP 8.2.35+, 8.3.36+, 8.4.27+, 8.5.12+,
+ * and 8.6) do not bail out of the allocation that
+ * crosses memory_limit: it succeeds, the error is queued, and the engine
+ * raises it once the internal call returns. A loop that keeps allocating
+ * after that reaches the hard limit (twice memory_limit by default), where
+ * the engine ends the process with _exit() and no shutdown. Loops that grow
+ * with the input stop on this check; any error they report is replaced by
+ * the memory-limit fatal error. */
+static zend_always_inline bool fastjson_oom_pending(void)
+{
+#ifdef ZEND_HAS_OOM
+    return ZEND_HAS_OOM();
+#else
+    return false;
+#endif
+}
+
 #include "yyjson.h"
 
 typedef struct {
