@@ -98,8 +98,8 @@ ZEND_EXTERN_MODULE_GLOBALS(fastjson)
 ZEND_TSRMLS_CACHE_EXTERN()
 #endif
 
-/* Engines that define ZEND_HAS_OOM() (PHP 8.6, and the 8.4 and 8.5 patch
- * releases carrying the change) do not bail out of the allocation that
+/* Engines that define ZEND_HAS_OOM() (PHP 8.2.35+, 8.3.36+, 8.4.27+, 8.5.12+,
+ * and 8.6) do not bail out of the allocation that
  * crosses memory_limit: it succeeds, the error is queued, and the engine
  * raises it once the internal call returns. A loop that keeps allocating
  * after that reaches the hard limit (twice memory_limit by default), where

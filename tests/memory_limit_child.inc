@@ -1,6 +1,6 @@
 <?php
-/* Engines that queue memory-limit errors (ZEND_HAS_OOM: PHP 8.4.27+, 8.5.12+,
- * 8.6) let the allocation that crosses memory_limit succeed and raise the
+/* Engines that queue memory-limit errors (ZEND_HAS_OOM: PHP 8.2.35+, 8.3.36+,
+ * 8.4.27+, 8.5.12+, 8.6) let the allocation that crosses memory_limit succeed and raise the
  * error when the internal call returns. A loop that keeps allocating reaches
  * the hard limit (twice memory_limit by default), where the engine prints
  * "Hard memory limit" and calls _exit(137): no shutdown functions, and under

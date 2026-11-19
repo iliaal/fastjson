@@ -3,10 +3,7 @@ fastjson_pointer_get() stops when building the result crosses memory_limit
 --EXTENSIONS--
 fastjson
 --SKIPIF--
-<?php
-if (!is_readable('/proc/self/maps')) print 'skip requires Linux procfs';
-if (!function_exists('proc_open')) print 'skip proc_open unavailable';
-?>
+<?php require __DIR__ . '/memory_limit_skipif.inc'; ?>
 --FILE--
 <?php
 require __DIR__ . '/memory_limit_child.inc';

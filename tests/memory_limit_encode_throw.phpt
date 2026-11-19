@@ -3,10 +3,7 @@ fastjson_encode() with JSON_THROW_ON_ERROR reports the memory-limit fatal error,
 --EXTENSIONS--
 fastjson
 --SKIPIF--
-<?php
-if (!is_readable('/proc/self/maps')) print 'skip requires Linux procfs';
-if (!function_exists('proc_open')) print 'skip proc_open unavailable';
-?>
+<?php require __DIR__ . '/memory_limit_skipif.inc'; ?>
 --FILE--
 <?php
 require __DIR__ . '/memory_limit_child.inc';
