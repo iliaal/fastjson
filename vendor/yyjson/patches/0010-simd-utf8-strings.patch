@@ -11,14 +11,14 @@ unchanged. The writer copies that prefix directly, or escapes it as
 3-byte code points are escaped four at a time with byte shuffles.
 
 ---
- vendor/yyjson/yyjson.c | 547 ++++++++++++++++++++++++++++++++++++++++-
- 1 file changed, 542 insertions(+), 5 deletions(-)
+ vendor/yyjson/yyjson.c | 563 ++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 558 insertions(+), 5 deletions(-)
 
 diff --git a/vendor/yyjson/yyjson.c b/vendor/yyjson/yyjson.c
-index ed6c7a4..61fc3ae 100644
+index ed6c7a4..d84f3eb 100644
 --- a/vendor/yyjson/yyjson.c
 +++ b/vendor/yyjson/yyjson.c
-@@ -1184,6 +1184,412 @@ utf8_seq_def(b4_req2, 03, 30, 00, 00)
+@@ -1184,6 +1184,428 @@ utf8_seq_def(b4_req2, 03, 30, 00, 00)
  
  
  
@@ -130,18 +130,33 @@ index ed6c7a4..61fc3ae 100644
 +
 +#if YYJSON_SIMD_SSSE3
 +
-+/* -1 until the first scan; racing first writes all store the same value. */
++/* -1 until the first scan. Threads may detect concurrently; every store
++   writes the same value and no other data hangs off it, so relaxed atomic
++   accesses suffice and plain ones would be a data race. */
 +static int simd_ssse3_state = -1;
 +
-+static_noinline void simd_detect_ssse3(void) {
++#if defined(_MSC_VER) && !defined(__clang__)
++/* MSVC: an aligned int load or store is single-copy atomic on x64. */
++#define simd_state_load() (*(volatile int *)&simd_ssse3_state)
++#define simd_state_store(v) (*(volatile int *)&simd_ssse3_state = (v))
++#else
++#define simd_state_load() __atomic_load_n(&simd_ssse3_state, __ATOMIC_RELAXED)
++#define simd_state_store(v) \
++    __atomic_store_n(&simd_ssse3_state, (v), __ATOMIC_RELAXED)
++#endif
++
++static_noinline int simd_detect_ssse3(void) {
++    int state;
 +#if defined(_MSC_VER) && !defined(__clang__)
 +    int regs[4];
 +    __cpuid(regs, 1);
-+    simd_ssse3_state = (regs[2] >> 9) & 1;
++    state = (regs[2] >> 9) & 1;
 +#else
 +    unsigned int a, b, c, d;
-+    simd_ssse3_state = (__get_cpuid(1, &a, &b, &c, &d) && ((c >> 9) & 1));
++    state = (__get_cpuid(1, &a, &b, &c, &d) && ((c >> 9) & 1));
 +#endif
++    simd_state_store(state);
++    return state;
 +}
 +
 +yyjson_target_ssse3
@@ -393,7 +408,7 @@ index ed6c7a4..61fc3ae 100644
 +static_inline usize simd_esc3(u8 *cur, const u8 *src, const u8 *end,
 +                              bool lower) {
 +#if YYJSON_SIMD_SSSE3
-+    if (simd_ssse3_state <= 0) return 0;
++    if (simd_state_load() <= 0) return 0;
 +    return simd_esc3_ssse3(cur, src, end,
 +                           lower ? simd_hex_lower : simd_hex_upper);
 +#elif YYJSON_SIMD_NEON
@@ -415,8 +430,9 @@ index ed6c7a4..61fc3ae 100644
 +static_inline usize simd_str_scan(const u8 *src, const u8 *end, u8 quo,
 +                                  u8 extra, u8 *dst) {
 +#if YYJSON_SIMD_SSSE3
-+    if (unlikely(simd_ssse3_state < 0)) simd_detect_ssse3();
-+    if (!simd_ssse3_state) return 0;
++    int state = simd_state_load();
++    if (unlikely(state < 0)) state = simd_detect_ssse3();
++    if (!state) return 0;
 +    return simd_str_scan_ssse3(src, end, quo, extra, dst);
 +#elif YYJSON_SIMD_NEON
 +    return simd_str_scan_neon(src, end, quo, extra, dst);
@@ -431,7 +447,7 @@ index ed6c7a4..61fc3ae 100644
  /*==============================================================================
   * MARK: - Power10 Lookup Table (Private)
   * These data are used by the floating-point number reader and writer.
-@@ -4943,6 +5349,8 @@ skip_utf8:
+@@ -4943,6 +5365,8 @@ skip_utf8:
              else break;
          })
  #else
@@ -440,7 +456,7 @@ index ed6c7a4..61fc3ae 100644
          uni = byte_load_4(src);
          while (is_utf8_seq3(uni)) {
              src += 3;
-@@ -5110,6 +5518,18 @@ copy_ascii:
+@@ -5110,6 +5534,18 @@ copy_ascii:
  copy_utf8:
      if (*src & 0x80) { /* non-ASCII character */
          pos = src;
@@ -459,7 +475,7 @@ index ed6c7a4..61fc3ae 100644
          uni = byte_load_4(src);
  #if YYJSON_DISABLE_UTF8_VALIDATION
          while (true) repeat4({
-@@ -6413,6 +6833,9 @@ skip_ascii_end:
+@@ -6413,6 +6849,9 @@ skip_ascii_end:
  skip_utf8:
      if (likely((usize)(eof - src) >= 4)) {
          pos = src;
@@ -469,7 +485,7 @@ index ed6c7a4..61fc3ae 100644
          uni = byte_load_4(src);
          while (is_utf8_seq3(uni)) {
              src += 3;
-@@ -9763,6 +10186,83 @@ static_inline u8 *write_str_noesc(u8 *cur, const u8 *str, usize str_len) {
+@@ -9763,6 +10202,83 @@ static_inline u8 *write_str_noesc(u8 *cur, const u8 *str, usize str_len) {
      return cur;
  }
  
@@ -553,7 +569,7 @@ index ed6c7a4..61fc3ae 100644
  /**
   Write UTF-8 string (requires len * 6 + 2 bytes buffer).
   @param cur Buffer cursor.
-@@ -9771,12 +10271,13 @@ static_inline u8 *write_str_noesc(u8 *cur, const u8 *str, usize str_len) {
+@@ -9771,12 +10287,13 @@ static_inline u8 *write_str_noesc(u8 *cur, const u8 *str, usize str_len) {
   @param str A UTF-8 string, null-terminator is not required.
   @param str_len Length of string in bytes.
   @param enc_table Encode type table for character.
@@ -571,7 +587,7 @@ index ed6c7a4..61fc3ae 100644
      /* The replacement character U+FFFD, used to indicate invalid character.
         Looked up via hex_table so that LOWERCASE_HEX produces "fffd" while
         the default produces "FFFD". */
-@@ -9784,6 +10285,7 @@ static_inline u8 *write_str(u8 *cur, bool esc, bool inv,
+@@ -9784,6 +10301,7 @@ static_inline u8 *write_str(u8 *cur, bool esc, bool inv,
  
      const u8 *src = str;
      const u8 *end = str + str_len;
@@ -579,7 +595,7 @@ index ed6c7a4..61fc3ae 100644
      *cur++ = '"';
  
  copy_ascii:
-@@ -9801,7 +10303,7 @@ copy_ascii:
+@@ -9801,7 +10319,7 @@ copy_ascii:
  #define expr_stop(i) \
      stop_char_##i: \
      memcpy(cur, src, i); \
@@ -588,7 +604,7 @@ index ed6c7a4..61fc3ae 100644
  
      while (end - src >= 16) {
          repeat16_incr(expr_jump)
-@@ -9828,6 +10330,13 @@ copy_ascii:
+@@ -9828,6 +10346,13 @@ copy_ascii:
  #undef expr_jump
  #undef expr_stop
  
@@ -602,7 +618,7 @@ index ed6c7a4..61fc3ae 100644
  copy_utf8:
      if (unlikely(src + 4 > end)) {
          if (end == src) goto copy_end;
-@@ -9991,6 +10500,34 @@ err_esc:
+@@ -9991,6 +10516,34 @@ err_esc:
      goto copy_utf8;
  }
  

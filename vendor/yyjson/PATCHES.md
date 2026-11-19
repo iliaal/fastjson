@@ -576,8 +576,9 @@ Neoverse-N1, validating JSON whose strings are CJK or Cyrillic ran at
   escaped), and backs up to a code point boundary. Errors are ORed over
   the run: if any byte in it is invalid the scan returns 0, so the
   scalar code finds every error at the same position with the same
-  message. SSSE3 is detected once with CPUID on x86-64; NEON is used
-  unconditionally on AArch64. Other targets, and builds with
+  message. SSSE3 is detected once with CPUID on x86-64 and cached with
+  relaxed atomic loads and stores, since ZTS threads can run the first
+  detection concurrently; NEON is used unconditionally on AArch64. Other targets, and builds with
   `YYJSON_DISABLE_UTF8_VALIDATION` or `YYJSON_DISABLE_SIMD`, compile
   the scan to `return 0`.
 - The reader calls it where a string first turns non-ASCII, in the
