@@ -1018,10 +1018,11 @@ PHP_RINIT_FUNCTION(fastjson)
 
 PHP_MINIT_FUNCTION(fastjson)
 {
-#if PHP_VERSION_ID >= 80300
+#if PHP_VERSION_ID >= 80300 && !defined(PHP_WIN32)
     /* Headers from a newer patch can make inline helpers call symbols an older
-     * patch does not export; ELF binds them lazily, so without this check the
-     * process dies on first use instead of at startup. */
+     * patch does not export; ELF and Mach-O bind them lazily, so without this
+     * check the process dies on first use instead of at startup. Windows
+     * resolves imports at load time and fails there already. */
     if (php_version_id() < PHP_VERSION_ID) {
         php_error_docref(NULL, E_CORE_WARNING,
             "fastjson was built for PHP " PHP_VERSION " and cannot run on PHP %s; "
