@@ -25,7 +25,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Build
 
-- Prebuilt binaries for PHP 8.6: macOS arm64 `.so` built against PHP 8.6.0, and Windows x64 TS/NTS DLLs. Linux 8.6 source-builds through PIE.
+- Prebuilt binaries for PHP 8.6: Linux glibc (x86_64, arm64) and macOS (arm64) `.so` files built against PHP 8.6.0, and Windows x64 TS/NTS DLLs.
 
 ## [0.10.2] - 2026-10-26
 

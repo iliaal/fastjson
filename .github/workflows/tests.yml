@@ -22,7 +22,7 @@ jobs:
         with:
           persist-credentials: false
       # setup-php main until a release marks PHP 8.6 stable; return to a tagged release then.
-      - uses: shivammathur/setup-php@292f25acb388a711c0c758f382e5c3109a391dd7 # main # zizmor: ignore[stale-action-refs,ref-version-mismatch]
+      - uses: shivammathur/setup-php@3c21e10268bafaf84c59e8f4e65b39acacb62ca4 # main # zizmor: ignore[stale-action-refs,ref-version-mismatch]
         with:
           php-version: '8.4'
           tools: composer
@@ -59,7 +59,7 @@ jobs:
         os: [ubuntu-latest]
         arch: [x86_64]
         php: ['8.1', '8.2', '8.3', '8.4', '8.5', '8.6']
-        # release-linux.yml ships arm64 glibc binaries for 8.4 and 8.5.
+        # release-linux.yml ships arm64 glibc binaries for 8.4, 8.5, and 8.6.
         # Build those cells here so a break shows up before the tag rather
         # than in the release workflow, where it silently drops the asset.
         # Only the shipped versions: arm64 runners are free on public repos
@@ -72,6 +72,9 @@ jobs:
           - os: ubuntu-24.04-arm
             arch: arm64
             php: '8.5'
+          - os: ubuntu-24.04-arm
+            arch: arm64
+            php: '8.6'
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -79,7 +82,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup PHP
-        uses: shivammathur/setup-php@292f25acb388a711c0c758f382e5c3109a391dd7 # main # zizmor: ignore[stale-action-refs,ref-version-mismatch]
+        uses: shivammathur/setup-php@3c21e10268bafaf84c59e8f4e65b39acacb62ca4 # main # zizmor: ignore[stale-action-refs,ref-version-mismatch]
         with:
           php-version: ${{ matrix.php }}
           tools: phpize, php-config
@@ -246,7 +249,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup PHP
-        uses: shivammathur/setup-php@292f25acb388a711c0c758f382e5c3109a391dd7 # main # zizmor: ignore[stale-action-refs,ref-version-mismatch]
+        uses: shivammathur/setup-php@3c21e10268bafaf84c59e8f4e65b39acacb62ca4 # main # zizmor: ignore[stale-action-refs,ref-version-mismatch]
         with:
           php-version: ${{ matrix.php }}
           tools: phpize, php-config
