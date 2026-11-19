@@ -7,7 +7,7 @@ name: Release Linux & macOS binaries
 # convention. Assets upload only after every build and gate passes.
 #
 # PHP 8.1-8.3 have no prebuilts: PIE's composer-default fallback
-# source-builds them. Windows ships 8.1-8.5 because php-windows-builder
+# source-builds them. Windows ships 8.1-8.6 because php-windows-builder
 # makes extra versions cheap; glibc/macOS ship only current PHP versions,
 # like phpser and fastchart. Drop the 8.4 lane when 8.4 hits EOL.
 #
@@ -22,6 +22,15 @@ name: Release Linux & macOS binaries
 # current patch, as before; the Linux gate also loads it on the oldest and
 # a pinned newest patch image, and macOS loads it on the oldest-patch build
 # PHP and on setup-php's.
+#
+# 8.6 ships macOS only. No Linux 8.6 lane: the official php:8.6 images
+# are ZTS (docker-library/php#1686), so the Linux gate has no NTS 8.6
+# image to load an NTS binary into; Linux 8.6 users source-build via the
+# PIE fallback. The macOS 8.6 lane skips setup-php (test-on-build-php):
+# Homebrew's php@8.6 builds a php-src commit that trails the php-8.6.0
+# tag. Its test suite and gate run on the 8.6.0 build PHP, which is both
+# the oldest and the newest 8.6 patch. Drop test-on-build-php once
+# Homebrew builds the 8.6.0 release.
 #
 # No macOS Intel (macos-13): GitHub's Intel runner pool is too contended
 # to ship reliably, and macOS 26 drops Intel. Intel Macs source-build.
@@ -79,7 +88,12 @@ jobs:
           - ubuntu-24.04
           - ubuntu-24.04-arm
           - macos-15
-        php: ['8.4', '8.5']
+        php: ['8.4', '8.5', '8.6']
+        exclude:
+          - os: ubuntu-24.04
+            php: '8.6'
+          - os: ubuntu-24.04-arm
+            php: '8.6'
         # php-src: the oldest patch release of the minor, which the
         # binaries are built against. Hashes are the php.net-published
         # tar.xz SHA-256s. oldest-image/newest-image: official images the
@@ -98,6 +112,10 @@ jobs:
             php-src-sha256: 39cb6e4acd679b574d3d3276f148213e935fc25f90403eb84fb1b836a806ef1e
             oldest-image: php:8.5.0-cli@sha256:fb551f94cba4698612c90158aa7d4fe8e1a5355f9c444d0f90929d366fc75b36
             newest-image: php:8.5.12-cli@sha256:635a4b998025ab269194639a5549c6fdcd9b4f88ec8cd761b092de8653d40663
+          - php: '8.6'
+            php-src: '8.6.0'
+            php-src-sha256: 5f84beaa3d763aee1e4feed99bf54ec692c383b322e25626807b589238c3a087
+            test-on-build-php: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -124,7 +142,9 @@ jobs:
           persist-credentials: false
 
       - name: Setup PHP
-        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        if: ${{ !matrix.test-on-build-php }}
+        # setup-php main until a release marks PHP 8.6 stable; return to a tagged release then.
+        uses: shivammathur/setup-php@292f25acb388a711c0c758f382e5c3109a391dd7 # main # zizmor: ignore[stale-action-refs,ref-version-mismatch]
         with:
           php-version: ${{ matrix.php }}
           tools: phpize, php-config
@@ -152,6 +172,16 @@ jobs:
           make -j"$(nproc 2>/dev/null || sysctl -n hw.ncpu)" >"$RUNNER_TEMP/php-make.log" 2>&1 \
             || { tail -50 "$RUNNER_TEMP/php-make.log"; exit 1; }
           make install >/dev/null
+
+      # Without setup-php, nothing installs autoconf for phpize or puts a
+      # `php` on PATH; the build PHP becomes the test PHP. macOS only.
+      - name: Use the build PHP as the test PHP
+        if: ${{ matrix.test-on-build-php }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install autoconf
+          echo "$RUNNER_TEMP/php/bin" >> "$GITHUB_PATH"
 
       - name: Verify build and test PHP
         env:

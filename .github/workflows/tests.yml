@@ -21,7 +21,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+      # setup-php main until a release marks PHP 8.6 stable; return to a tagged release then.
+      - uses: shivammathur/setup-php@292f25acb388a711c0c758f382e5c3109a391dd7 # main # zizmor: ignore[stale-action-refs,ref-version-mismatch]
         with:
           php-version: '8.4'
           tools: composer
@@ -57,9 +58,7 @@ jobs:
       matrix:
         os: [ubuntu-latest]
         arch: [x86_64]
-        # 8.6 builds from the PHP-8.6 branch in the linux-php86 job:
-        # setup-php's '8.6' resolves to a master snapshot, not the branch.
-        php: ['8.1', '8.2', '8.3', '8.4', '8.5']
+        php: ['8.1', '8.2', '8.3', '8.4', '8.5', '8.6']
         # release-linux.yml ships arm64 glibc binaries for 8.4 and 8.5.
         # Build those cells here so a break shows up before the tag rather
         # than in the release workflow, where it silently drops the asset.
@@ -80,7 +79,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup PHP
-        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        uses: shivammathur/setup-php@292f25acb388a711c0c758f382e5c3109a391dd7 # main # zizmor: ignore[stale-action-refs,ref-version-mismatch]
         with:
           php-version: ${{ matrix.php }}
           tools: phpize, php-config
@@ -138,28 +137,40 @@ jobs:
             exit 1
           fi
 
-  linux-php86:
-    # Pre-release: gate on the PHP-8.6 branch here without publishing
-    # release binaries until PHP declares 8.6 stable.
-    name: PHP 8.6 - Linux x86_64 (PHP-8.6 branch)
+  php86-macos:
+    # Homebrew's php@8.6, which setup-php installs on macOS, builds a php-src
+    # commit that trails the php-8.6.0 tag, so macOS 8.6 builds from the
+    # checksum-pinned release tarball. This mirrors the macOS 8.6 binary
+    # release-linux.yml ships; fold 8.6 into the macos job once Homebrew
+    # builds the release.
+    name: PHP 8.6 - macOS
     needs: validate
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
+    env:
+      PHP_SRC: '8.6.0'
+      # php.net-published tar.xz SHA-256.
+      PHP_SRC_SHA256: 5f84beaa3d763aee1e4feed99bf54ec692c383b322e25626807b589238c3a087
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
+      # The release tarball ships generated parsers, so PHP itself needs no
+      # re2c or bison; phpize needs autoconf.
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y re2c bison autoconf
+        run: brew install autoconf
 
-      - name: Build PHP from the PHP-8.6 branch
+      - name: Build PHP ${{ env.PHP_SRC }} from the release tarball
+        shell: bash
         run: |
           set -euo pipefail
-          git clone --depth=1 --branch=PHP-8.6 https://github.com/php/php-src.git /tmp/php-src
+          tarball="$RUNNER_TEMP/php-$PHP_SRC.tar.xz"
+          curl -fsSL --retry 3 -o "$tarball" "https://www.php.net/distributions/php-$PHP_SRC.tar.xz"
+          echo "$PHP_SRC_SHA256  $tarball" | shasum -a 256 -c -
+          mkdir /tmp/php-src
+          tar -xJf "$tarball" -C /tmp/php-src --strip-components=1
           cd /tmp/php-src
-          git log -1 --format='php-src PHP-8.6 at %H (%cs)'
-          ./buildconf --force
           ./configure \
             --disable-debug \
             --disable-zts \
@@ -167,8 +178,9 @@ jobs:
             --enable-cli \
             --prefix=/tmp/php-86 \
             || { echo "==== config.log tail ===="; tail -200 config.log; exit 1; }
-          make -j"$(nproc)"
+          make -j"$(sysctl -n hw.ncpu)"
           make install
+          test "$(/tmp/php-86/bin/php -n -r 'echo PHP_VERSION;')" = "$PHP_SRC"
           /tmp/php-86/bin/php -v
 
       - name: Build extension
@@ -178,7 +190,7 @@ jobs:
           export PATH="/tmp/php-86/bin:$PATH"
           phpize
           ./configure --enable-fastjson --with-php-config=/tmp/php-86/bin/php-config
-          make -j"$(nproc)" 2>&1 | tee build.log
+          make -j"$(sysctl -n hw.ncpu)" 2>&1 | tee build.log
           # Drain the pipeline: grep -q can SIGPIPE its producers under pipefail
           # and turn a warning-filled build into a false pass.
           if grep 'warning:' build.log | grep -v '^ld: warning:' | grep . >/dev/null; then
@@ -221,9 +233,11 @@ jobs:
       fail-fast: false
       matrix:
         # Mirror the PHP versions release-linux.yml ships macOS binaries for
-        # (8.4, 8.5). A version this job omits is a cell that first gets built
-        # after the tag, when the release workflow runs, and a failure there
-        # publishes a release with that platform's assets missing.
+        # (8.4, 8.5, and 8.6; the php86-macos job covers 8.6 until Homebrew
+        # builds the 8.6.0 release). A version this job omits is a cell that
+        # first gets built after the tag, when the release workflow runs, and
+        # a failure there publishes a release with that platform's assets
+        # missing.
         php: ['8.1', '8.2', '8.3', '8.4', '8.5']
 
     steps:
@@ -232,7 +246,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup PHP
-        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        uses: shivammathur/setup-php@292f25acb388a711c0c758f382e5c3109a391dd7 # main # zizmor: ignore[stale-action-refs,ref-version-mismatch]
         with:
           php-version: ${{ matrix.php }}
           tools: phpize, php-config

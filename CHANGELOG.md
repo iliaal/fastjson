@@ -23,6 +23,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A malformed escape in a JSON string (a backslash followed by anything other than `"\/bfnrt` or `u` plus four hex digits, such as `"\x"` or `"\u12"`) now reports `JSON_ERROR_SYNTAX`, as `json_decode()` does, instead of `JSON_ERROR_UTF8`. This applies to `fastjson_decode()`, `fastjson_validate()`, `fastjson_file_decode()`, the pointer helpers and `fastjson_merge_patch()`, including the `JsonException` code. An unpaired surrogate escape still reports `JSON_ERROR_UTF8`.
 - `fastjson_decode()` no longer reads an uninitialized byte when `JSON_INVALID_UTF8_IGNORE` removes every byte of an object key. The key still decodes as `""`, matching `json_decode()`.
 
+### Build
+
+- Prebuilt binaries for PHP 8.6: macOS arm64 `.so` built against PHP 8.6.0, and Windows x64 TS/NTS DLLs. Linux 8.6 source-builds through PIE.
+
 ## [0.10.2] - 2026-10-26
 
 ### Fixed
