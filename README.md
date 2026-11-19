@@ -71,6 +71,8 @@ Function signatures match `ext/json`, so you can migrate a call site by replacin
 
 **Error location:** `fastjson_last_error_pos()` returns the byte offset of the currently recorded parse error (`-1` when no error or no source position is recorded). `fastjson_last_error_info()` returns `['code', 'msg', 'pos', 'line', 'col']` for that recorded error in one call (1-based line and column, or `0` when unknown). These getters need not describe the latest call: `fastjson_decode()` with `JSON_THROW_ON_ERROR` preserves the prior error state, including its location, on success or failure. For JSON errors under `JSON_THROW_ON_ERROR`, the thrown class is `JsonException` when `ext/json` is loaded, `Fastjson\JsonException` otherwise.
 
+**Long-running workers:** fastjson resets its error state when a PHP request starts, as `ext/json` does. FrankenPHP worker mode serves many HTTP requests from one PHP request, so `fastjson_last_error()`, `fastjson_last_error_msg()`, `fastjson_last_error_pos()`, and `fastjson_last_error_info()` can still report an error recorded while serving an earlier HTTP request, just as `json_last_error()` can. Read them right after the call you are checking, or use `JSON_THROW_ON_ERROR`.
+
 [`CHANGELOG.md`](CHANGELOG.md) has the full feature list and the known divergences from `ext/json` output.
 
 ## 📊 Performance
