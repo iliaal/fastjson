@@ -94,6 +94,10 @@ ZEND_EXTERN_MODULE_GLOBALS(fastjson)
 
 #define FASTJSON_G(v) ZEND_MODULE_GLOBALS_ACCESSOR(fastjson, v)
 
+#if defined(ZTS) && defined(COMPILE_DL_FASTJSON)
+ZEND_TSRMLS_CACHE_EXTERN()
+#endif
+
 /* Engines that define ZEND_HAS_OOM() (PHP 8.6, and the 8.4 and 8.5 patch
  * releases carrying the change) do not bail out of the allocation that
  * crosses memory_limit: it succeeds, the error is queued, and the engine

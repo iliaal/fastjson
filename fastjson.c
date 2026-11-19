@@ -1003,6 +1003,9 @@ PHP_GINIT_FUNCTION(fastjson)
 
 PHP_RINIT_FUNCTION(fastjson)
 {
+#if defined(COMPILE_DL_FASTJSON) && defined(ZTS)
+    ZEND_TSRMLS_CACHE_UPDATE();
+#endif
     /* Module globals persist across requests in non-ZTS builds; without a
      * reset, one request's error state would leak into the next. A bailout
      * during decode skips fj_key_share_pop, so drop the dangling cache

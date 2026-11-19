@@ -20,7 +20,8 @@ if (PHP_FASTJSON != "no") {
     var wrapper_sources = "fastjson.c fastjson_alloc.c fastjson_decode.c " +
         "fastjson_encode.c fastjson_directwrite.c fastjson_pointer_splice.c";
 
-    EXTENSION("fastjson", wrapper_sources, null);
+    EXTENSION("fastjson", wrapper_sources, null,
+        "/DZEND_ENABLE_STATIC_TSRMLS_CACHE=1");
     ADD_SOURCES(configure_module_dirname + "\\" + yyjson_src_dir,
         "yyjson.c", "fastjson");
 }

@@ -22,6 +22,10 @@ if test "$PHP_FASTJSON" != "no"; then
   FASTJSON_CFLAGS="-fvisibility=hidden -Dyyjson_api= \
     -Wall -Wextra -Wno-unused-parameter -Wno-unused-function"
 
+  dnl ZTS: read executor and module globals through a thread-local cache
+  dnl instead of a tsrm_get_ls_cache() call per access.
+  FASTJSON_CFLAGS="$FASTJSON_CFLAGS -DZEND_ENABLE_STATIC_TSRMLS_CACHE=1"
+
   dnl fastjson never calls yyjson's incremental reader, FILE*/path I/O, or
   dnl JSON Pointer/Patch/Merge Patch; keep that unused code out of the module.
   FASTJSON_CFLAGS="$FASTJSON_CFLAGS -DYYJSON_DISABLE_INCR_READER=1 \
