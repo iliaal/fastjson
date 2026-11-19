@@ -33,7 +33,7 @@ for ((i = 1; i <= RUNS; i++)); do
     status=0
     TSAN_OPTIONS="halt_on_error=1:exitcode=66${TSAN_OPTIONS:+:$TSAN_OPTIONS}" \
         "${run_prefix[@]}" "$work_dir/yyjson-tsan" > "$work_dir/out" 2>&1 || status=$?
-    if [[ "$status" -ne 0 ]] || ! grep -qx done "$work_dir/out"; then
+    if [[ "$status" -ne 0 ]] || ! grep -qx 'done' "$work_dir/out"; then
         printf 'run %d/%d failed (status %d):\n' "$i" "$RUNS" "$status" >&2
         cat "$work_dir/out" >&2
         failures=$((failures + 1))
