@@ -1,0 +1,93 @@
+name: PHP master (advisory)
+
+# Builds against php-src master through setup-php's nightly build. The job is
+# continue-on-error, so an upstream break shows up here without blocking merges.
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '23 6 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: php-master-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  php-master:
+    name: PHP 8.7 (master, advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@3c21e10268bafaf84c59e8f4e65b39acacb62ca4 # main # zizmor: ignore[stale-action-refs,ref-version-mismatch]
+        with:
+          php-version: '8.7'
+          tools: phpize, php-config
+
+      - name: Show PHP build
+        run: php -v
+
+      - name: Build extension
+        shell: bash
+        run: |
+          set -euo pipefail
+          phpize
+          ./configure --enable-fastjson
+          # GitHub's default shell does not set pipefail; without it a failing
+          # `make` is swallowed by tee and the tests merely skip.
+          make -j"$(nproc)" 2>&1 | tee build.log
+          # 'ld: warning:' lines are macOS linker deprecation notices
+          # (-single_module, -undefined suppress), not compiler output;
+          # only compiler warnings fail the build.
+          # Drain the pipeline: grep -q can SIGPIPE its producers under pipefail
+          # and turn a warning-filled build into a false pass.
+          if grep 'warning:' build.log | grep -v '^ld: warning:' | grep . >/dev/null; then
+            echo "::error::Build produced warning(s)"
+            grep 'warning:' build.log | grep -v '^ld: warning:' || true
+            exit 1
+          fi
+
+      - name: Run tests
+        shell: bash
+        run: |
+          # No -e: it would abort on run-tests' non-zero exit before the
+          # checks below print the summary.
+          set -uo pipefail
+          TEST_PHP_EXECUTABLE=$(which php)
+          ext_so="$(pwd)/modules/fastjson.so"
+          TEST_PHP_ARGS="-d extension=$ext_so"
+          export TEST_PHP_EXECUTABLE TEST_PHP_ARGS
+          export NO_INTERACTION=1
+          # A bad module ABI loads no extension, so every PHPT skips and the run
+          # reports 0 failures. Capture `php -m` before matching: piping it into
+          # `grep -q` SIGPIPEs php on the first hit and trips pipefail.
+          mods=$(php -d "extension=$ext_so" -m)
+          grep -qix fastjson <<< "$mods" \
+            || { echo "::error::fastjson extension failed to load"; exit 1; }
+          # tee rather than $(...) keeps the summary and diffs visible when
+          # run-tests exits non-zero.
+          php run-tests.php --show-diff -g FAIL,BORK,LEAK,XLEAK \
+              tests/ tests/upstream-json/ 2>&1 | tee /tmp/test-output.txt
+          run_status=${PIPESTATUS[0]}
+          if ! grep -q 'Number of tests' /tmp/test-output.txt; then
+            echo "::error::run-tests.php produced no summary (aborted?), status $run_status"
+            exit 1
+          fi
+          if grep -qiE 'Tests (failed|leaked|borked)[[:space:]]*:[[:space:]]*[1-9]' /tmp/test-output.txt; then
+            echo "::error::tests failed/leaked/borked"
+            exit 1
+          fi
+          if [ "$run_status" -ne 0 ]; then
+            echo "::error::run-tests.php exited with status $run_status"
+            exit 1
+          fi
