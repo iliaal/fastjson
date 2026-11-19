@@ -1337,7 +1337,7 @@ static usize simd_str_scan_ssse3(const u8 *src, const u8 *end, u8 quo,
     const __m128i k3 = _mm_set1_epi8((char)(0xE0 - 0x80));
     const __m128i k4 = _mm_set1_epi8((char)(0xF0 - 0x80));
     const __m128i k80 = _mm_set1_epi8((char)0x80);
-    __m128i prev = zero, err = zero;
+    __m128i prev = zero;
 
     while (end - src >= 16) {
         __m128i v = _mm_loadu_si128((const __m128i *)src);
@@ -1356,7 +1356,8 @@ static usize simd_str_scan_ssse3(const u8 *src, const u8 *end, u8 quo,
             _mm_shuffle_epi8(t2h, _mm_and_si128(_mm_srli_epi16(v, 4), nib)));
         must23 = _mm_and_si128(_mm_or_si128(_mm_subs_epu8(p2, k3),
                                             _mm_subs_epu8(p3, k4)), k80);
-        err = _mm_or_si128(err, _mm_xor_si128(must23, sc));
+        if (_mm_movemask_epi8(_mm_cmpeq_epi8(_mm_xor_si128(must23, sc), zero))
+                != 0xFFFF) break;
         if (dst) {
             _mm_storeu_si128((__m128i *)dst, v);
             dst += 16;
@@ -1364,7 +1365,6 @@ static usize simd_str_scan_ssse3(const u8 *src, const u8 *end, u8 quo,
         prev = v;
         src += 16;
     }
-    if (_mm_movemask_epi8(_mm_cmpeq_epi8(err, zero)) != 0xFFFF) return 0;
     return simd_run_end(beg, (usize)(src - beg));
 }
 
@@ -1392,7 +1392,7 @@ static usize simd_str_scan_neon(const u8 *src, const u8 *end, u8 quo,
     const uint8x16_t k3 = vdupq_n_u8(0xE0 - 0x80);
     const uint8x16_t k4 = vdupq_n_u8(0xF0 - 0x80);
     const uint8x16_t k80 = vdupq_n_u8(0x80);
-    uint8x16_t prev = zero, err = zero;
+    uint8x16_t prev = zero;
 
     while (end - src >= 16) {
         uint8x16_t v = vld1q_u8(src);
@@ -1408,7 +1408,7 @@ static usize simd_str_scan_neon(const u8 *src, const u8 *end, u8 quo,
                                vqtbl1q_u8(t1l, vandq_u8(p1, nib))),
                       vqtbl1q_u8(t2h, vshrq_n_u8(v, 4)));
         must23 = vandq_u8(vorrq_u8(vqsubq_u8(p2, k3), vqsubq_u8(p3, k4)), k80);
-        err = vorrq_u8(err, veorq_u8(must23, sc));
+        if (simd_neon_any(veorq_u8(must23, sc))) break;
         if (dst) {
             vst1q_u8(dst, v);
             dst += 16;
@@ -1416,7 +1416,6 @@ static usize simd_str_scan_neon(const u8 *src, const u8 *end, u8 quo,
         prev = v;
         src += 16;
     }
-    if (simd_neon_any(err)) return 0;
     return simd_run_end(beg, (usize)(src - beg));
 }
 

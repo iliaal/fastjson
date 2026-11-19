@@ -11,14 +11,14 @@ unchanged. The writer copies that prefix directly, or escapes it as
 3-byte code points are escaped four at a time with byte shuffles.
 
 ---
- vendor/yyjson/yyjson.c | 563 ++++++++++++++++++++++++++++++++++++++++-
- 1 file changed, 558 insertions(+), 5 deletions(-)
+ vendor/yyjson/yyjson.c | 562 ++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 557 insertions(+), 5 deletions(-)
 
 diff --git a/vendor/yyjson/yyjson.c b/vendor/yyjson/yyjson.c
-index ed6c7a4..d84f3eb 100644
+index ed6c7a4..9425565 100644
 --- a/vendor/yyjson/yyjson.c
 +++ b/vendor/yyjson/yyjson.c
-@@ -1184,6 +1184,428 @@ utf8_seq_def(b4_req2, 03, 30, 00, 00)
+@@ -1184,6 +1184,427 @@ utf8_seq_def(b4_req2, 03, 30, 00, 00)
  
  
  
@@ -175,7 +175,7 @@ index ed6c7a4..d84f3eb 100644
 +    const __m128i k3 = _mm_set1_epi8((char)(0xE0 - 0x80));
 +    const __m128i k4 = _mm_set1_epi8((char)(0xF0 - 0x80));
 +    const __m128i k80 = _mm_set1_epi8((char)0x80);
-+    __m128i prev = zero, err = zero;
++    __m128i prev = zero;
 +
 +    while (end - src >= 16) {
 +        __m128i v = _mm_loadu_si128((const __m128i *)src);
@@ -194,7 +194,8 @@ index ed6c7a4..d84f3eb 100644
 +            _mm_shuffle_epi8(t2h, _mm_and_si128(_mm_srli_epi16(v, 4), nib)));
 +        must23 = _mm_and_si128(_mm_or_si128(_mm_subs_epu8(p2, k3),
 +                                            _mm_subs_epu8(p3, k4)), k80);
-+        err = _mm_or_si128(err, _mm_xor_si128(must23, sc));
++        if (_mm_movemask_epi8(_mm_cmpeq_epi8(_mm_xor_si128(must23, sc), zero))
++                != 0xFFFF) break;
 +        if (dst) {
 +            _mm_storeu_si128((__m128i *)dst, v);
 +            dst += 16;
@@ -202,7 +203,6 @@ index ed6c7a4..d84f3eb 100644
 +        prev = v;
 +        src += 16;
 +    }
-+    if (_mm_movemask_epi8(_mm_cmpeq_epi8(err, zero)) != 0xFFFF) return 0;
 +    return simd_run_end(beg, (usize)(src - beg));
 +}
 +
@@ -230,7 +230,7 @@ index ed6c7a4..d84f3eb 100644
 +    const uint8x16_t k3 = vdupq_n_u8(0xE0 - 0x80);
 +    const uint8x16_t k4 = vdupq_n_u8(0xF0 - 0x80);
 +    const uint8x16_t k80 = vdupq_n_u8(0x80);
-+    uint8x16_t prev = zero, err = zero;
++    uint8x16_t prev = zero;
 +
 +    while (end - src >= 16) {
 +        uint8x16_t v = vld1q_u8(src);
@@ -246,7 +246,7 @@ index ed6c7a4..d84f3eb 100644
 +                               vqtbl1q_u8(t1l, vandq_u8(p1, nib))),
 +                      vqtbl1q_u8(t2h, vshrq_n_u8(v, 4)));
 +        must23 = vandq_u8(vorrq_u8(vqsubq_u8(p2, k3), vqsubq_u8(p3, k4)), k80);
-+        err = vorrq_u8(err, veorq_u8(must23, sc));
++        if (simd_neon_any(veorq_u8(must23, sc))) break;
 +        if (dst) {
 +            vst1q_u8(dst, v);
 +            dst += 16;
@@ -254,7 +254,6 @@ index ed6c7a4..d84f3eb 100644
 +        prev = v;
 +        src += 16;
 +    }
-+    if (simd_neon_any(err)) return 0;
 +    return simd_run_end(beg, (usize)(src - beg));
 +}
 +
@@ -447,7 +446,7 @@ index ed6c7a4..d84f3eb 100644
  /*==============================================================================
   * MARK: - Power10 Lookup Table (Private)
   * These data are used by the floating-point number reader and writer.
-@@ -4943,6 +5365,8 @@ skip_utf8:
+@@ -4943,6 +5364,8 @@ skip_utf8:
              else break;
          })
  #else
@@ -456,7 +455,7 @@ index ed6c7a4..d84f3eb 100644
          uni = byte_load_4(src);
          while (is_utf8_seq3(uni)) {
              src += 3;
-@@ -5110,6 +5534,18 @@ copy_ascii:
+@@ -5110,6 +5533,18 @@ copy_ascii:
  copy_utf8:
      if (*src & 0x80) { /* non-ASCII character */
          pos = src;
@@ -475,7 +474,7 @@ index ed6c7a4..d84f3eb 100644
          uni = byte_load_4(src);
  #if YYJSON_DISABLE_UTF8_VALIDATION
          while (true) repeat4({
-@@ -6413,6 +6849,9 @@ skip_ascii_end:
+@@ -6413,6 +6848,9 @@ skip_ascii_end:
  skip_utf8:
      if (likely((usize)(eof - src) >= 4)) {
          pos = src;
@@ -485,7 +484,7 @@ index ed6c7a4..d84f3eb 100644
          uni = byte_load_4(src);
          while (is_utf8_seq3(uni)) {
              src += 3;
-@@ -9763,6 +10202,83 @@ static_inline u8 *write_str_noesc(u8 *cur, const u8 *str, usize str_len) {
+@@ -9763,6 +10201,83 @@ static_inline u8 *write_str_noesc(u8 *cur, const u8 *str, usize str_len) {
      return cur;
  }
  
@@ -569,7 +568,7 @@ index ed6c7a4..d84f3eb 100644
  /**
   Write UTF-8 string (requires len * 6 + 2 bytes buffer).
   @param cur Buffer cursor.
-@@ -9771,12 +10287,13 @@ static_inline u8 *write_str_noesc(u8 *cur, const u8 *str, usize str_len) {
+@@ -9771,12 +10286,13 @@ static_inline u8 *write_str_noesc(u8 *cur, const u8 *str, usize str_len) {
   @param str A UTF-8 string, null-terminator is not required.
   @param str_len Length of string in bytes.
   @param enc_table Encode type table for character.
@@ -587,7 +586,7 @@ index ed6c7a4..d84f3eb 100644
      /* The replacement character U+FFFD, used to indicate invalid character.
         Looked up via hex_table so that LOWERCASE_HEX produces "fffd" while
         the default produces "FFFD". */
-@@ -9784,6 +10301,7 @@ static_inline u8 *write_str(u8 *cur, bool esc, bool inv,
+@@ -9784,6 +10300,7 @@ static_inline u8 *write_str(u8 *cur, bool esc, bool inv,
  
      const u8 *src = str;
      const u8 *end = str + str_len;
@@ -595,7 +594,7 @@ index ed6c7a4..d84f3eb 100644
      *cur++ = '"';
  
  copy_ascii:
-@@ -9801,7 +10319,7 @@ copy_ascii:
+@@ -9801,7 +10318,7 @@ copy_ascii:
  #define expr_stop(i) \
      stop_char_##i: \
      memcpy(cur, src, i); \
@@ -604,7 +603,7 @@ index ed6c7a4..d84f3eb 100644
  
      while (end - src >= 16) {
          repeat16_incr(expr_jump)
-@@ -9828,6 +10346,13 @@ copy_ascii:
+@@ -9828,6 +10345,13 @@ copy_ascii:
  #undef expr_jump
  #undef expr_stop
  
@@ -618,7 +617,7 @@ index ed6c7a4..d84f3eb 100644
  copy_utf8:
      if (unlikely(src + 4 > end)) {
          if (end == src) goto copy_end;
-@@ -9991,6 +10516,34 @@ err_esc:
+@@ -9991,6 +10515,34 @@ err_esc:
      goto copy_utf8;
  }
  
