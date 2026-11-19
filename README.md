@@ -43,7 +43,7 @@ echo 'extension=fastjson.so' | sudo tee /etc/php/conf.d/fastjson.ini
 
 ### Windows binaries
 
-Pre-built 64-bit DLLs for PHP 8.1 through 8.5 (TS/NTS) are attached to each [GitHub release](https://github.com/iliaal/fastjson/releases).
+Pre-built 64-bit DLLs for PHP 8.1 through 8.6 (TS/NTS) are attached to each [GitHub release](https://github.com/iliaal/fastjson/releases).
 
 ## 🛠️ Usage
 

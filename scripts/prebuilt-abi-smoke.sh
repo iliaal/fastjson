@@ -2,8 +2,11 @@
 # Usage: prebuilt-abi-smoke.sh MODULE.so OLDEST_IMAGE NEWEST_IMAGE
 #
 # Gates a prebuilt Linux module against the oldest and newest patch release
-# of its PHP minor. Each image is a digest-pinned official php:X.Y.Z-cli image;
-# the X.Y.Z in its tag is the PHP_VERSION the image must report.
+# of its PHP minor. Each image is a digest-pinned official php:X.Y.Z-cli image,
+# or a fastjson-local/php:X.Y.Z-cli image the release workflow built in the
+# same job from a checksum-pinned php.net tarball (no NTS official image
+# exists for that minor); the X.Y.Z in its tag is the PHP_VERSION the image
+# must report. Every image must be a non-thread-safe PHP.
 #
 # 1. Every undefined (non-weak) dynamic symbol of the module must be exported
 #    by the oldest image's php binary or by a library the module itself links
@@ -32,6 +35,14 @@ image_version() {
 # IPs. Prints the reference that was pulled.
 pull_image() {
 	local ref=$1 path prefix candidate attempt
+	if [[ "$ref" == fastjson-local/* ]]; then
+		if ! docker image inspect "$ref" >/dev/null 2>&1; then
+			echo "::error::local image $ref was not built in this job" >&2
+			return 1
+		fi
+		printf '%s\n' "$ref"
+		return 0
+	fi
 	if [[ "$ref" != *@sha256:* ]]; then
 		echo "::error::$ref is not pinned by digest" >&2
 		return 1
@@ -66,6 +77,15 @@ pull_image() {
 
 oldest=$(pull_image "$2")
 newest=$(pull_image "$3")
+
+# The module is NTS; a ZTS image would reject it at load for a reason the
+# import check cannot see, so refuse it up front.
+for image in "$oldest" "$newest"; do
+	if ! docker run --rm "$image" php -n -r 'exit(PHP_ZTS ? 1 : 0);'; then
+		echo "::error::$image is not a non-thread-safe PHP" >&2
+		exit 1
+	fi
+done
 
 work=$(mktemp -d)
 cid=""
