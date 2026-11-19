@@ -20,6 +20,13 @@ Fast JSON encode, decode, and validate for PHP 8.1+. A drop-in alternative to `e
 pie install iliaal/fastjson
 ```
 
+On Linux glibc (x86_64, arm64) and macOS arm64 with PHP 8.4, 8.5, or 8.6, PIE
+installs a prebuilt binary. The 8.4 and 8.5 binaries require PHP 8.4.27+ or
+8.5.12+: they are built against those patches so they stop at `memory_limit`
+instead of running to PHP's hard limit, which ends the process. On an earlier
+patch the extension refuses to start with a warning, so upgrade PHP or build
+from source there.
+
 On a minimal PHP image (for example `php:8.x-cli` from Docker Hub), install these build tools before running PIE:
 
 ```bash
