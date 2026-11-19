@@ -113,6 +113,13 @@ static bool FJ_WALK_NAME(FJ_WALK_VAL *val, bool assoc,
             size_t sane_len;
             char *sane = fastjson_sanitize_utf8(raw, raw_len, flags,
                                                 FJ_SAN_DECODE, &sane_len);
+            /* The copy below doubles a buffer that can already be three
+             * times the string. */
+            if (UNEXPECTED(fastjson_oom_pending())) {
+                efree(sane);
+                ZVAL_NULL(out);
+                return false;
+            }
             ZVAL_STRINGL(out, sane, sane_len);
             efree(sane);
             return true;
@@ -148,6 +155,10 @@ static bool FJ_WALK_NAME(FJ_WALK_VAL *val, bool assoc,
         bool fill_ok = true;
         ZEND_HASH_FILL_PACKED(Z_ARRVAL_P(out)) {
             while ((item = FJ_ARR_ITER_NEXT(&iter))) {
+                if (UNEXPECTED(fastjson_oom_pending())) {
+                    fill_ok = false;
+                    break;
+                }
                 zval child;
                 if (!FJ_WALK_NAME(item, assoc, remaining_depth - 1, flags,
                                   &child)) {
@@ -191,6 +202,9 @@ static bool FJ_WALK_NAME(FJ_WALK_VAL *val, bool assoc,
         FJ_OBJ_ITER iter;
         FJ_OBJ_ITER_INIT(val, &iter);
         while ((key = FJ_OBJ_ITER_NEXT(&iter))) {
+            if (UNEXPECTED(fastjson_oom_pending())) {
+                return false;
+            }
             FJ_WALK_VAL *vval = FJ_OBJ_ITER_VAL(key);
             const char *kstr = FJ_GET_STR(key);
             size_t klen = FJ_GET_LEN(key);
@@ -201,6 +215,10 @@ static bool FJ_WALK_NAME(FJ_WALK_VAL *val, bool assoc,
             if (FJ_GET_TAG(key) & YYJSON_RESERVED_INVALID_UNICODE) {
                 use_key = fastjson_sanitize_utf8(kstr, klen, flags,
                                                  FJ_SAN_DECODE, &use_klen);
+                if (UNEXPECTED(fastjson_oom_pending())) {
+                    efree((char *)use_key);
+                    return false;
+                }
                 key_owned = true;
             }
 #endif

@@ -262,6 +262,10 @@ static bool fj_splice_write_full(fj_splice_ctx *ctx, const yyjson_val *val,
     if (!fj_splice_stack_ok(ctx)) {
         return false;
     }
+    if (UNEXPECTED(fastjson_oom_pending())) {
+        ctx->status = FJ_SPLICE_WRITE_FAIL;
+        return false;
+    }
     switch (yyjson_get_type(FJ_IMUT_VAL(val))) {
     case YYJSON_TYPE_NULL:
         smart_str_appendl(&ctx->buf, "null", 4);
