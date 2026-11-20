@@ -183,6 +183,8 @@ in `[[1,],`.
   `read_root_single` writes a NUL into the buffer, which the no-copy
   path cannot do.
 
+**Permanent local patch.** Upstream declined validate-only mode ([ibireme/yyjson#308](https://github.com/ibireme/yyjson/pull/308), closed 2026-10-08): the rework (`~/ai/yyjson` branch `pr-validate-v2`, head 78f3473) made normal parse about 4% slower on large files (otfcc.json, fgo.json) and grew the binary, and the maintainer called it not a common need. P-002, P-008, and P-009 stay local; resubmit only if parse speed and binary size are unchanged.
+
 ## P-003: expose `yyjson_write_string_to_buf()` public API
 
 **Files:** `vendor/yyjson/yyjson.h`, `vendor/yyjson/yyjson.c`
@@ -732,3 +734,5 @@ the .so, so hidden visibility doesn't affect functionality.
    ```
    Expected output: empty. Anything else means the override leaked
    again.
+
+**Permanent local patch.** Upstream rejects explicit SIMD by design ([ibireme/yyjson#294](https://github.com/ibireme/yyjson/pull/294), closed 2026-08-02; the README lists "no explicit SIMD"). Don't propose P-010 upstream unless that stance changes; scalar-only improvements remain upstream candidates.
