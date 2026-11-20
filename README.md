@@ -8,7 +8,7 @@
 
 ![fastjson: 5.6x encode, 2.6x decode, 5.0x validate vs ext/json](images/fastjson-hero.jpg)
 
-Fast JSON encode, decode, and validate for PHP 8.1+. A drop-in alternative to `ext/json` with a `fastjson_*` API and `json_last_error`-compatible error reporting, built on [yyjson](https://github.com/ibireme/yyjson) (master snapshot `2c9c76a`, after 0.13.0). It coexists with `ext/json`, so you adopt it one call site at a time.
+Fast JSON encode, decode, and validate for PHP 8.1+. A drop-in alternative to `ext/json` with a `fastjson_*` API and `json_last_error`-compatible error reporting, built on [yyjson](https://github.com/ibireme/yyjson) (master snapshot `be9bd74`, after 0.13.0). It coexists with `ext/json`, so you adopt it one call site at a time.
 
 > Status: pre-release. Available now: `fastjson_encode` / `fastjson_decode` / `fastjson_validate`, `fastjson_last_error` / `_msg` / `_pos` / `_info`, the file helpers `fastjson_file_decode` / `fastjson_file_encode`, and the JSON Pointer / patch helpers `fastjson_pointer_get` / `_exists` / `_set` (RFC 6901) and `fastjson_merge_patch` (RFC 7396). The compat harness against `php-src/ext/json/tests/*.phpt` passes every test for features fastjson mirrors; `tests/upstream-json/.skiplist` categorizes the rest.
 

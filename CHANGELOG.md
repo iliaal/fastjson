@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-20
+
 ### Performance
 
 - Strings with non-ASCII text are validated 16 bytes at a time with SSSE3 on x86-64 or NEON on ARM64: on Chinese or Russian text, `fastjson_validate()` runs about 1.8-2.2x faster, `fastjson_decode()` 1.2-1.4x, and `fastjson_encode()` with `JSON_UNESCAPED_UNICODE` about 2x; default encoding is 3-23% faster depending on how long the non-ASCII runs are. ASCII-only encoding is about 1.5% slower.
@@ -14,6 +16,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Bundled yyjson is now upstream master `be9bd74`, with local patches P-002 through P-010 re-applied.
 - Remove the unused internal unlimited JSON Pointer resolver and simplify the shared depth-check path. PHP APIs and pointer limits are unchanged.
 
 - Linux and macOS prebuilt binaries are built against PHP 8.4.27 and 8.5.12 instead of 8.4.1 and 8.5.0, so they include the memory-limit stop under Fixed, and require PHP 8.4.27+ or 8.5.12+ (8.6 binaries stay on 8.6.0). This reverses the 0.10.2 oldest-patch build. On an earlier patch the extension refuses to start with the warning below; PIE still selects the prebuilt binary there, so upgrade PHP or build from source on those patches.
@@ -409,7 +412,8 @@ backed by yyjson 0.12.0.
   `JSON_UNESCAPED_LINE_TERMINATORS` is also set. Without
   `JSON_UNESCAPED_UNICODE`, both extensions escape them.
 
-[Unreleased]: https://github.com/iliaal/fastjson/compare/0.10.2...HEAD
+[Unreleased]: https://github.com/iliaal/fastjson/compare/0.11.0...HEAD
+[0.11.0]: https://github.com/iliaal/fastjson/releases/tag/0.11.0
 [0.10.2]: https://github.com/iliaal/fastjson/releases/tag/0.10.2
 [0.10.1]: https://github.com/iliaal/fastjson/releases/tag/0.10.1
 [0.10.0]: https://github.com/iliaal/fastjson/releases/tag/0.10.0
