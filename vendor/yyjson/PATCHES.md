@@ -2,7 +2,7 @@
 
 The bundled yyjson sources at `vendor/yyjson/yyjson.{c,h}` are an
 upstream master snapshot, commit
-`2c9c76a4b6acda1931c7d8bef05a91f2a759302d`, with nine local modifications
+`be9bd74bb3c96e00006c2075c330a6b8b90123dc`, with nine local modifications
 (P-002 through P-010) documented below. The snapshot is newer than tag
 0.13.0 but is not a release: `YYJSON_VERSION_STRING` still reads `0.13.0`.
 `vendor/yyjson/VERSION` and `.upstream/yyjson.yml` record the commit. The
@@ -16,41 +16,83 @@ archive digest, applies the series in order, and compares the result
 byte-for-byte with the vendored sources. Run it after any patch or vendor
 update. The prose below records rationale and upgrade caveats.
 
-## Upstream sync: master `2c9c76a` (from `a84070f`)
+## Upstream sync: master `be9bd74` (from `2c9c76a`)
 
-Seven of the eight patches applied to the new snapshot unchanged, with
-line offsets only and no fuzz; their hunk headers were refreshed for the
-new line numbers. P-005 conflicted with ibireme/yyjson#319 (949e399) and
-was re-ported; see P-005 below. No local patch was retired: none of the
-upstream changes in this range is equivalent to one of them.
+Eight of the nine patches rebased without conflict. P-004 conflicted with
+f7005b0 and was re-ported. P-002, P-008 and P-009 were then edited so the
+validate reader keeps matching the full reader. No local patch was retired:
+none of the upstream changes in this range is equivalent to one of them.
+
+Patch changes:
+
+- P-002: `YYJSON_READ_VALIDATE_ONLY` moved from `1 << 14` to `1 << 15`.
+  f7005b0 assigns bit 14 to the new `YYJSON_READ_ALLOW_UNESCAPED_CTRL` and
+  adds it to `YYJSON_READ_JSON5`, so on bit 14 a JSON5 read would have run
+  the validate-only reader and returned the stub doc. fastjson passes the
+  flag by name, so no fastjson source changes.
+- P-002 and P-009: the validate reader's `obj_key_begin` skips comments
+  and whitespace before the unquoted-key test, as f5932e6 does in
+  `read_root_minify` and `read_root_pretty`. Under
+  `ALLOW_EXT_WHITESPACE | ALLOW_UNQUOTED_KEY`, the lead byte of U+00A0 is
+  also an identifier start. fastjson passes neither flag.
+- P-004: f7005b0 rewrote the control-character condition this patch
+  replaces. The re-port keeps P-004's rule (`ALLOW_INVALID_UNICODE` does not
+  admit control characters) and upstream's: `ALLOW_UNESCAPED_CTRL` admits
+  control characters other than LF and CR.
+- P-008 and P-009: `read_str_validate` admits the same control characters
+  under `ALLOW_UNESCAPED_CTRL`. fastjson never passes that flag.
 
 Upstream changes in this range that fastjson's paths reach:
 
-- Invalid UTF-8 strings are no longer marked `NOESC` (#319, 949e399).
-  Under `YYJSON_READ_ALLOW_INVALID_UNICODE`, a string whose first invalid
-  byte appears before any escape used to stay on the no-copy path and get
-  `YYJSON_SUBTYPE_NOESC`, which tells yyjson's tree writer to copy the
-  bytes without escaping. The reader now switches to the copy path at that
-  byte. The string's bytes, length, and errors are unchanged. fastjson
-  never reads `NOESC` and never uses yyjson's tree writer: the encoder and
-  the pointer splice escape through `yyjson_write_string_to_buf()` (P-003)
-  from the string bytes. Decode results are therefore unchanged.
-- `yyjson_locate_pos()` no longer forms `NULL + pos` before its NULL
-  check (#318, ffa5ecf). fastjson passes it a non-NULL input buffer, so the
-  undefined case was not reachable from fastjson. The same commit fixes
-  `yyjson_obj_foreach()` on a NULL object, which fastjson does not use.
+- `read_num_raw` reports a missing exponent digit at that byte instead of
+  one past it (565899a). `fastjson_pointer_set()` reads the target with
+  `YYJSON_READ_NUMBER_AS_RAW`, so for `[1e]` it now reports `no digit
+  after exponent sign` at offset 3, as `fastjson_decode()` does, instead
+  of `unexpected end of data` at offset 4. Covered by
+  `tests/pointer_set_exponent_error.phpt`.
+- The tree readers widen the container length to 64 bits before shifting
+  it into the tag (68b270c). On a 32-bit `usize`, an array of 2^24 or more
+  elements, or an object of 2^24 or more members, recorded a truncated
+  size. 64-bit builds are unaffected.
+- `read_num`'s long-number path ignores a trailing decimal point with the
+  trailing zeros (9ee90f9), and `read_num_hex` skips leading zeros. Under
+  strict JSON a number cannot end in `.`, and fastjson never passes
+  `ALLOW_EXT_NUMBER`.
 
-Upstream changes in code fastjson does not call:
+Verification on x86-64, PHP 8.6, against a build of the 2c9c76a tree:
+`fastjson_decode()` and `fastjson_validate()` on 61 inputs under 5 flag
+sets (long reals with trailing zeros, bignums, exponent edge cases, control
+and invalid UTF-8 bytes, duplicate keys), 40 `fastjson_encode()` calls,
+42 pointer calls on malformed numbers and 21 on a document with duplicate
+keys, and 4 `fastjson_merge_patch()` calls gave identical results except
+for the `fastjson_pointer_set()` positions above.
 
-- JSON Patch `move` into its own child is now rejected (#320, b302245).
-  JSON Patch is compiled out (see "Compiled-out yyjson features" below);
-  `fastjson_merge_patch()` is RFC 7386 Merge Patch, implemented in
-  fastjson.
-- `YYJSON_WRITE_TRAILING_COMMAS` (#316, 34fdfc9) and the reordering of the
-  write-flag declarations (556bf1c, values unchanged). The new flag only
-  affects yyjson's tree writers. `fastjson_translate_write_flags()` never
-  sets it, and `write_str()`, `get_enc_table_with_flag()`, and
-  `get_hex_table_with_flag()` keep the signatures P-003 depends on.
+A standalone ASAN/UBSan harness compared `yyjson_read_opts()` with and
+without `YYJSON_READ_VALIDATE_ONLY` on exact-length buffers: every prefix
+of each upstream `test/data` file up to 2,048 bytes, 200 prefixes of each
+larger one, and generated cases (control bytes inside and after the 16-byte
+scan, LF and CR, U+00A0 before an unquoted key after `{` and after `,`,
+the number cases above). Over 453,804 checks in 13 flag sets, success, code,
+position and message matched, and the input was left unchanged, in every set
+except `YYJSON_READ_JSON5`. Its 439 differences are all extended escapes,
+which `read_str_validate` does not implement (469 on the 2c9c76a tree; P-008
+leaves JSON5 flags out of the parity claim). Removing the P-009
+`UNESCAPED_CTRL` branch produced 100 differences under
+`ALLOW_UNESCAPED_CTRL`. A plain `YYJSON_READ_JSON5` read returns a real
+document, not the validate stub.
+
+Upstream changes in code fastjson does not call or compiles out: the
+tree and mutable writers' buffer-growth overflow (a0fca8b) and
+caller-buffer alignment (b01620f) fixes, `yyjson_mut_val_imut_copy` size overflow
+(68b270c), `yyjson_obj_iter_getn` on an empty object (0cfe478),
+`yyjson_mut_obj_replace` (3a9b7da), pointer context after duplicate-key
+replacement and JSON Patch error indexes (292fe5c, 565899a; utilities are
+compiled out), `yyjson_read_number` error reset, the libc number fallbacks
+(`YYJSON_DISABLE_FAST_FP_CONV`, be9bd74), the pool allocator's realloc
+(b01620f), and
+the overridable `YYJSON_*_ESTIMATED_*_RATIO` macros (99a4fe9).
+`write_str()`, `get_enc_table_with_flag()` and `get_hex_table_with_flag()`
+keep the signatures P-003 depends on.
 
 ## Retired: P-001 lowercase hex table
 
@@ -103,8 +145,10 @@ NOT walk the returned doc; it carries no values.
 enough that a sed reproducer is impractical. Re-applying after a
 yyjson upgrade requires:
 
-1. Add `YYJSON_READ_VALIDATE_ONLY = 1 << 14` to
-   `vendor/yyjson/yyjson.h` (after the `YYJSON_READ_JSON5` block).
+1. Add `YYJSON_READ_VALIDATE_ONLY = 1 << 15` to
+   `vendor/yyjson/yyjson.h` (after the `YYJSON_READ_JSON5` block). Pick a
+   bit no upstream read flag uses; bit 14 became
+   `YYJSON_READ_ALLOW_UNESCAPED_CTRL` in be9bd74.
 2. Insert the `read_root_validate` function in `vendor/yyjson/yyjson.c`
    above the existing `// MARK: - JSON Reader (Public)` divider.
 3. Add the dispatch in `yyjson_read_opts`:
@@ -204,7 +248,7 @@ to fit worst-case `\uXXXX` expansion plus surrounding quotes.
 **File:** `vendor/yyjson/yyjson.c` (the string reader `read_string`)
 **Region:** the `else` branch that handles a non-escape, non-quote byte,
 carrying the `"unexpected control character in string"` message (around
-line 5066 in the patched 2c9c76a snapshot).
+line 5549 in the patched be9bd74 snapshot).
 
 **Reason.** ext/json rejects raw control characters (byte `< 0x20`)
 inside JSON strings as `JSON_ERROR_CTRL_CHAR`, *regardless* of its
@@ -252,7 +296,8 @@ Covered by `tests/decode_invalid_utf8_after_escape.phpt`.
 
 ```c
     } else {
-        if (!has_allow(INVALID_UNICODE)) {
+        if (!has_allow(INVALID_UNICODE) &&
+            (!has_allow(UNESCAPED_CTRL) || char_is_eol(*src))) {
             return_err(src, "unexpected control character in string");
         }
         if (src >= eof) return_err(src, "unclosed string");
@@ -265,12 +310,16 @@ with a rejection scoped to the control range, keeping the byte copy:
 ```c
     } else {
         if (src >= eof) return_err(src, "unclosed string");
-        if (unlikely(*src < 0x20)) {
+        if (unlikely(*src < 0x20) &&
+            (!has_allow(UNESCAPED_CTRL) || char_is_eol(*src))) {
             return_err(src, "unexpected control character in string");
         }
         *dst++ = *src++;
     }
 ```
+
+`YYJSON_READ_ALLOW_UNESCAPED_CTRL` keeps upstream's meaning: control
+characters other than LF and CR are copied. fastjson never passes it.
 
 **Verification.**
 
@@ -284,8 +333,9 @@ make && php -d extension=$(pwd)/modules/fastjson.so -r '
 ```
 
 **Re-apply recipe on yyjson upgrade.** Locate the single
-`"unexpected control character in string"` return in `read_string` and
-drop the `has_allow(INVALID_UNICODE)` gate as shown. Confirm the
+`"unexpected control character in string"` return in `read_string`,
+drop the `has_allow(INVALID_UNICODE)` gate, move the `eof` check first,
+and keep upstream's `UNESCAPED_CTRL` condition as shown. Confirm the
 high-byte path still carries its own separate
 `"invalid UTF-8 encoding in string"` return (that one keeps the flag
 gate).
@@ -349,7 +399,7 @@ full-string scan.
 
 **File:** `vendor/yyjson/yyjson.c`
 **Region:** the `push_ctn` macro inside `read_root_validate` (around line
-6735 in the patched tree; introduced by P-002)
+7241 in the patched tree; introduced by P-002)
 
 **Reason.** P-002's validate-only reader tracks open containers on a heap
 stack that starts at 32 inline slots and doubles on demand. The growth did
@@ -663,7 +713,7 @@ the compiler default. Without the workaround, `nm -D` lists ~49
 
 **Mechanism.** `config.m4` passes `-Dyyjson_api=` so the preprocessor
 sees the macro as already defined before `yyjson.h` reaches its
-`#ifndef yyjson_api` guard (line 339 of `yyjson.h` in the 2c9c76a
+`#ifndef yyjson_api` guard (line 339 of `yyjson.h` in the be9bd74
 snapshot, unchanged from 0.13.0). The
 visibility-default branch is skipped; symbols inherit
 `-fvisibility=hidden`. fastjson is the only caller of yyjson within

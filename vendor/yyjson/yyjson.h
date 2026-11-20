@@ -898,6 +898,10 @@ static const yyjson_read_flag YYJSON_READ_ALLOW_SINGLE_QUOTED_STR   = 1 << 12;
     non-whitespace character with code point above `U+007F`. */
 static const yyjson_read_flag YYJSON_READ_ALLOW_UNQUOTED_KEY        = 1 << 13;
 
+/** Allow unescaped control characters U+0000 to U+001F in strings,
+    except for LF and CR (non-standard). */
+static const yyjson_read_flag YYJSON_READ_ALLOW_UNESCAPED_CTRL      = 1 << 14;
+
 /** Allow JSON5 format, see: [https://json5.org].
     This flag supports all JSON5 features with some additional extensions:
     - Accepts more escape sequences than JSON5 (e.g. `\a`, `\e`).
@@ -911,7 +915,8 @@ static const yyjson_read_flag YYJSON_READ_JSON5 =
     (1 << 10) | /* YYJSON_READ_ALLOW_EXT_ESCAPE */
     (1 << 11) | /* YYJSON_READ_ALLOW_EXT_WHITESPACE */
     (1 << 12) | /* YYJSON_READ_ALLOW_SINGLE_QUOTED_STR */
-    (1 << 13);  /* YYJSON_READ_ALLOW_UNQUOTED_KEY */
+    (1 << 13) | /* YYJSON_READ_ALLOW_UNQUOTED_KEY */
+    (1 << 14);  /* YYJSON_READ_ALLOW_UNESCAPED_CTRL */
 
 /** [fastjson local patch P-002, see vendor/yyjson/PATCHES.md]
     Validate-only mode: parse for well-formedness without building a
@@ -922,7 +927,7 @@ static const yyjson_read_flag YYJSON_READ_JSON5 =
     Combine with other YYJSON_READ_* flags as desired (TRAILING_COMMAS,
     COMMENTS, etc. are honored). NUMBER_AS_RAW / BIGNUM_AS_RAW have no
     effect in validate mode. */
-static const yyjson_read_flag YYJSON_READ_VALIDATE_ONLY            = 1 << 14;
+static const yyjson_read_flag YYJSON_READ_VALIDATE_ONLY            = 1 << 15;
 
 
 
@@ -1299,7 +1304,8 @@ static const yyjson_write_flag YYJSON_WRITE_PRETTY_TWO_SPACES       = 1 << 6;
 static const yyjson_write_flag YYJSON_WRITE_NEWLINE_AT_END          = 1 << 7;
 
 /** Use lowercase hex digits in `\uXXXX` escape sequences instead of the default
-    uppercase. Only effective when `YYJSON_WRITE_ESCAPE_UNICODE` is also set. */
+    uppercase. This applies to escaped control characters, and also to
+    non-ASCII characters when `YYJSON_WRITE_ESCAPE_UNICODE` is set. */
 static const yyjson_write_flag YYJSON_WRITE_LOWERCASE_HEX           = 1 << 8;
 
 /** Write JSON pretty with tab indentation.
@@ -5854,7 +5860,7 @@ yyjson_api_inline yyjson_val *yyjson_obj_iter_getn(yyjson_obj_iter *iter,
         size_t idx = iter->idx;
         size_t max = iter->max;
         yyjson_val *cur = iter->cur;
-        if (yyjson_unlikely(idx == max)) {
+        if (yyjson_unlikely(idx == max && max != 0)) {
             idx = 0;
             cur = unsafe_yyjson_get_first(iter->obj);
         }
@@ -7339,8 +7345,8 @@ yyjson_api_inline bool unsafe_yyjson_mut_obj_replace(yyjson_mut_val *obj,
         size_t i;
         for (i = 0; i < obj_len; i++) {
             if (unsafe_yyjson_equals_strn(cur_key, key->uni.str, key_len)) {
-                cur_key->next->tag = val->tag;
-                cur_key->next->uni.u64 = val->uni.u64;
+                val->next = cur_key->next->next;
+                cur_key->next = val;
                 return true;
             } else {
                 cur_key = cur_key->next->next;

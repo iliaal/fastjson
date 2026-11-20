@@ -10,9 +10,10 @@ allocator is reached. The growth itself is unchanged for every capacity that
 fits, so validation results and depth semantics are identical.
 
 diff --git a/vendor/yyjson/yyjson.c b/vendor/yyjson/yyjson.c
+index 951f1dc..30a51b4 100644
 --- a/vendor/yyjson/yyjson.c
 +++ b/vendor/yyjson/yyjson.c
-@@ -6371,17 +6371,28 @@ static yyjson_doc *read_root_validate(u8 *hdr, u8 *cur, u8 *eof,
+@@ -6435,17 +6435,28 @@ static yyjson_doc *read_root_validate(u8 *hdr, u8 *cur, u8 *eof,
      return NULL; \
  } while (false)
  

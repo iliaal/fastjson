@@ -66,10 +66,10 @@ with the new validate numbers.
  2 files changed, 356 insertions(+), 1 deletion(-)
 
 diff --git a/vendor/yyjson/yyjson.c b/vendor/yyjson/yyjson.c
-index bc14fac..6ca8e1e 100644
+index b6ca850..b1bbe78 100644
 --- a/vendor/yyjson/yyjson.c
 +++ b/vendor/yyjson/yyjson.c
-@@ -6311,6 +6311,347 @@ fail_depth:             return_err(cur, DEPTH, MSG_DEPTH);
+@@ -6372,6 +6372,349 @@ fail_depth:             return_err(cur, DEPTH, MSG_DEPTH);
  
  
  
@@ -269,14 +269,16 @@ index bc14fac..6ca8e1e 100644
 +        if (likely(read_str_sq(&cur, eof, flg, val, &msg))) goto obj_key_end;
 +        goto fail_string;
 +    }
++    /* skip trivia before reading an unquoted key: the lead byte of a
++       non-ASCII whitespace (e.g. U+00A0) is also an identifier start */
++    if (has_allow(TRIVIA) && char_is_trivia(*cur)) {
++        if (skip_trivia(&cur, eof, flg)) goto obj_key_begin;
++        if (cur == eof) goto fail_comment;
++    }
 +    if (has_allow(UNQUOTED_KEY) && char_is_id_start(*cur)) {
 +        ctn_len++;
 +        if (read_str_id(&cur, eof, flg, pre, val, &msg)) goto obj_key_end;
 +        goto fail_string;
-+    }
-+    if (has_allow(TRIVIA) && char_is_trivia(*cur)) {
-+        if (skip_trivia(&cur, eof, flg)) goto obj_key_begin;
-+        if (cur == eof) goto fail_comment;
 +    }
 +    goto fail_character_obj_key;
 +
@@ -417,7 +419,7 @@ index bc14fac..6ca8e1e 100644
  /*==============================================================================
   * MARK: - JSON Reader (Public)
   *============================================================================*/
-@@ -6376,7 +6717,10 @@ yyjson_doc *yyjson_read_opts(char *dat, usize len,
+@@ -6437,7 +6780,10 @@ yyjson_doc *yyjson_read_opts(char *dat, usize len,
      }
  
      /* read json document */
@@ -430,12 +432,12 @@ index bc14fac..6ca8e1e 100644
              doc = read_root_pretty(hdr, cur, eof, alc, flg, err);
          } else {
 diff --git a/vendor/yyjson/yyjson.h b/vendor/yyjson/yyjson.h
-index 626db04..316e10f 100644
+index b69103c..8e18b09 100644
 --- a/vendor/yyjson/yyjson.h
 +++ b/vendor/yyjson/yyjson.h
-@@ -908,6 +908,17 @@ static const yyjson_read_flag YYJSON_READ_JSON5 =
-     (1 << 12) | /* YYJSON_READ_ALLOW_SINGLE_QUOTED_STR */
-     (1 << 13);  /* YYJSON_READ_ALLOW_UNQUOTED_KEY */
+@@ -913,6 +913,17 @@ static const yyjson_read_flag YYJSON_READ_JSON5 =
+     (1 << 13) | /* YYJSON_READ_ALLOW_UNQUOTED_KEY */
+     (1 << 14);  /* YYJSON_READ_ALLOW_UNESCAPED_CTRL */
  
 +/** [fastjson local patch P-002, see vendor/yyjson/PATCHES.md]
 +    Validate-only mode: parse for well-formedness without building a
@@ -446,11 +448,8 @@ index 626db04..316e10f 100644
 +    Combine with other YYJSON_READ_* flags as desired (TRAILING_COMMAS,
 +    COMMENTS, etc. are honored). NUMBER_AS_RAW / BIGNUM_AS_RAW have no
 +    effect in validate mode. */
-+static const yyjson_read_flag YYJSON_READ_VALIDATE_ONLY            = 1 << 14;
++static const yyjson_read_flag YYJSON_READ_VALIDATE_ONLY            = 1 << 15;
 +
  
  
  /** Result code for JSON reader. */
--- 
-2.34.1
-

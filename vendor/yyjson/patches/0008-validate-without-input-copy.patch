@@ -25,10 +25,10 @@ eof, so validate with any of them runs on a padded copy
 (read_validate_copy).
 
 diff --git a/vendor/yyjson/yyjson.c b/vendor/yyjson/yyjson.c
-index bd5bd19..cf179b7 100644
+index 385aca8..a3e066d 100644
 --- a/vendor/yyjson/yyjson.c
 +++ b/vendor/yyjson/yyjson.c
-@@ -3458,7 +3458,7 @@ static_noinline bool skip_trivia(u8 **ptr, u8 *eof, yyjson_read_flag flg) {
+@@ -3506,7 +3506,7 @@ static_noinline bool skip_trivia(u8 **ptr, u8 *eof, yyjson_read_flag flg) {
          u8 *loop_begin = cur;
  
          /* skip standard whitespace */
@@ -37,7 +37,7 @@ index bd5bd19..cf179b7 100644
  
          /* skip extended whitespace */
          if (has_allow(EXT_WHITESPACE)) {
-@@ -3468,8 +3468,9 @@ static_noinline bool skip_trivia(u8 **ptr, u8 *eof, yyjson_read_flag flg) {
+@@ -3516,8 +3516,9 @@ static_noinline bool skip_trivia(u8 **ptr, u8 *eof, yyjson_read_flag flg) {
              }
          }
  
@@ -49,7 +49,7 @@ index bd5bd19..cf179b7 100644
              if (cur[1] == '/') { /* single-line comment */
                  cur += 2;
                  if (has_allow(EXT_WHITESPACE)) {
-@@ -3485,8 +3486,8 @@ static_noinline bool skip_trivia(u8 **ptr, u8 *eof, yyjson_read_flag flg) {
+@@ -3533,8 +3534,8 @@ static_noinline bool skip_trivia(u8 **ptr, u8 *eof, yyjson_read_flag flg) {
                  }
              } else if (cur[1] == '*') { /* multi-line comment */
                  cur += 2;
@@ -60,7 +60,7 @@ index bd5bd19..cf179b7 100644
                      *ptr = eof;
                      return false; /* unclosed comment */
                  }
-@@ -3507,7 +3508,9 @@ static bool is_truncated_utf8(u8 *cur, u8 *eof) {
+@@ -3555,7 +3556,9 @@ static bool is_truncated_utf8(u8 *cur, u8 *eof) {
      u8 c0, c1, c2;
      usize len = (usize)(eof - cur);
      if (cur >= eof || len >= 4) return false;
@@ -71,7 +71,7 @@ index bd5bd19..cf179b7 100644
      /* 1-byte UTF-8, not truncated */
      if (c0 < 0x80) return false;
      if (len == 1) {
-@@ -3637,7 +3640,7 @@ static_noinline bool is_truncated_end(u8 *hdr, u8 *cur, u8 *eof,
+@@ -3685,7 +3688,7 @@ static_noinline bool is_truncated_end(u8 *hdr, u8 *cur, u8 *eof,
              return true;
          }
          if (code == YYJSON_READ_ERROR_UNEXPECTED_CHARACTER &&
@@ -80,7 +80,7 @@ index bd5bd19..cf179b7 100644
              /* truncated beginning of comment */
              return true;
          }
-@@ -6334,15 +6337,277 @@ fail_depth:             return_err(cur, DEPTH, MSG_DEPTH);
+@@ -6398,15 +6401,281 @@ fail_depth:             return_err(cur, DEPTH, MSG_DEPTH);
  
  
  
@@ -191,6 +191,10 @@ index bd5bd19..cf179b7 100644
 +            continue;
 +        }
 +        if (*src < 0x20) {
++            if (has_allow(UNESCAPED_CTRL) && !char_is_eol(*src)) {
++                src++;
++                continue;
++            }
 +            *ptr = src;
 +            *msg = "unexpected control character in string";
 +            return false;
@@ -362,7 +366,7 @@ index bd5bd19..cf179b7 100644
   *
   * The shared `dummy` yyjson_val is the sink for read_str / read_num /
   * read_true / read_false / read_null / read_inf_or_nan. Their writes
-@@ -6438,40 +6703,69 @@ static yyjson_doc *read_root_validate(u8 *hdr, u8 *cur, u8 *eof,
+@@ -6502,40 +6771,69 @@ static yyjson_doc *read_root_validate(u8 *hdr, u8 *cur, u8 *eof,
          max_ctn = 1;
          goto arr_val_begin;
      } else {
@@ -442,7 +446,7 @@ index bd5bd19..cf179b7 100644
          }
          goto fail_literal_null;
      }
-@@ -6483,13 +6777,13 @@ arr_val_begin:
+@@ -6547,13 +6845,13 @@ arr_val_begin:
          goto fail_trailing_comma;
      }
      if (char_is_space(*cur)) {
@@ -458,7 +462,7 @@ index bd5bd19..cf179b7 100644
          goto fail_character_val;
      }
      if (has_allow(SINGLE_QUOTED_STR) && *cur == '\'') {
-@@ -6504,10 +6798,11 @@ arr_val_begin:
+@@ -6568,10 +6866,11 @@ arr_val_begin:
      goto fail_character_val;
  
  arr_val_end:
@@ -471,7 +475,7 @@ index bd5bd19..cf179b7 100644
          goto arr_val_end;
      }
      if (has_allow(TRIVIA) && char_is_trivia(*cur)) {
-@@ -6523,9 +6818,10 @@ arr_end:
+@@ -6587,9 +6886,10 @@ arr_end:
      else goto arr_val_end;
  
  obj_key_begin:
@@ -483,7 +487,7 @@ index bd5bd19..cf179b7 100644
          goto fail_string;
      }
      if (likely(*cur == '}')) {
-@@ -6536,7 +6832,7 @@ obj_key_begin:
+@@ -6600,7 +6900,7 @@ obj_key_begin:
          goto fail_trailing_comma;
      }
      if (char_is_space(*cur)) {
@@ -492,7 +496,7 @@ index bd5bd19..cf179b7 100644
          goto obj_key_begin;
      }
      if (has_allow(SINGLE_QUOTED_STR) && *cur == '\'') {
-@@ -6556,9 +6852,10 @@ obj_key_begin:
+@@ -6622,9 +6922,10 @@ obj_key_begin:
      goto fail_character_obj_key;
  
  obj_key_end:
@@ -504,7 +508,7 @@ index bd5bd19..cf179b7 100644
          goto obj_key_end;
      }
      if (has_allow(TRIVIA) && char_is_trivia(*cur)) {
-@@ -6568,38 +6865,40 @@ obj_key_end:
+@@ -6634,38 +6935,40 @@ obj_key_end:
      goto fail_character_obj_sep;
  
  obj_val_begin:
@@ -553,7 +557,7 @@ index bd5bd19..cf179b7 100644
          goto fail_character_val;
      }
      if (has_allow(SINGLE_QUOTED_STR) && *cur == '\'') {
-@@ -6613,10 +6912,11 @@ obj_val_begin:
+@@ -6679,10 +6982,11 @@ obj_val_begin:
      goto fail_character_val;
  
  obj_val_end:
@@ -566,7 +570,7 @@ index bd5bd19..cf179b7 100644
          goto obj_val_end;
      }
      if (has_allow(TRIVIA) && char_is_trivia(*cur)) {
-@@ -6633,28 +6933,25 @@ obj_end:
+@@ -6699,28 +7003,25 @@ obj_end:
  
  doc_end:
      if (unlikely(cur < eof) && !has_flg(STOP_WHEN_DONE)) {
@@ -603,7 +607,7 @@ index bd5bd19..cf179b7 100644
      doc->val_read = max_ctn;
      if (stack_buf != stack_inline) alc.free(alc.ctx, stack_buf);
      return doc;
-@@ -6666,27 +6963,27 @@ fail_number:
+@@ -6732,27 +7033,27 @@ fail_number:
  fail_alloc:
      return_err_v(cur, MEMORY_ALLOCATION, MSG_MALLOC);
  fail_trailing_comma:
@@ -642,7 +646,7 @@ index bd5bd19..cf179b7 100644
  
  #undef push_ctn
  #undef pop_ctn
-@@ -6697,6 +6994,39 @@ fail_garbage:
+@@ -6763,6 +7064,39 @@ fail_garbage:
   * MARK: - JSON Reader (Public)
   *============================================================================*/
  
@@ -682,7 +686,7 @@ index bd5bd19..cf179b7 100644
  yyjson_doc *yyjson_read_opts(char *dat, usize len,
                               yyjson_read_flag flg,
                               const yyjson_alc *alc_ptr,
-@@ -6705,7 +7035,7 @@ yyjson_doc *yyjson_read_opts(char *dat, usize len,
+@@ -6771,7 +7105,7 @@ yyjson_doc *yyjson_read_opts(char *dat, usize len,
      err->pos = (usize)(_pos); \
      err->msg = _msg; \
      err->code = YYJSON_READ_ERROR_##_code; \
@@ -691,7 +695,7 @@ index bd5bd19..cf179b7 100644
      return NULL; \
  } while (false)
  
-@@ -6713,17 +7043,26 @@ yyjson_doc *yyjson_read_opts(char *dat, usize len,
+@@ -6779,17 +7113,26 @@ yyjson_doc *yyjson_read_opts(char *dat, usize len,
      yyjson_alc alc = alc_ptr ? *alc_ptr : YYJSON_DEFAULT_ALC;
      yyjson_doc *doc;
      u8 *hdr = NULL, *eof, *cur;
@@ -720,7 +724,7 @@ index bd5bd19..cf179b7 100644
      } else {
          if (unlikely(len >= USIZE_MAX - YYJSON_PADDING_SIZE)) {
              return_err(0, MEMORY_ALLOCATION, MSG_MALLOC);
-@@ -6732,20 +7071,21 @@ yyjson_doc *yyjson_read_opts(char *dat, usize len,
+@@ -6798,20 +7141,21 @@ yyjson_doc *yyjson_read_opts(char *dat, usize len,
          if (unlikely(!hdr)) {
              return_err(0, MEMORY_ALLOCATION, MSG_MALLOC);
          }
@@ -746,7 +750,7 @@ index bd5bd19..cf179b7 100644
              if (has_allow(TRIVIA) && char_is_trivia(*cur)) {
                  if (!skip_trivia(&cur, eof, flg) && cur == eof) {
                      return_err(cur - hdr, INVALID_COMMENT, MSG_COMMENT);
-@@ -6773,21 +7113,24 @@ yyjson_doc *yyjson_read_opts(char *dat, usize len,
+@@ -6839,21 +7183,24 @@ yyjson_doc *yyjson_read_opts(char *dat, usize len,
  
      /* check result */
      if (likely(doc)) {
