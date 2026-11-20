@@ -1,7 +1,8 @@
 diff --git a/vendor/yyjson/yyjson.c b/vendor/yyjson/yyjson.c
+index 80edcad..951f1dc 100644
 --- a/vendor/yyjson/yyjson.c
 +++ b/vendor/yyjson/yyjson.c
-@@ -4820,6 +4820,9 @@ static_inline bool read_uni_esc(u8 **src_ptr, u8 **dst_ptr, const char **msg) {
+@@ -4876,6 +4876,9 @@ static_inline bool read_uni_esc(u8 **src_ptr, u8 **dst_ptr, const char **msg) {
   @param con Continuation for incremental parsing.
   @return Whether success.
   */
@@ -11,7 +12,7 @@ diff --git a/vendor/yyjson/yyjson.c b/vendor/yyjson/yyjson.c
  static_inline bool read_str_opt(u8 quo, u8 **ptr, u8 *eof, yyjson_read_flag flg,
                                  yyjson_val *val, const char **msg, u8 *con[2]) {
      /*
-@@ -5031,6 +5034,9 @@ copy_escape:
+@@ -5087,6 +5090,9 @@ copy_escape:
          }
      } else if (likely(*src == quo)) {
          val->tag = ((u64)(dst - hdr) << YYJSON_TAG_BIT) | YYJSON_TYPE_STR;
@@ -21,7 +22,7 @@ diff --git a/vendor/yyjson/yyjson.c b/vendor/yyjson/yyjson.c
          val->uni.str = (const char *)hdr;
          *dst = '\0';
          *end = src + 1;
-@@ -5147,6 +5153,7 @@ copy_utf8:
+@@ -5207,6 +5213,7 @@ copy_utf8:
              if (!has_allow(INVALID_UNICODE)) {
                  return_err(src, MSG_ERR_UTF8);
              }
@@ -29,7 +30,7 @@ diff --git a/vendor/yyjson/yyjson.c b/vendor/yyjson/yyjson.c
              goto copy_ascii_stop_1;
          }
          goto copy_ascii;
-@@ -5155,6 +5162,7 @@ copy_utf8:
+@@ -5215,6 +5222,7 @@ copy_utf8:
  
  #undef return_err
  }
@@ -38,6 +39,7 @@ diff --git a/vendor/yyjson/yyjson.c b/vendor/yyjson/yyjson.c
  static_inline bool read_str(u8 **ptr, u8 *eof, yyjson_read_flag flg,
                              yyjson_val *val, const char **msg) {
 diff --git a/vendor/yyjson/yyjson.h b/vendor/yyjson/yyjson.h
+index 2d51a70..871391d 100644
 --- a/vendor/yyjson/yyjson.h
 +++ b/vendor/yyjson/yyjson.h
 @@ -644,6 +644,11 @@ typedef uint8_t yyjson_subtype;

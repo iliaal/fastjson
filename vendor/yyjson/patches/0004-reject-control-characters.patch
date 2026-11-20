@@ -16,14 +16,14 @@ would misreport a tolerated invalid UTF-8 byte followed by more text as a
 control character.
 
 diff --git a/vendor/yyjson/yyjson.c b/vendor/yyjson/yyjson.c
-index 66cf900..0712731 100644
+index 4fb6a2c..80edcad 100644
 --- a/vendor/yyjson/yyjson.c
 +++ b/vendor/yyjson/yyjson.c
-@@ -5037,10 +5037,25 @@ copy_escape:
+@@ -5093,11 +5093,29 @@ copy_escape:
          if (con) con[0] = con[1] = NULL;
          return true;
      } else {
--        if (!has_allow(INVALID_UNICODE)) {
+-        if (!has_allow(INVALID_UNICODE) &&
 +        /* fastjson patch P-004: reject raw control characters in strings
 +         * even under ALLOW_INVALID_UNICODE. That flag is meant to relax
 +         * UTF-8 validity only (handled on the high-byte path above); a
@@ -38,9 +38,13 @@ index 66cf900..0712731 100644
 +         * next ordinary ASCII byte then arrives here via `goto copy_escape`.
 +         * Test only the control range and let anything else copy through as
 +         * upstream did, or a tolerated invalid byte followed by more text is
-+         * misreported as a control character. */
++         * misreported as a control character.
++         *
++         * YYJSON_READ_ALLOW_UNESCAPED_CTRL keeps upstream's meaning: it
++         * accepts control characters other than LF and CR. */
 +        if (src >= eof) return_err(src, "unclosed string");
-+        if (unlikely(*src < 0x20)) {
++        if (unlikely(*src < 0x20) &&
+             (!has_allow(UNESCAPED_CTRL) || char_is_eol(*src))) {
              return_err(src, "unexpected control character in string");
          }
 -        if (src >= eof) return_err(src, "unclosed string");
