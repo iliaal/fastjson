@@ -28,9 +28,12 @@ use a source build.
 
 The 0.11.0 Unix archives for PHP 8.4 and 8.5 require PHP 8.4.27+ and 8.5.12+,
 respectively. They are built against those patches so they stop at `memory_limit`
-instead of running to PHP's hard limit, which ends the process. On an earlier
-patch the prebuilt extension refuses to start with a warning, so upgrade PHP
-or build from source there.
+instead of running to PHP's hard limit, which ends the process. When PIE 1.5.5
+resolves Fastjson 0.11.0 on a matching NTS platform, it still selects the
+prebuilt archive on PHP 8.4.1–8.4.26 and 8.5.0–8.5.11: it matches the PHP
+major and minor version, not the patch. The selected extension then refuses
+to start with a warning. Upgrade PHP or build from source if you must stay on
+an older patch.
 
 On a minimal PHP image (for example `php:8.x-cli` from Docker Hub), install these build tools before running PIE:
 
