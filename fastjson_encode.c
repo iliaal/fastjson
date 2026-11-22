@@ -62,7 +62,7 @@ static zend_string *fastjson_do_encode(
  * failing at the first container instead. */
 static bool fastjson_encode_depth_in_range(zend_long depth, uint32_t argno)
 {
-    if (UNEXPECTED(ZEND_LONG_EXCEEDS_INT(depth))) {
+    if (UNEXPECTED(!fastjson_depth_fits_int(depth))) {
         zend_argument_value_error(argno, "must be between %d and %d",
                                   INT_MIN, INT_MAX);
         return false;

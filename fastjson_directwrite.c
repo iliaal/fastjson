@@ -1099,7 +1099,7 @@ zend_string *fastjson_directwrite_encode(zval *value, zend_long flags,
                                          fastjson_error_state *error_state)
 {
     /* Entry points reject a $depth outside the int range with ValueError. */
-    ZEND_ASSERT(!ZEND_LONG_EXCEEDS_INT(depth));
+    ZEND_ASSERT(fastjson_depth_fits_int(depth));
     switch (Z_TYPE_P(value)) {
     case IS_NULL:
         fastjson_error_state_clear(error_state);
