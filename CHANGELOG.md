@@ -6,6 +6,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Avoid Zend depth-range deprecation warnings when building on PHP 8.7, without changing depth validation or error handling.
+
 ## [0.11.0] - 2026-11-20
 
 ### Performance

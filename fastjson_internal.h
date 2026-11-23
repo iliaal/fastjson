@@ -17,6 +17,15 @@
 
 #include "php_streams.h"
 
+static zend_always_inline bool fastjson_depth_fits_int(zend_long depth)
+{
+#ifdef ZEND_IN_RANGE_OF
+    return ZEND_IN_RANGE_OF(depth, int);
+#else
+    return !ZEND_LONG_EXCEEDS_INT(depth);
+#endif
+}
+
 typedef enum {
     FJ_STRING_SIZE_OK = 0,
     FJ_STRING_SIZE_INVALID_UTF8,
