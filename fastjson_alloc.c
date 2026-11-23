@@ -56,3 +56,63 @@ const yyjson_alc fastjson_php_alc = {
     fastjson_alc_free,
     NULL
 };
+
+static bool fastjson_small_alc_owns(const fastjson_small_alc *s, const void *ptr)
+{
+    uintptr_t p = (uintptr_t)ptr;
+    uintptr_t lo = (uintptr_t)s->bytes;
+    uintptr_t hi = lo + FASTJSON_SMALL_ALC_BUF_SIZE;
+    return p >= lo && p < hi;
+}
+
+static void *fastjson_small_alc_malloc(void *ctx, size_t size)
+{
+    fastjson_small_alc *s = (fastjson_small_alc *)ctx;
+    /* Reserve at least 16 bytes for size == 0 so a request at used == BUF_SIZE
+     * never returns the one-past-end pointer `hi` (outside fastjson_small_alc_owns). */
+    size_t req = UNEXPECTED(size == 0) ? 1u : size;
+    size_t aligned = (req + 15u) & ~(size_t)15u;
+    if (EXPECTED(aligned >= req
+            && aligned <= FASTJSON_SMALL_ALC_BUF_SIZE - s->used)) {
+        void *ptr = s->bytes + s->used;
+        s->used += aligned;
+        return ptr;
+    }
+    return fastjson_alc_malloc(NULL, size);
+}
+
+static void *fastjson_small_alc_realloc(void *ctx, void *ptr,
+                                        size_t old_size, size_t size)
+{
+    fastjson_small_alc *s = (fastjson_small_alc *)ctx;
+    if (fastjson_small_alc_owns(s, ptr)) {
+        void *next = fastjson_alc_malloc(NULL, size);
+        if (UNEXPECTED(next == NULL)) {
+            return NULL;
+        }
+        size_t copy = old_size < size ? old_size : size;
+        if (copy > 0) {
+            memcpy(next, ptr, copy);
+        }
+        return next;
+    }
+    return fastjson_alc_realloc(NULL, ptr, old_size, size);
+}
+
+static void fastjson_small_alc_free(void *ctx, void *ptr)
+{
+    fastjson_small_alc *s = (fastjson_small_alc *)ctx;
+    if (fastjson_small_alc_owns(s, ptr)) {
+        return;
+    }
+    efree(ptr);
+}
+
+void fastjson_small_alc_init(fastjson_small_alc *s)
+{
+    s->alc.malloc = fastjson_small_alc_malloc;
+    s->alc.realloc = fastjson_small_alc_realloc;
+    s->alc.free = fastjson_small_alc_free;
+    s->alc.ctx = s;
+    s->used = 0;
+}
