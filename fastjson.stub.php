@@ -1,6 +1,9 @@
 <?php
 
-/** @generate-class-entries */
+/**
+ * @generate-class-entries
+ * @generate-legacy-arginfo 80100
+ */
 
 /**
  * @var int
@@ -85,6 +88,7 @@ const FASTJSON_DECODE_RELAXED = UNKNOWN;
 /**
  * Returns the fastjson extension version string (matches
  * PHP_FASTJSON_VERSION in php_fastjson.h).
+ * @frameless-function {"arity": 0}
  */
 function fastjson_version(): string {}
 
@@ -216,6 +220,8 @@ function fastjson_file_encode(string $filename, mixed $value, int $flags = 0, in
  * after yyjson has parsed the full input. It does not limit parser
  * memory or CPU time. Malformed input reports its parse error even if
  * it also exceeds $depth. $depth <= 0 or > INT_MAX raises a ValueError.
+ * @frameless-function {"arity": 1}
+ * @frameless-function {"arity": 2}
  */
 function fastjson_decode(string $json, ?bool $associative = null, int $depth = 512, int $flags = 0): mixed {}
 
@@ -273,6 +279,8 @@ function fastjson_file_decode(string $filename, ?bool $associative = null, int $
  * (SUBSTITUTE wins when both are set), so the pointer selects the key the
  * decoded result would show. Members whose names become equal after
  * sanitization count as duplicates, so selecting that name is ambiguous.
+ * @frameless-function {"arity": 2}
+ * @frameless-function {"arity": 3}
  */
 function fastjson_pointer_get(string $json, string $pointer, ?bool $associative = null, int $depth = 512, int $flags = 0): mixed {}
 
@@ -293,6 +301,8 @@ function fastjson_pointer_get(string $json, string $pointer, ?bool $associative 
  * JSON_INVALID_UTF8_IGNORE and JSON_INVALID_UTF8_SUBSTITUTE match member
  * names after sanitization and treat names that become equal as duplicates,
  * as fastjson_pointer_get() does.
+ * @frameless-function {"arity": 2}
+ * @frameless-function {"arity": 3}
  */
 function fastjson_pointer_exists(string $json, string $pointer, int $flags = 0): bool {}
 
@@ -346,6 +356,8 @@ function fastjson_pointer_set(string $json, string $pointer, mixed $value, int $
  * replaced by the patch need not fit, while every retained subtree must fit.
  * Otherwise $associative and $flags (including FASTJSON_DECODE_RELAXED for
  * the operand parse) carry the same semantics as fastjson_decode().
+ * @frameless-function {"arity": 2}
+ * @frameless-function {"arity": 3}
  */
 function fastjson_merge_patch(string $target, string $patch, ?bool $associative = null, int $depth = 512, int $flags = 0): mixed {}
 
@@ -373,6 +385,9 @@ function fastjson_merge_patch(string $target, string $patch, ?bool $associative 
  *
  * The only $flags value accepted is JSON_INVALID_UTF8_IGNORE. Any
  * other bits raise a ValueError, matching ext/json's contract.
+ * @frameless-function {"arity": 1}
+ * @frameless-function {"arity": 2}
+ * @frameless-function {"arity": 3}
  */
 function fastjson_validate(string $json, int $depth = 512, int $flags = 0): bool {}
 
@@ -386,6 +401,7 @@ function fastjson_validate(string $json, int $depth = 512, int $flags = 0): bool
  * yyjson does not distinguish every ext/json parse category: raw control
  * characters and invalid UTF-16 surrogate escapes are currently reported as
  * FASTJSON_ERROR_UTF8 rather than CTRL_CHAR or UTF16.
+ * @frameless-function {"arity": 0}
  */
 function fastjson_last_error(): int {}
 
@@ -394,6 +410,7 @@ function fastjson_last_error(): int {}
  * error in this request, or "No error" if no error is recorded. Parse
  * diagnostics from yyjson can be more specific than ext/json's static
  * error strings.
+ * @frameless-function {"arity": 0}
  */
 function fastjson_last_error_msg(): string {}
 
@@ -405,6 +422,7 @@ function fastjson_last_error_msg(): string {}
  *
  * The offset indexes the raw input bytes; pair it with
  * fastjson_last_error_info() for the 1-based line and column.
+ * @frameless-function {"arity": 0}
  */
 function fastjson_last_error_pos(): int {}
 
@@ -424,5 +442,6 @@ function fastjson_last_error_pos(): int {}
  * Line and column are populated for parse errors that carry a source
  * position; encode, file I/O, and depth errors report pos -1 / line 0 /
  * col 0.
+ * @frameless-function {"arity": 0}
  */
 function fastjson_last_error_info(): array {}

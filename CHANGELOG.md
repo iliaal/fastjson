@@ -6,6 +6,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Performance
+
+- Encode, decode, validate, JSON Pointer, and merge-patch calls do less work per value: clean ASCII is copied 16 bytes at a time with SSE2 or NEON, integers are written without division, short inputs and every `fastjson_validate()` call parse in a stack buffer instead of the Zend heap, and decoded object keys are shared through a per-thread table. Output is unchanged, except that `fastjson_pointer_set()` with the root pointer `""` now reports the first error `fastjson_decode()` would report for invalid input.
+
 ### Fixed
 
 - Avoid Zend depth-range deprecation warnings when building on PHP 8.7, without changing depth validation or error handling.

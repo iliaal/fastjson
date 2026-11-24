@@ -16,6 +16,7 @@
 #define PHP_FASTJSON_INTERNAL_H
 
 #include "php_streams.h"
+#include "zend_bitset.h"
 
 static zend_always_inline bool fastjson_depth_fits_int(zend_long depth)
 {
@@ -90,16 +91,26 @@ static zend_always_inline bool fastjson_string_wants_sized_writer(
 #define FASTJSON_NUM_INT_WORST 24
 #define FASTJSON_NUM_REAL_WORST 40
 
+/* Initial smart_str request stays within Zend MM's 256-byte small slot
+ * (SMART_STR_START_LEN = 256 - 24 - 1 = 231 B); 256 would jump directly to a 4 KiB page. */
+#define FASTJSON_SMART_STR_INIT_CAP 224
+
+/* 33-byte static "\n" + 32 spaces table collapses level <= 8 to one append. */
 static zend_always_inline void fastjson_append_newline_indent(
     smart_str *buf, int level)
 {
-    if (UNEXPECTED(level > 8
-            && (size_t)level <= (ZSTR_MAX_LEN - 1) / 4)) {
+    static const char nl_spaces[] = "\n                                ";
+    if (EXPECTED(level <= 8)) {
+        smart_str_appendl(buf, nl_spaces, 1 + (size_t)level * 4);
+        return;
+    }
+    if (EXPECTED((size_t)level <= (ZSTR_MAX_LEN - 1) / 4)) {
         size_t spaces = (size_t)level * 4;
         smart_str_alloc(buf, spaces + 1, 0);
-        smart_str_appendc(buf, '\n');
-        memset(ZSTR_VAL(buf->s) + ZSTR_LEN(buf->s), ' ', spaces);
-        ZSTR_LEN(buf->s) += spaces;
+        char *p = ZSTR_VAL(buf->s) + ZSTR_LEN(buf->s);
+        *p++ = '\n';
+        memset(p, ' ', spaces);
+        ZSTR_LEN(buf->s) += spaces + 1;
         return;
     }
     smart_str_appendc(buf, '\n');
@@ -124,10 +135,15 @@ typedef struct {
     size_t len;
 } fj_ptr_seg;
 
+#define FASTJSON_POINTER_INLINE_SEGS    16
+#define FASTJSON_POINTER_INLINE_STORAGE 256
+
 typedef struct {
     fj_ptr_seg *segs;
     char *storage;
     size_t nsegs;
+    fj_ptr_seg inline_segs[FASTJSON_POINTER_INLINE_SEGS];
+    char inline_storage[FASTJSON_POINTER_INLINE_STORAGE];
 } fastjson_pointer_plan;
 
 typedef struct {
@@ -158,7 +174,121 @@ zend_string *fastjson_imut_pointer_set_write(yyjson_val *root,
                                              const fastjson_pointer_repl *replacement,
                                              zend_long flags,
                                              size_t depth_limit,
+                                             size_t hint_len,
                                              fj_splice_status *status);
+
+#if defined(__SSE2__)
+# include <emmintrin.h>
+#elif defined(__aarch64__) && (defined(__ARM_NEON) || defined(__ARM_NEON__))
+# include <arm_neon.h>
+#endif
+
+extern const uint8_t fastjson_str_esc_tbl[256];
+extern const char fastjson_digit_pairs[201];
+
+/* Copy clean printable ASCII (no control, '"', '\\', >=0x80, or '/' when
+ * escape_slashes is set) from s[0..len) into dst[0..len), returning the index
+ * of the first byte needing escape (or len if all clean). */
+static zend_always_inline size_t fastjson_copy_clean_ascii(
+    char *dst, const char *s, size_t len, bool escape_slashes)
+{
+    size_t i = 0;
+#if defined(__SSE2__)
+    if (len >= 16) {
+        const __m128i v_min = _mm_set1_epi8(0x20);
+        const __m128i v_quot = _mm_set1_epi8('"');
+        const __m128i v_bsl = _mm_set1_epi8('\\');
+        const __m128i v_fsl = _mm_set1_epi8('/');
+        for (; i + 16 <= len; i += 16) {
+            __m128i v = _mm_loadu_si128((const __m128i *)(s + i));
+            /* Signed < 0x20 catches both [0x00..0x1F] and [0x80..0xFF]. */
+            __m128i bad = _mm_cmplt_epi8(v, v_min);
+            bad = _mm_or_si128(bad, _mm_cmpeq_epi8(v, v_quot));
+            bad = _mm_or_si128(bad, _mm_cmpeq_epi8(v, v_bsl));
+            if (escape_slashes) {
+                bad = _mm_or_si128(bad, _mm_cmpeq_epi8(v, v_fsl));
+            }
+            int mask = _mm_movemask_epi8(bad);
+            if (UNEXPECTED(mask != 0)) {
+                size_t clean = (size_t)zend_ulong_ntz((zend_ulong)(unsigned int)mask);
+                for (size_t k = 0; k < clean; k++) {
+                    dst[i + k] = s[i + k];
+                }
+                return i + clean;
+            }
+            _mm_storeu_si128((__m128i *)(dst + i), v);
+        }
+    }
+#elif defined(__aarch64__) && (defined(__ARM_NEON) || defined(__ARM_NEON__))
+    if (len >= 16) {
+        const uint8x16_t v_sub = vdupq_n_u8(0x20);
+        const uint8x16_t v_lim = vdupq_n_u8(0x5F);
+        const uint8x16_t v_quot = vdupq_n_u8('"');
+        const uint8x16_t v_bsl = vdupq_n_u8('\\');
+        const uint8x16_t v_fsl = vdupq_n_u8('/');
+        for (; i + 16 <= len; i += 16) {
+            uint8x16_t v = vld1q_u8((const uint8_t *)(s + i));
+            /* Unsigned (v - 0x20) > 0x5F catches both <0x20 and >=0x80. */
+            uint8x16_t bad = vcgtq_u8(vsubq_u8(v, v_sub), v_lim);
+            bad = vorrq_u8(bad, vceqq_u8(v, v_quot));
+            bad = vorrq_u8(bad, vceqq_u8(v, v_bsl));
+            if (escape_slashes) {
+                bad = vorrq_u8(bad, vceqq_u8(v, v_fsl));
+            }
+            if (UNEXPECTED(vmaxvq_u8(bad) != 0)) {
+                break;
+            }
+            vst1q_u8((uint8_t *)(dst + i), v);
+        }
+    }
+#endif
+    uint8_t esc_mask = escape_slashes ? 3u : 1u;
+    for (; i < len; i++) {
+        unsigned char c = (unsigned char)s[i];
+        if (UNEXPECTED((fastjson_str_esc_tbl[c] & esc_mask) != 0)) {
+            return i;
+        }
+        dst[i] = (char)c;
+    }
+    return len;
+}
+
+/* Out-of-line decimal writer for uint64_t >= 10000 (defined in fastjson.c). */
+char *fastjson_write_u64_large(char *dst, uint64_t u);
+
+/* Signed 64-bit decimal writer using division-free reciprocal multiply and a
+ * 2-digit table. Caller must ensure >= 24 writable bytes at dst. */
+static zend_always_inline char *fastjson_write_i64(char *dst, int64_t val)
+{
+    uint64_t u;
+    if (val < 0) {
+        *dst++ = '-';
+        u = (uint64_t)(-(val + 1)) + 1u;
+    } else {
+        u = (uint64_t)val;
+    }
+    if (EXPECTED(u < 100u)) {
+        uint32_t lz = u < 10u;
+        memcpy(dst, &fastjson_digit_pairs[u * 2u + lz], 2);
+        return dst + 2u - lz;
+    }
+    if (EXPECTED(u < 10000u)) {
+        uint32_t v = (uint32_t)u;
+        uint32_t aa = (v * 5243u) >> 19;
+        uint32_t bb = v - aa * 100u;
+        uint32_t lz = aa < 10u;
+        memcpy(dst, &fastjson_digit_pairs[aa * 2u + lz], 2);
+        dst += 2u - lz;
+        memcpy(dst, &fastjson_digit_pairs[bb * 2u], 2);
+        return dst + 2;
+    }
+    return fastjson_write_u64_large(dst, u);
+}
+
+/* Persistent per-thread decode key cache cleanup hooks (fastjson_decode.c). */
+void fastjson_key_cache_rinit(void);
+void fastjson_key_cache_rshutdown(void);
+void fastjson_key_cache_destroy(void *cache);
 
 /* Shared PHP_FUNCTION entry prologue for the decode family, defined in
  * fastjson.c: snapshot the throw-mode error state, then validate $depth
@@ -169,5 +299,13 @@ bool fastjson_entry_prologue(zend_long flags, zend_long throw_bit,
                              zend_long depth, int depth_argno,
                              bool *throw_mode_out,
                              fastjson_error_state *saved_out);
+
+/* Read a JSON document with a caller-chosen yyjson_alc (used with
+ * fastjson_small_alc for short inputs). */
+yyjson_doc *fastjson_read_doc_alc(const char *json, size_t json_len,
+                                  zend_long flags,
+                                  yyjson_read_flag extra_yflags,
+                                  const yyjson_alc *alc,
+                                  yyjson_read_err *err);
 
 #endif /* PHP_FASTJSON_INTERNAL_H */

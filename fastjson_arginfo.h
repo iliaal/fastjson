@@ -1,5 +1,7 @@
-/* This is a generated file, edit the .stub.php file instead.
- * Stub hash: 9877ab1777e0ccacf94970a4a8b5fba658171698 */
+/* This is a generated file, edit fastjson.stub.php instead.
+ * Stub hash: ab6307fb222a0d5bdc64870c43f2de93f9dc4821 */
+
+#include "zend_constants.h"
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_fastjson_version, 0, 0, IS_STRING, 0)
 ZEND_END_ARG_INFO()
@@ -77,6 +79,99 @@ ZEND_END_ARG_INFO()
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_fastjson_last_error_info, 0, 0, IS_ARRAY, 0)
 ZEND_END_ARG_INFO()
 
+
+#if (PHP_VERSION_ID >= 80400)
+ZEND_FRAMELESS_FUNCTION(fastjson_version, 0);
+static const zend_frameless_function_info frameless_function_infos_fastjson_version[] = {
+	{ ZEND_FRAMELESS_FUNCTION_NAME(fastjson_version, 0), 0 },
+	{ 0 },
+};
+#endif
+
+#if (PHP_VERSION_ID >= 80400)
+ZEND_FRAMELESS_FUNCTION(fastjson_decode, 1);
+ZEND_FRAMELESS_FUNCTION(fastjson_decode, 2);
+static const zend_frameless_function_info frameless_function_infos_fastjson_decode[] = {
+	{ ZEND_FRAMELESS_FUNCTION_NAME(fastjson_decode, 1), 1 },
+	{ ZEND_FRAMELESS_FUNCTION_NAME(fastjson_decode, 2), 2 },
+	{ 0 },
+};
+#endif
+
+#if (PHP_VERSION_ID >= 80400)
+ZEND_FRAMELESS_FUNCTION(fastjson_pointer_get, 2);
+ZEND_FRAMELESS_FUNCTION(fastjson_pointer_get, 3);
+static const zend_frameless_function_info frameless_function_infos_fastjson_pointer_get[] = {
+	{ ZEND_FRAMELESS_FUNCTION_NAME(fastjson_pointer_get, 2), 2 },
+	{ ZEND_FRAMELESS_FUNCTION_NAME(fastjson_pointer_get, 3), 3 },
+	{ 0 },
+};
+#endif
+
+#if (PHP_VERSION_ID >= 80400)
+ZEND_FRAMELESS_FUNCTION(fastjson_pointer_exists, 2);
+ZEND_FRAMELESS_FUNCTION(fastjson_pointer_exists, 3);
+static const zend_frameless_function_info frameless_function_infos_fastjson_pointer_exists[] = {
+	{ ZEND_FRAMELESS_FUNCTION_NAME(fastjson_pointer_exists, 2), 2 },
+	{ ZEND_FRAMELESS_FUNCTION_NAME(fastjson_pointer_exists, 3), 3 },
+	{ 0 },
+};
+#endif
+
+#if (PHP_VERSION_ID >= 80400)
+ZEND_FRAMELESS_FUNCTION(fastjson_merge_patch, 2);
+ZEND_FRAMELESS_FUNCTION(fastjson_merge_patch, 3);
+static const zend_frameless_function_info frameless_function_infos_fastjson_merge_patch[] = {
+	{ ZEND_FRAMELESS_FUNCTION_NAME(fastjson_merge_patch, 2), 2 },
+	{ ZEND_FRAMELESS_FUNCTION_NAME(fastjson_merge_patch, 3), 3 },
+	{ 0 },
+};
+#endif
+
+#if (PHP_VERSION_ID >= 80400)
+ZEND_FRAMELESS_FUNCTION(fastjson_validate, 1);
+ZEND_FRAMELESS_FUNCTION(fastjson_validate, 2);
+ZEND_FRAMELESS_FUNCTION(fastjson_validate, 3);
+static const zend_frameless_function_info frameless_function_infos_fastjson_validate[] = {
+	{ ZEND_FRAMELESS_FUNCTION_NAME(fastjson_validate, 1), 1 },
+	{ ZEND_FRAMELESS_FUNCTION_NAME(fastjson_validate, 2), 2 },
+	{ ZEND_FRAMELESS_FUNCTION_NAME(fastjson_validate, 3), 3 },
+	{ 0 },
+};
+#endif
+
+#if (PHP_VERSION_ID >= 80400)
+ZEND_FRAMELESS_FUNCTION(fastjson_last_error, 0);
+static const zend_frameless_function_info frameless_function_infos_fastjson_last_error[] = {
+	{ ZEND_FRAMELESS_FUNCTION_NAME(fastjson_last_error, 0), 0 },
+	{ 0 },
+};
+#endif
+
+#if (PHP_VERSION_ID >= 80400)
+ZEND_FRAMELESS_FUNCTION(fastjson_last_error_msg, 0);
+static const zend_frameless_function_info frameless_function_infos_fastjson_last_error_msg[] = {
+	{ ZEND_FRAMELESS_FUNCTION_NAME(fastjson_last_error_msg, 0), 0 },
+	{ 0 },
+};
+#endif
+
+#if (PHP_VERSION_ID >= 80400)
+ZEND_FRAMELESS_FUNCTION(fastjson_last_error_pos, 0);
+static const zend_frameless_function_info frameless_function_infos_fastjson_last_error_pos[] = {
+	{ ZEND_FRAMELESS_FUNCTION_NAME(fastjson_last_error_pos, 0), 0 },
+	{ 0 },
+};
+#endif
+
+#if (PHP_VERSION_ID >= 80400)
+ZEND_FRAMELESS_FUNCTION(fastjson_last_error_info, 0);
+static const zend_frameless_function_info frameless_function_infos_fastjson_last_error_info[] = {
+	{ ZEND_FRAMELESS_FUNCTION_NAME(fastjson_last_error_info, 0), 0 },
+	{ 0 },
+};
+#endif
+
 ZEND_FUNCTION(fastjson_version);
 ZEND_FUNCTION(fastjson_encode);
 ZEND_FUNCTION(fastjson_file_encode);
@@ -93,20 +188,60 @@ ZEND_FUNCTION(fastjson_last_error_pos);
 ZEND_FUNCTION(fastjson_last_error_info);
 
 static const zend_function_entry ext_functions[] = {
-	ZEND_FE(fastjson_version, arginfo_fastjson_version)
+#if (PHP_VERSION_ID >= 80400)
+	ZEND_RAW_FENTRY("fastjson_version", zif_fastjson_version, arginfo_fastjson_version, 0, frameless_function_infos_fastjson_version, NULL)
+#else
+	ZEND_RAW_FENTRY("fastjson_version", zif_fastjson_version, arginfo_fastjson_version, 0)
+#endif
 	ZEND_FE(fastjson_encode, arginfo_fastjson_encode)
 	ZEND_FE(fastjson_file_encode, arginfo_fastjson_file_encode)
-	ZEND_FE(fastjson_decode, arginfo_fastjson_decode)
+#if (PHP_VERSION_ID >= 80400)
+	ZEND_RAW_FENTRY("fastjson_decode", zif_fastjson_decode, arginfo_fastjson_decode, 0, frameless_function_infos_fastjson_decode, NULL)
+#else
+	ZEND_RAW_FENTRY("fastjson_decode", zif_fastjson_decode, arginfo_fastjson_decode, 0)
+#endif
 	ZEND_FE(fastjson_file_decode, arginfo_fastjson_file_decode)
-	ZEND_FE(fastjson_pointer_get, arginfo_fastjson_pointer_get)
-	ZEND_FE(fastjson_pointer_exists, arginfo_fastjson_pointer_exists)
+#if (PHP_VERSION_ID >= 80400)
+	ZEND_RAW_FENTRY("fastjson_pointer_get", zif_fastjson_pointer_get, arginfo_fastjson_pointer_get, 0, frameless_function_infos_fastjson_pointer_get, NULL)
+#else
+	ZEND_RAW_FENTRY("fastjson_pointer_get", zif_fastjson_pointer_get, arginfo_fastjson_pointer_get, 0)
+#endif
+#if (PHP_VERSION_ID >= 80400)
+	ZEND_RAW_FENTRY("fastjson_pointer_exists", zif_fastjson_pointer_exists, arginfo_fastjson_pointer_exists, 0, frameless_function_infos_fastjson_pointer_exists, NULL)
+#else
+	ZEND_RAW_FENTRY("fastjson_pointer_exists", zif_fastjson_pointer_exists, arginfo_fastjson_pointer_exists, 0)
+#endif
 	ZEND_FE(fastjson_pointer_set, arginfo_fastjson_pointer_set)
-	ZEND_FE(fastjson_merge_patch, arginfo_fastjson_merge_patch)
-	ZEND_FE(fastjson_validate, arginfo_fastjson_validate)
-	ZEND_FE(fastjson_last_error, arginfo_fastjson_last_error)
-	ZEND_FE(fastjson_last_error_msg, arginfo_fastjson_last_error_msg)
-	ZEND_FE(fastjson_last_error_pos, arginfo_fastjson_last_error_pos)
-	ZEND_FE(fastjson_last_error_info, arginfo_fastjson_last_error_info)
+#if (PHP_VERSION_ID >= 80400)
+	ZEND_RAW_FENTRY("fastjson_merge_patch", zif_fastjson_merge_patch, arginfo_fastjson_merge_patch, 0, frameless_function_infos_fastjson_merge_patch, NULL)
+#else
+	ZEND_RAW_FENTRY("fastjson_merge_patch", zif_fastjson_merge_patch, arginfo_fastjson_merge_patch, 0)
+#endif
+#if (PHP_VERSION_ID >= 80400)
+	ZEND_RAW_FENTRY("fastjson_validate", zif_fastjson_validate, arginfo_fastjson_validate, 0, frameless_function_infos_fastjson_validate, NULL)
+#else
+	ZEND_RAW_FENTRY("fastjson_validate", zif_fastjson_validate, arginfo_fastjson_validate, 0)
+#endif
+#if (PHP_VERSION_ID >= 80400)
+	ZEND_RAW_FENTRY("fastjson_last_error", zif_fastjson_last_error, arginfo_fastjson_last_error, 0, frameless_function_infos_fastjson_last_error, NULL)
+#else
+	ZEND_RAW_FENTRY("fastjson_last_error", zif_fastjson_last_error, arginfo_fastjson_last_error, 0)
+#endif
+#if (PHP_VERSION_ID >= 80400)
+	ZEND_RAW_FENTRY("fastjson_last_error_msg", zif_fastjson_last_error_msg, arginfo_fastjson_last_error_msg, 0, frameless_function_infos_fastjson_last_error_msg, NULL)
+#else
+	ZEND_RAW_FENTRY("fastjson_last_error_msg", zif_fastjson_last_error_msg, arginfo_fastjson_last_error_msg, 0)
+#endif
+#if (PHP_VERSION_ID >= 80400)
+	ZEND_RAW_FENTRY("fastjson_last_error_pos", zif_fastjson_last_error_pos, arginfo_fastjson_last_error_pos, 0, frameless_function_infos_fastjson_last_error_pos, NULL)
+#else
+	ZEND_RAW_FENTRY("fastjson_last_error_pos", zif_fastjson_last_error_pos, arginfo_fastjson_last_error_pos, 0)
+#endif
+#if (PHP_VERSION_ID >= 80400)
+	ZEND_RAW_FENTRY("fastjson_last_error_info", zif_fastjson_last_error_info, arginfo_fastjson_last_error_info, 0, frameless_function_infos_fastjson_last_error_info, NULL)
+#else
+	ZEND_RAW_FENTRY("fastjson_last_error_info", zif_fastjson_last_error_info, arginfo_fastjson_last_error_info, 0)
+#endif
 	ZEND_FE_END
 };
 

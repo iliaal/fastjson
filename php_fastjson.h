@@ -75,6 +75,7 @@ extern zend_module_entry fastjson_module_entry;
 /* Without ext/json, use Fastjson\JsonException and leave JsonSerializable NULL. */
 extern zend_class_entry *fastjson_json_exception_ce;
 extern zend_class_entry *fastjson_json_serializable_ce;
+extern zend_string *fastjson_jsonserialize_str;
 
 ZEND_BEGIN_MODULE_GLOBALS(fastjson)
     zend_long last_err_code;
@@ -84,10 +85,9 @@ ZEND_BEGIN_MODULE_GLOBALS(fastjson)
     zend_long last_err_pos;
     zend_long last_err_line;
     zend_long last_err_col;
-    /* Decode key cache for the walk in progress. Module globals are
-     * per-thread under ZTS; a process-global pointer would alias another
-     * thread's stack cache. */
-    void *key_share;
+    /* Request-scoped decode key cache, cleared lazily via its used-slot list. */
+    void *key_cache;
+    bool key_cache_in_use;
 ZEND_END_MODULE_GLOBALS(fastjson)
 
 ZEND_EXTERN_MODULE_GLOBALS(fastjson)
@@ -167,15 +167,47 @@ zend_long fastjson_translate_read_code(yyjson_read_code yy);
 yyjson_write_flag fastjson_translate_write_flags(zend_long php_flags,
                                                  bool with_pretty);
 
-void fastjson_clear_error(void);
+static zend_always_inline void fastjson_clear_error(void)
+{
+    FASTJSON_G(last_err_code) = FASTJSON_ERROR_NONE;
+    FASTJSON_G(last_err_msg) = NULL;
+    FASTJSON_G(last_err_pos) = -1;
+    FASTJSON_G(last_err_line) = 0;
+    FASTJSON_G(last_err_col) = 0;
+}
 
 /* Record a FASTJSON_ERROR_* code directly (no read-code translation). msg is
  * NULL or a string literal and is never freed. Clears the source-location
  * fields because encode, I/O, and depth errors have no source byte offset. */
-void fastjson_set_error_code(zend_long code, const char *msg);
+static zend_always_inline void fastjson_set_error_code(zend_long code,
+                                                       const char *msg)
+{
+    FASTJSON_G(last_err_code) = code;
+    FASTJSON_G(last_err_msg) = msg;
+    FASTJSON_G(last_err_pos) = -1;
+    FASTJSON_G(last_err_line) = 0;
+    FASTJSON_G(last_err_col) = 0;
+}
 
-void fastjson_save_error_state(fastjson_error_state *state);
-void fastjson_restore_error_state(const fastjson_error_state *state);
+static zend_always_inline void fastjson_save_error_state(
+    fastjson_error_state *state)
+{
+    state->code = FASTJSON_G(last_err_code);
+    state->msg = FASTJSON_G(last_err_msg);
+    state->pos = FASTJSON_G(last_err_pos);
+    state->line = FASTJSON_G(last_err_line);
+    state->col = FASTJSON_G(last_err_col);
+}
+
+static zend_always_inline void fastjson_restore_error_state(
+    const fastjson_error_state *state)
+{
+    FASTJSON_G(last_err_code) = state->code;
+    FASTJSON_G(last_err_msg) = state->msg;
+    FASTJSON_G(last_err_pos) = state->pos;
+    FASTJSON_G(last_err_line) = state->line;
+    FASTJSON_G(last_err_col) = state->col;
+}
 
 /* Non-throw argument-validation failures must leave last_error as NONE. */
 static zend_always_inline void fastjson_throw_mode_init(
@@ -254,6 +286,12 @@ typedef enum {
  * length, excluding the terminator, is written to *out_len. */
 char *fastjson_sanitize_utf8(const char *s, size_t len, zend_long flags,
                              fj_sanitize_mode mode, size_t *out_len);
+
+/* Direct zend_string* variant for decode-side sanitization; returns NULL when
+ * a pending OOM aborts allocation. */
+zend_string *fastjson_sanitize_utf8_zstr(const char *s, size_t len,
+                                         zend_long flags,
+                                         fj_sanitize_mode mode);
 
 /* Returns true if `s[0..len)` is well-formed UTF-8 by the same
  * per-codepoint rules fastjson_sanitize_utf8 uses to detect bad bytes
