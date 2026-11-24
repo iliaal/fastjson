@@ -7,6 +7,14 @@ name: Release Windows binaries
 # (php_fastjson-<version>-<php_x.y>-<ts|nts>-<vs16|vs17|vs18>-<arch>.zip;
 # the toolset follows the PHP build: vs16 for 8.1-8.3, vs17 for 8.4-8.5,
 # vs18 for 8.6).
+#
+# Pushes and pull requests build and test one x64 lane per toolset, TS and
+# NTS, on the oldest PHP minor that toolset ships (8.1 vs16, 8.4 vs17, 8.6
+# vs18). The release event, the weekly schedule, and workflow_dispatch build
+# and test the full shipped matrix; only the release event uploads. Dispatch
+# it on the release commit before tagging, so a break in a minor push CI does
+# not cover fails before the tag is live, not after, when the all-or-nothing
+# upload job would ship zero Windows assets.
 
 on:
   push:
@@ -14,16 +22,14 @@ on:
   pull_request:
   release:
     types: [published]
-  # Manual build-only validation before tagging. On workflow_dispatch the
-  # matrix + build (with tests) run but the upload job is skipped, so a
-  # maintainer can confirm the Windows lanes compile on the release commit
-  # without publishing assets to a non-existent release.
   workflow_dispatch:
+  schedule:
+    - cron: '41 5 * * 2'
 
 permissions: {}
 
 concurrency:
-  group: release-windows-${{ github.event.release.tag_name || github.ref }}
+  group: release-windows-${{ github.event_name }}-${{ github.event.release.tag_name || github.ref }}
   cancel-in-progress: ${{ github.event_name != 'release' }}
 
 jobs:
@@ -41,15 +47,12 @@ jobs:
       - id: matrix
         uses: php/php-windows-builder/extension-matrix@29352c0ef9e8ce65264ea9e287881a6f7758a953 # 1.9.0
         with:
-          # Pushes and pull requests build and test TS and NTS on one PHP
-          # version per Visual Studio toolset the release ships (8.3 vs16,
-          # 8.5 vs17, 8.6 vs18). Releases and manual dispatches keep the full
-          # supported-version matrix.
-          php-version-list: ${{ (github.event_name == 'push' || github.event_name == 'pull_request') && '8.3, 8.5, 8.6' || '8.1, 8.2, 8.3, 8.4, 8.5, 8.6' }}
+          php-version-list: ${{ (github.event_name == 'push' || github.event_name == 'pull_request') && '8.1, 8.4, 8.6' || '8.1, 8.2, 8.3, 8.4, 8.5, 8.6' }}
           # 64-bit only. fastjson's integer-valued-double encoding diverges
           # from ext/json on 32-bit (ILP32) for values above 2^31; 32-bit
           # Windows is not a supported target.
           arch-list: 'x64'
+          ts-list: 'nts, ts'
 
   build:
     name: Build ${{ matrix.php-version }} ${{ matrix.ts }} ${{ matrix.arch }}
@@ -73,6 +76,8 @@ jobs:
 
   release:
     name: Upload binaries to the release
+    # Only the release event has a tag to upload into; dispatch and scheduled
+    # runs stop after `build`.
     if: github.event_name == 'release'
     runs-on: ubuntu-latest
     needs: build
