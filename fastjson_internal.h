@@ -98,7 +98,7 @@ static zend_always_inline bool fastjson_string_wants_sized_writer(
 static zend_always_inline void fastjson_append_newline_indent(
     smart_str *buf, int level)
 {
-    static const char nl_spaces[33] = "\n                                ";
+    static const char nl_spaces[] = "\n                                ";
     if (EXPECTED(level <= 8)) {
         smart_str_appendl(buf, nl_spaces, 1 + (size_t)level * 4);
         return;

@@ -834,12 +834,12 @@ static bool dw_emit_object_props(fastjson_dw_ctx *ctx, zval *zv,
      * ArrayObject) the property set ext/json sees. Pair it with
      * zend_release_properties() on every exit path. */
     HashTable *props = zend_get_properties_for(zv, ZEND_PROP_PURPOSE_JSON);
-    if (UNEXPECTED(obj->handlers->get_properties != zend_std_get_properties
-            || obj->handlers->get_properties_for != NULL
+    bool custom_props = obj->handlers->get_properties != zend_std_get_properties
+        || obj->handlers->get_properties_for != NULL;
 #if PHP_VERSION_ID >= 80400
-            || zend_object_is_lazy(obj)
+    custom_props = custom_props || zend_object_is_lazy(obj);
 #endif
-        )) {
+    if (UNEXPECTED(custom_props)) {
         ctx->serialize_precision = (int)PG(serialize_precision);
     }
     if (props == NULL) {
