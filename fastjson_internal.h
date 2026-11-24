@@ -92,7 +92,7 @@ static zend_always_inline bool fastjson_string_wants_sized_writer(
 #define FASTJSON_NUM_REAL_WORST 40
 
 /* Initial smart_str request stays within Zend MM's 256-byte small slot
- * (256 - sizeof(zend_string) = 232 B); 256 would jump directly to a 4 KiB page. */
+ * (SMART_STR_START_LEN = 256 - 24 - 1 = 231 B); 256 would jump directly to a 4 KiB page. */
 #define FASTJSON_SMART_STR_INIT_CAP 224
 
 /* 33-byte static "\n" + 32 spaces table collapses level <= 8 to one append. */
