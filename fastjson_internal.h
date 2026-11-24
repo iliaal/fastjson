@@ -16,6 +16,7 @@
 #define PHP_FASTJSON_INTERNAL_H
 
 #include "php_streams.h"
+#include "zend_bitset.h"
 
 static zend_always_inline bool fastjson_depth_fits_int(zend_long depth)
 {
@@ -209,7 +210,7 @@ static zend_always_inline size_t fastjson_copy_clean_ascii(
             }
             int mask = _mm_movemask_epi8(bad);
             if (UNEXPECTED(mask != 0)) {
-                size_t clean = (size_t)__builtin_ctz((unsigned int)mask);
+                size_t clean = (size_t)zend_ulong_ntz((zend_ulong)(unsigned int)mask);
                 for (size_t k = 0; k < clean; k++) {
                     dst[i + k] = s[i + k];
                 }

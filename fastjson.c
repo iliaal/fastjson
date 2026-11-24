@@ -690,7 +690,7 @@ static bool fastjson_string_is_copyable_ascii(const char *s, size_t len,
             }
             int mask = _mm_movemask_epi8(bad);
             if (UNEXPECTED(mask != 0)) {
-                *prefix_len = pos + (size_t)__builtin_ctz((unsigned int)mask);
+                *prefix_len = pos + (size_t)zend_ulong_ntz((zend_ulong)(unsigned int)mask);
                 return false;
             }
         }
