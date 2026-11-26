@@ -10,26 +10,23 @@ category notes summarize it.
 | Bucket | Count | Source |
 |---|---|---|
 | Total upstream tests | 102 | `php-src/ext/json/tests/*.phpt` at `29647e67c574c0a99ff4111f83d00154193f01cd` |
-| Skipped (categorized) | 35 | `tests/upstream-json/.skiplist` |
-| Rewritten + run | 67 | this directory |
-| Passing | 67 | run-tests output |
+| Skipped (categorized) | 30 | `tests/upstream-json/.skiplist` |
+| Rewritten + run | 72 | this directory |
+| Passing | 72 | run-tests output |
 | Environment-skip (--SKIPIF--) | 0 | none currently |
 | Failing | 0 | clean against current fastjson |
 
-All 67 rewritten tests pass. Every skiplist entry names a category plus a
+All 72 rewritten tests pass. Every skiplist entry names a category plus a
 one-line reason or TODO reference. The remaining entries differ in
 error-message text, error-code classification, or documented divergences.
 
 ## Skiplist categories
 
-- **ext-json-internals** (31 tests). Behavior fastjson does not aim to
+- **ext-json-internals** (26 tests). Behavior fastjson does not aim to
   mirror byte-for-byte. By feature:
-  - JsonSerializable + var_export / print_r / serialize interplay
-    (5 tests: `json_encode_recursion_03..06`, `serialize`). The core
-    `jsonSerialize()` path is honored; these exercise ext/json-internal
-    dumping behavior fastjson does not reproduce.
-  - `var_dump($this)` *during* `jsonSerialize()` (2 tests:
-    `json_encode_recursion_02`, `bug77843`). Fastjson uses ext/json's
+  - `var_dump($this)` *during* `jsonSerialize()`, or a nested encode from
+    `__debugInfo()` (4 tests: `json_encode_recursion_02..04`,
+    `bug77843`). Fastjson uses ext/json's
     JSON-specific guard on PHP 8.3+, but PHP 8.1/8.2 expose only the generic
     recursion flag. The resulting diagnostic is version-dependent, so one
     generated expectation cannot cover every supported runtime. The
@@ -37,15 +34,15 @@ error-message text, error-code classification, or documented divergences.
     native `encode_jsonserializable*.phpt` tests.
   - Error-message text ext/json owns verbatim, including the
     `Syntax error near location X:Y` and `Malformed UTF-8 characters`
-    wording (`error_location_*`, `bug54058`, `json_validate_002`,
+    wording (`error_location_*`, `json_validate_002`,
     `json_validate_004`, `007`, `gh22420`, and `gh22514`). yyjson's
     diagnostics differ.
   - JsonException message-text divergence (2 tests:
     `json_decode_exceptions`, `json_encode_exceptions`). fastjson throws
     `\JsonException` and preserves global error state on throw; only the
     message wording differs.
-  - Error-code classification and invalid-property diagnostic text (6 tests:
-    `gh22527`, `bug54484`, `bug61537`, `bug62010`, `bug68546`, and
+  - Error-code classification and invalid-property diagnostic text (5 tests:
+    `gh22527`, `bug54484`, `bug62010`, `bug68546`, and
     `bug69187`). yyjson lumps invalid-string failures under one code, so
     both a raw control char (ext/json `JSON_ERROR_CTRL_CHAR`, code 3) and
     an unpaired surrogate (ext/json `JSON_ERROR_UTF16`, code 10) surface
